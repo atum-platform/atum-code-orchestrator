@@ -1,0 +1,12 @@
+interface:
+  display_name: "Agent Jobs"
+  short_description: "Route durable work across local AI providers"
+  default_prompt: "Use $agent-jobs to request an independent review or delegate scoped work."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "agent-jobs"
+      description: "Durable read-only cross-agent job operations"
+      transport: "stdio"
+policy:
+  allow_implicit_invocation: true
