@@ -35,3 +35,15 @@
 - The first CI run exposed a harness mismatch: dependencies were installed into
   the runner's global Python while the installer requires `.venv`. Updated CI to
   create and test through the same repository-local runtime used in production.
+- PR #1 passed the macOS CI gate and merged as `59e689a`.
+- Deployed `main` to `~/.local/share/atum-agent-jobs` on the Mac mini and
+  MacBook. Both eight-target client checks are idempotent and both launchd
+  services report the stable checkout path.
+- Migrated twelve applicable Mac mini Hermes profiles as optional consumers;
+  the MacBook had no applicable cross-agent Hermes registration. No live client
+  or profile configuration on either host references the legacy runtime.
+- Completed read-only Codex smoke jobs through each local supervisor with
+  retained normalized results: `MINI_AGENT_JOBS_OK` and
+  `MACBOOK_AGENT_JOBS_OK`.
+- The old Hermes-side checkout remains temporarily as rollback material. It is
+  no longer the active supervisor or client/profile integration source.
