@@ -57,3 +57,12 @@ Keep the previous checkout until all coding clients and optional Hermes profiles
 have completed a smoke run through the standalone service. After that, the old
 Hermes copy is historical source only and can be removed once its Git state is
 confirmed pushed.
+
+## Current Deployment
+
+As of 2026-08-10, the Mac mini and MacBook each run one local supervisor from
+`~/.local/share/atum-agent-jobs`. Codex, Claude, and Kimi bindings are installed
+on both. Hermes profiles are consumers only: twelve Mac mini profiles were
+migrated, while the MacBook had no applicable profile registration. End-to-end
+Codex smoke jobs completed on both hosts. The legacy checkout is retained only
+for short-term rollback and is not referenced by live configuration.
