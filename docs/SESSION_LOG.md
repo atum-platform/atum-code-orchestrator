@@ -13,7 +13,7 @@
   not discard queued history or inbox deliveries.
 - Kept native provider execution as the default; ACP/CAO remains optional.
 - Added a macOS GitHub Actions gate for compile checks and the full test suite.
-- Local verification: 167 unit/integration tests pass on macOS; independent
+- Local verification: 169 unit/integration tests pass on macOS; independent
   Opus review initially returned HOLD on migration safety.
 - Remediated the review blockers: preserved local routing policy and MCP timeout
   fields, made bootstrap checks read-only, refused supervisor swaps with active
@@ -26,3 +26,9 @@
   three deployment edge cases. Fixed idempotency with extra Codex env keys,
   duplicate Hermes env blocks, stable-path enforcement, and fail-closed active
   job detection. Deployment and smoke checks remain pending.
+- Created the public `minhnkn22/atum-agent-jobs` repository. The implementation
+  is being published through `feat/standalone-extraction`; `main` contains only
+  the initial governance, license, and migration documentation until PR merge.
+- Reproduced and fixed the cancellation test race noted by Opus: long-poll reads
+  may wake on progress before terminal state, so the test now advances cursors
+  through intermediate wakes as required by the protocol.
