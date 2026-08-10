@@ -32,3 +32,6 @@
 - Reproduced and fixed the cancellation test race noted by Opus: long-poll reads
   may wake on progress before terminal state, so the test now advances cursors
   through intermediate wakes as required by the protocol.
+- The first CI run exposed a harness mismatch: dependencies were installed into
+  the runner's global Python while the installer requires `.venv`. Updated CI to
+  create and test through the same repository-local runtime used in production.
