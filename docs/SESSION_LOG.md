@@ -19,7 +19,11 @@
 - Both machines register the K3 canonical ID. Local verification passes all 176
   unit/integration tests. K3 review could not start because the Kimi account is
   quota-blocked; Opus 5 completed the fallback review and recommended shipping
-  after the hardening above. Two-machine deployment is pending.
+  after the hardening above.
+- PR #3 passed macOS CI and merged as `c27cf99`. The Mac mini and MacBook pulled
+  that commit after confirming no launching or running jobs, restarted their
+  LaunchAgents, refreshed all coding-client integrations, migrated the live
+  SQLite schema with `requested_model`, and passed supervisor ping checks.
 
 ## 2026-08-10 - Standalone extraction
 
