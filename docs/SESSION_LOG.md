@@ -1,5 +1,26 @@
 # Session Log
 
+## 2026-08-11 - Kimi model normalization
+
+- Moved Kimi model selection from advisory caller behavior into the supervisor
+  boundary: omitted/default requests select K3, supported K3/K2.7 aliases are
+  canonicalized, and stale or unknown Kimi aliases fall back to K2.7.
+- Added `requested_model` persistence so operators can distinguish what a
+  caller asked for from the effective model that ran. Idempotency hashes include
+  both values, and fallback jobs expose a normalization message.
+- Made the model optional only for Kimi across MCP, review CLI, raw client CLI,
+  and delegated implementation; Claude and Codex continue to require one.
+- Added integration coverage for defaults, legacy aliases, canonical variants,
+  and non-Kimi validation. Opus review confirmed migration compatibility and
+  identified default portability and silent fallback as immediate hardening;
+  the default is now environment-overridable and fallback is operator-visible.
+  Requested and effective models both participate in idempotency, and command-line
+  clients retain early validation for missing Claude/Codex models.
+- Both machines register the K3 canonical ID. Local verification passes all 176
+  unit/integration tests. K3 review could not start because the Kimi account is
+  quota-blocked; Opus 5 completed the fallback review and recommended shipping
+  after the hardening above. Two-machine deployment is pending.
+
 ## 2026-08-10 - Standalone extraction
 
 - Extracted the durable agent-job supervisor from the Hermes repository into a

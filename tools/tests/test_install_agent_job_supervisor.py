@@ -26,6 +26,7 @@ class SupervisorInstallerTest(unittest.TestCase):
             "AGENT_JOB_CLAUDE_CONCURRENCY": "2",
             "AGENT_JOB_CODEX_CONCURRENCY": "3",
             "AGENT_JOB_KIMI_CONCURRENCY": "1",
+            "AGENT_JOB_KIMI_DEFAULT_MODEL": "kimi-code/k3",
             "AGENT_JOB_MAX_LOG_BYTES": "1000",
             "AGENT_JOB_MAX_EVENT_BYTES": "2000",
             "AGENT_JOB_MAX_PARTIAL_RESPONSE_BYTES": "3000",

@@ -129,7 +129,7 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="action", required=True)
     submit_parser = sub.add_parser("submit")
     submit_parser.add_argument("--provider", choices=("claude", "kimi", "codex"), required=True)
-    submit_parser.add_argument("--model", required=True)
+    submit_parser.add_argument("--model", default="")
     submit_parser.add_argument("--mode", choices=("readonly", "implement"), required=True)
     submit_parser.add_argument("--workdir", required=True)
     submit_parser.add_argument("--prompt", required=True)
@@ -163,7 +163,10 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    args = _parser().parse_args()
+    parser = _parser()
+    args = parser.parse_args()
+    if args.action == "submit" and args.provider != "kimi" and not args.model:
+        parser.error("--model is required unless --provider=kimi")
     payload = vars(args).copy()
     payload.pop("socket")
     action = payload.pop("action")

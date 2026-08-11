@@ -81,12 +81,21 @@ model, mode, absolute workdir, and one bounded prompt. `implement` permits scope
 reads and edits but no Bash, Git, external messaging, or nested agents. The calling
 agent runs tests and Git operations afterward.
 
-Use model aliases so provider upgrades resolve without skill edits:
+Kimi submissions may omit `model`; the supervisor then selects
+`kimi-code/k3`. It canonicalizes supported K3 and K2.7 aliases and maps stale or
+unknown Kimi aliases to `kimi-code/kimi-for-coding` (K2.7), recording both the
+requested and effective model. Explicit Claude and Codex jobs still require a
+model.
+
+Use these canonical model aliases:
 
 - Claude `opus`: architecture, UI/UX, visual design, product judgment, copywriting.
 - Claude `sonnet`: ordinary implementation when Claude is explicitly requested.
 - Claude `fable`: only when explicitly requested or its capability fits the task.
-- Kimi `kimi-code/k3`: code-heavy review or implementation.
+- Kimi `kimi-code/k3`: default for code-heavy review or implementation.
+- Kimi `kimi-code/k3-256k`: K3 with lower context and quota use.
+- Kimi `kimi-code/kimi-for-coding`: K2.7 for routine coding work or fallback.
+- Kimi `kimi-code/kimi-for-coding-highspeed`: faster K2.7 when the plan supports it.
 - Codex: pass the currently configured Codex model when another caller requests it.
 
 After completion, inspect the complete diff, reject unrelated changes, run focused

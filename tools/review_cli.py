@@ -15,7 +15,7 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="action", required=True)
     submit = sub.add_parser("submit")
     submit.add_argument("--provider", choices=sorted(review_core.PROVIDERS), required=True)
-    submit.add_argument("--model", required=True)
+    submit.add_argument("--model", default="")
     submit.add_argument("--instructions", required=True)
     submit.add_argument("--workdir", required=True)
     submit.add_argument("--context-git-diff", action="store_true")
@@ -66,8 +66,12 @@ def dispatch(values: dict[str, object]) -> dict[str, object]:
 
 
 def main() -> int:
+    parser = _parser()
+    args = parser.parse_args()
+    if args.action == "submit" and args.provider != "kimi" and not args.model:
+        parser.error("--model is required unless --provider=kimi")
     try:
-        result = dispatch(vars(_parser().parse_args()))
+        result = dispatch(vars(args))
     except Exception as exc:
         print(str(exc), file=sys.stderr)
         return 1

@@ -25,11 +25,16 @@ only. This standalone repository does not ship those mode-heavy MCP servers.
 
 ## Lifecycle
 
-1. A caller submits `provider`, `model`, `mode`, `workdir`, `prompt`, an
+1. A caller submits `provider`, optional Kimi `model`, `mode`, `workdir`, `prompt`, an
    idempotency key, and a submit-relative hard deadline over the user-only Unix
    socket.
 2. The daemon validates the workdir, model, prompt size, recursion depth, and
-   provider, then persists a queued job in SQLite before returning its ID.
+   provider, then persists a queued job in SQLite before returning its ID. A
+   blank Kimi model defaults to `kimi-code/k3`; supported aliases are
+   canonicalized, while stale or unknown Kimi aliases fall back to
+   `kimi-code/kimi-for-coding` (K2.7). Jobs retain `requested_model` alongside
+   the effective `model` for auditability and expose a message when an unknown
+   or legacy alias falls back. Claude and Codex still require an explicit model.
 3. A machine-wide provider queue atomically claims the job as `launching`, then
    launches it once in a new process group.
 4. Output is appended to a cursor log and to separate raw stdout/stderr files.
@@ -77,6 +82,9 @@ python3 tools/install_agent_job_supervisor.py status
 
 Provider concurrency defaults to Claude 2, Codex 2, and Kimi 1. Override with
 `AGENT_JOB_<PROVIDER>_CONCURRENCY` in the LaunchAgent environment. Approved
+Kimi's omitted-model default is `kimi-code/k3`; deployments may override it with
+`AGENT_JOB_KIMI_DEFAULT_MODEL` after confirming the target machine's Kimi Code
+configuration supports that canonical model ID. Approved
 workspace roots are defined once in `tools/agent_job_policy.py` and used by the
 installer, supervisor, review core, and profile migrator. Override them
 consistently with `AGENT_JOB_ALLOWED_ROOTS` when deploying elsewhere.

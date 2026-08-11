@@ -108,6 +108,7 @@ def _service_environment() -> dict[str, str]:
         "AGENT_JOB_CLAUDE_CONCURRENCY",
         "AGENT_JOB_CODEX_CONCURRENCY",
         "AGENT_JOB_KIMI_CONCURRENCY",
+        "AGENT_JOB_KIMI_DEFAULT_MODEL",
         "AGENT_JOB_MAX_LOG_BYTES",
         "AGENT_JOB_MAX_EVENT_BYTES",
         "AGENT_JOB_MAX_PARTIAL_RESPONSE_BYTES",

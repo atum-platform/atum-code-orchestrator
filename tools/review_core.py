@@ -277,9 +277,9 @@ def build_review_prompt(
 def job_submit(
     *,
     provider: str,
-    model: str,
     instructions: str,
     workdir: str,
+    model: str = "",
     context_git_diff: bool = False,
     context_git_base: str = "HEAD",
     context_files: list[str] | None = None,
