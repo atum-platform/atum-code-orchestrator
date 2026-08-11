@@ -1090,6 +1090,87 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "Recursive"):
             await self.call(spec)
 
+    async def test_kimi_defaults_to_k3_and_records_blank_request(self) -> None:
+        spec = self.spec("complete")
+        spec.update(provider="kimi", model="")
+        submitted = await self.call(spec)
+        self.assertEqual("kimi-code/k3", submitted["model"])
+        self.assertEqual("", submitted["requested_model"])
+
+    async def test_kimi_default_sentinels_and_environment_override(self) -> None:
+        for requested in ("auto", "DEFAULT", "kimi", "   "):
+            spec = self.spec("complete")
+            spec.update(provider="kimi", model=requested)
+            with patch.dict(
+                os.environ,
+                {"AGENT_JOB_KIMI_DEFAULT_MODEL": "kimi-code/k3-256k"},
+                clear=False,
+            ):
+                submitted = await self.call(spec)
+            self.assertEqual("kimi-code/k3-256k", submitted["model"])
+            self.assertEqual(requested.strip(), submitted["requested_model"])
+
+    async def test_kimi_legacy_alias_normalizes_to_k27(self) -> None:
+        for requested in ("kimi-k2.5", "kimi-k2.6", "k2.6", "old-kimi-alias"):
+            spec = self.spec("complete")
+            spec.update(provider="kimi", model=requested)
+            submitted = await self.call(spec)
+            self.assertEqual("kimi-code/kimi-for-coding", submitted["model"])
+            self.assertEqual(requested, submitted["requested_model"])
+            self.assertIn("normalized", submitted["message"])
+
+    async def test_kimi_supported_aliases_are_canonicalized(self) -> None:
+        cases = {
+            "k3": "kimi-code/k3",
+            "kimi-code/k3": "kimi-code/k3",
+            "k3-256k": "kimi-code/k3-256k",
+            "kimi-code/kimi-for-coding": "kimi-code/kimi-for-coding",
+            "kimi-for-coding-highspeed": "kimi-code/kimi-for-coding-highspeed",
+        }
+        for requested, expected in cases.items():
+            spec = self.spec("complete")
+            spec.update(provider="kimi", model=requested)
+            submitted = await self.call(spec)
+            self.assertEqual(expected, submitted["model"])
+            self.assertEqual(requested, submitted["requested_model"])
+            self.assertEqual("", submitted["message"])
+
+    async def test_kimi_aliases_are_case_insensitive_and_malformed_values_fail(self) -> None:
+        spec = self.spec("complete")
+        spec.update(provider="kimi", model="Kimi-Code/K3")
+        submitted = await self.call(spec)
+        self.assertEqual("kimi-code/k3", submitted["model"])
+
+        malformed = self.spec("complete")
+        malformed.update(provider="kimi", model="kimi k2.6")
+        with self.assertRaisesRegex(RuntimeError, "unsupported characters"):
+            await self.call(malformed)
+
+        defaulted = self.spec("complete")
+        defaulted.update(provider="kimi", model="")
+        with patch.dict(
+            os.environ, {"AGENT_JOB_KIMI_DEFAULT_MODEL": "invalid model"}, clear=False
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Effective model"):
+                await self.call(defaulted)
+
+    async def test_idempotency_distinguishes_requested_kimi_aliases(self) -> None:
+        first = self.spec("complete")
+        first.update(
+            provider="kimi", model="kimi-k2.5", idempotency_key="alias-audit"
+        )
+        await self.call(first)
+        second = first.copy()
+        second["model"] = "kimi-k2.6"
+        with self.assertRaisesRegex(RuntimeError, "different job specification"):
+            await self.call(second)
+
+    async def test_non_kimi_provider_still_requires_a_model(self) -> None:
+        spec = self.spec("complete")
+        spec["model"] = ""
+        with self.assertRaisesRegex(RuntimeError, "Model is required"):
+            await self.call(spec)
+
     async def test_relative_workdir_is_rejected_by_daemon(self) -> None:
         spec = self.spec("complete")
         spec["workdir"] = "."

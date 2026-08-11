@@ -52,6 +52,25 @@ IMPLEMENT_TOKEN_PATH = Path(
     os.environ.get("AGENT_JOB_IMPLEMENT_TOKEN_FILE", str(STATE_DIR / "implement.token"))
 ).expanduser()
 MODEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
+KIMI_DEFAULT_MODEL = "kimi-code/k3"
+KIMI_K27_MODEL = "kimi-code/kimi-for-coding"
+KIMI_MODEL_ALIASES = {
+    "k3": KIMI_DEFAULT_MODEL,
+    "kimi-k3": KIMI_DEFAULT_MODEL,
+    "kimi-code/k3": KIMI_DEFAULT_MODEL,
+    "k3-1m": KIMI_DEFAULT_MODEL,
+    "kimi-k3-1m": KIMI_DEFAULT_MODEL,
+    "kimi-code/k3-1m": KIMI_DEFAULT_MODEL,
+    "k3-256k": "kimi-code/k3-256k",
+    "kimi-k3-256k": "kimi-code/k3-256k",
+    "kimi-code/k3-256k": "kimi-code/k3-256k",
+    "k2.7": KIMI_K27_MODEL,
+    "kimi-k2.7": KIMI_K27_MODEL,
+    "kimi-for-coding": KIMI_K27_MODEL,
+    "kimi-code/kimi-for-coding": KIMI_K27_MODEL,
+    "kimi-for-coding-highspeed": "kimi-code/kimi-for-coding-highspeed",
+    "kimi-code/kimi-for-coding-highspeed": "kimi-code/kimi-for-coding-highspeed",
+}
 TERMINAL_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
 SEMANTIC_PROGRESS_KINDS = {
     "turn_started", "thinking_delta", "message_delta", "tool_started",
@@ -87,6 +106,20 @@ def _kimi_semantic_enabled() -> bool:
     return os.environ.get("AGENT_JOB_KIMI_SEMANTIC", "1").strip().lower() not in {
         "0", "false", "no", "off",
     }
+
+
+def _normalize_model(provider: str, requested_model: str) -> tuple[str, str]:
+    model = requested_model.strip()
+    if provider != "kimi":
+        return model, ""
+    if not model or model.lower() in {"auto", "default", "kimi"}:
+        return os.environ.get("AGENT_JOB_KIMI_DEFAULT_MODEL", KIMI_DEFAULT_MODEL), ""
+    normalized = KIMI_MODEL_ALIASES.get(model.lower())
+    if normalized:
+        return normalized, ""
+    return KIMI_K27_MODEL, (
+        f"Unrecognized or legacy Kimi model alias '{model}' normalized to {KIMI_K27_MODEL}"
+    )
 
 
 def _allowed_roots() -> list[Path]:
@@ -255,6 +288,7 @@ class JobStore:
                    WHERE provider IN ('claude', 'codex') AND execution_backend = 'native'"""
             )
         migrations = {
+            "requested_model": "TEXT NOT NULL DEFAULT ''",
             "last_event_at": "REAL",
             "last_event_kind": "TEXT NOT NULL DEFAULT ''",
             "last_progress_at": "REAL",
@@ -295,14 +329,17 @@ class JobStore:
         now = _now()
         self.db.execute(
             """INSERT INTO jobs (
-                job_id, provider, model, mode, workdir, prompt, owner, status,
+                job_id, provider, model, requested_model, mode, workdir, prompt, owner,
+                status, message,
                 created_at, updated_at, timeout_seconds, soft_stall_seconds,
                 max_turns, log_path, idempotency_key, request_hash, execution_backend,
                 semantic_stream
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                job_id, spec["provider"], spec["model"], spec["mode"], spec["workdir"],
-                spec["prompt"], spec.get("owner", ""), now, now, spec["timeout_seconds"],
+                job_id, spec["provider"], spec["model"], spec.get("requested_model", ""),
+                spec["mode"], spec["workdir"],
+                spec["prompt"], spec.get("owner", ""), spec.get("message", ""), now, now,
+                spec["timeout_seconds"],
                 spec["soft_stall_seconds"], spec["max_turns"], str(log_path), key,
                 spec["request_hash"], spec.get("execution_backend", "native"),
                 int(spec.get("semantic_stream") or 0),
@@ -1139,7 +1176,7 @@ class Supervisor:
             raise RuntimeError("Recursive cross-agent delegation is not allowed")
         provider = str(payload.get("provider") or "")
         mode = str(payload.get("mode") or "")
-        model = str(payload.get("model") or "")
+        requested_model = str(payload.get("model") or "").strip()
         prompt = str(payload.get("prompt") or "")
         owner = str(payload.get("owner") or "")[:200]
         if provider not in self.provider_limits:
@@ -1159,8 +1196,13 @@ class Supervisor:
             supplied_capability = str(payload.get("implement_capability") or "")
             if not expected_capability or not hmac.compare_digest(supplied_capability, expected_capability):
                 raise PermissionError("Invalid implementation capability")
-        if not MODEL_PATTERN.fullmatch(model):
+        if requested_model and not MODEL_PATTERN.fullmatch(requested_model):
             raise ValueError("Model contains unsupported characters")
+        model, model_message = _normalize_model(provider, requested_model)
+        if not model:
+            raise ValueError("Model is required for this provider")
+        if not MODEL_PATTERN.fullmatch(model):
+            raise ValueError("Effective model contains unsupported characters")
         if not prompt.strip() or len(prompt.encode("utf-8")) > MAX_PROMPT_BYTES:
             raise ValueError(f"Prompt must contain 1 to {MAX_PROMPT_BYTES} UTF-8 bytes")
         workdir = _safe_workdir(str(payload.get("workdir") or ""))
@@ -1173,8 +1215,9 @@ class Supervisor:
             raise ValueError("CAO does not support an explicit provider turn ceiling")
         soft_stall = max(30, min(int(payload.get("soft_stall_seconds") or DEFAULT_SOFT_STALL_SECONDS), timeout))
         spec = {
-            "provider": provider, "model": model, "mode": mode, "workdir": str(workdir),
-            "prompt": prompt, "owner": owner,
+            "provider": provider, "model": model, "requested_model": requested_model,
+            "mode": mode, "workdir": str(workdir),
+            "prompt": prompt, "owner": owner, "message": model_message,
             "timeout_seconds": timeout, "soft_stall_seconds": soft_stall, "max_turns": max_turns,
             "execution_backend": execution_backend,
             "semantic_stream": int(
@@ -1185,7 +1228,8 @@ class Supervisor:
             "idempotency_key": str(payload.get("idempotency_key") or "")[:200],
         }
         hash_fields = {key: spec[key] for key in (
-            "provider", "model", "mode", "workdir", "prompt", "timeout_seconds", "max_turns",
+            "provider", "model", "requested_model", "mode", "workdir", "prompt",
+            "timeout_seconds", "max_turns",
             "execution_backend",
             "semantic_stream",
         )}

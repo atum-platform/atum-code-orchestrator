@@ -27,7 +27,7 @@ from agent_job_client import cancel, read, submit  # noqa: E402
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--provider", choices=("claude", "kimi", "codex"), required=True)
-    parser.add_argument("--model", required=True)
+    parser.add_argument("--model", default="")
     parser.add_argument("--mode", choices=("implement", "readonly"), required=True)
     parser.add_argument("--workdir", required=True)
     parser.add_argument("--prompt", required=True)
@@ -39,6 +39,8 @@ def main() -> int:
         help="provider turn ceiling; 0 omits the ceiling (default)",
     )
     args = parser.parse_args()
+    if args.provider != "kimi" and not args.model:
+        parser.error("--model is required unless --provider=kimi")
     workdir = Path(args.workdir).expanduser().resolve()
     if not workdir.is_dir():
         parser.error(f"workdir is not an existing directory: {workdir}")

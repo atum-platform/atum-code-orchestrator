@@ -17,9 +17,9 @@ mcp = FastMCP("agent-jobs")
 @mcp.tool()
 async def job_submit(
     provider: str,
-    model: str,
     instructions: str,
     workdir: str,
+    model: str = "",
     context_git_diff: bool = False,
     context_git_base: str = "HEAD",
     context_files: list[str] | None = None,
@@ -31,7 +31,7 @@ async def job_submit(
     label: str = "",
     owner: str = "",
 ) -> str:
-    """Submit a durable read-only job. max_turns=0 omits the provider turn ceiling."""
+    """Submit a durable read-only job. Kimi defaults to K3; max_turns=0 omits its ceiling."""
     result = await asyncio.to_thread(
         review_core.job_submit,
         provider=provider, model=model, instructions=instructions, workdir=workdir,
