@@ -32,7 +32,7 @@ async def route_decide(
     session_id: str = "",
     owner: str = "",
 ) -> str:
-    """Decide a route; Codex canary native-worker decisions include a bounded lease."""
+    """Decide a route; pass protocol v2 capabilities for deterministic degradation."""
     result = await asyncio.to_thread(
         review_core.routing_decide,
         protocol_version=protocol_version, caller_provider=caller_provider,

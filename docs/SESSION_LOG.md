@@ -1,5 +1,23 @@
 # Session Log
 
+## 2026-08-13 - Capability-aware mixed-version routing P4
+
+- Added routing protocol v2 while retaining full protocol-v1 acceptance and
+  behavior. The CLI defaults to v2; MCP omission remains v1-compatible, and new
+  client guidance includes a one-time v1 retry against older supervisors.
+- Added server-owned surface capability ceilings. V2 intersects client claims
+  with those ceilings and degrades unavailable durable lanes to `direct` rather
+  than returning instructions the calling app cannot execute.
+- Added exact Claude/Kimi capability matrices: Opus handles Claude review and
+  deep thinking domains, K3 handles Kimi review and standard/deep work, and
+  Fable remains explicit-only.
+- Added opt-in `surface_canary` enforcement for cooperating v2 Codex, Claude,
+  and Kimi surfaces while old non-Codex clients remain shadow.
+- Exposed supported protocol versions and both matrices in `route_status`; added
+  mixed-version, exact-model, false-capability, and degradation regressions.
+- Verification passes all 242 unit/integration tests, Python compile checks, and
+  diff whitespace validation.
+
 ## 2026-08-12 - Dynamic durable concurrency P3
 
 - Raised each durable provider's default and hard concurrency ceiling to three.

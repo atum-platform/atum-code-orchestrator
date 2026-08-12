@@ -100,11 +100,19 @@ workspace roots are defined once in `tools/agent_job_policy.py` and used by the
 installer, supervisor, review core, and profile migrator. Override them
 consistently with `AGENT_JOB_ALLOWED_ROOTS` when deploying elsewhere.
 
-The same socket accepts protocol-v1 `route_decide`, `route_feedback`,
-`route_reconcile`, and `route_status` requests. Shadow mode validates and records
+The same socket accepts protocol-v1 and protocol-v2 `route_decide` requests plus
+`route_feedback`, `route_reconcile`, and `route_status`. V1 preserves the legacy
+model aliases and assumes durable jobs are available. V2 intersects declared
+client capabilities with the server-owned surface matrix and returns exact
+Claude/Kimi model IDs. A lane the client cannot execute degrades explicitly to
+`direct`; unsupported native claims never create reservations.
+
+Shadow mode validates and records
 centralized recommendations without changing caller behavior. Set
 `AGENT_JOB_ROUTING_MODE=codex_canary` to make only Codex-on-Codex responses
-authoritative. Eligible focused work atomically claims an expiring cooperative
+authoritative. `surface_canary` also makes v2 decisions authoritative for Codex,
+Claude Code/Desktop, and Kimi Code while keeping v1 non-Codex callers in shadow.
+Eligible focused Codex work atomically claims an expiring cooperative
 native reservation; the supervisor does not spawn or terminate the subagent and
 does not change durable `submit` behavior.
 Unknown routing modes fail during supervisor startup.

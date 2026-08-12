@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 
-PROTOCOL_VERSION = 1
-POLICY_VERSION = "2026-08-12.3"
-ROUTING_MODES = {"shadow", "codex_canary"}
+PROTOCOL_VERSION = 2
+SUPPORTED_PROTOCOL_VERSIONS = {1, 2}
+POLICY_VERSION = "2026-08-13.1"
+CAPABILITY_MATRIX_VERSION = "2026-08-13.1"
+ROUTING_MODES = {"shadow", "codex_canary", "surface_canary"}
 
 PROVIDERS = {"codex", "claude", "kimi", "hermes"}
 SURFACES = {"codex", "claude-code", "claude-desktop", "kimi-code", "hermes"}
@@ -23,10 +25,39 @@ DURABILITIES = {"session", "durable"}
 TARGET_PROVIDERS = {"codex", "claude", "kimi"}
 MAX_INTENT_BYTES = 16 * 1024
 
-MODEL_ALIASES = {
+LEGACY_MODEL_ALIASES = {
     "codex": "codex_standard",
     "claude": "claude_deep",
     "kimi": "kimi_standard",
+}
+
+PROVIDER_CAPABILITY_MATRIX = {
+    "claude": {
+        "deep_model": "opus",
+        "standard_model": "sonnet",
+        "explicit_only_models": ["fable"],
+        "strengths": ["planning", "architecture", "design", "product", "copywriting", "research", "code_review"],
+    },
+    "kimi": {
+        "deep_model": "kimi-code/k3",
+        "standard_model": "kimi-code/kimi-for-coding",
+        "fast_model": "kimi-code/kimi-for-coding-highspeed",
+        "strengths": ["code_review", "implementation", "tests", "exploration"],
+    },
+}
+
+SURFACE_CAPABILITY_MATRIX = {
+    "codex": {"durable_agent_jobs", "native_subagents"},
+    "claude-code": {"durable_agent_jobs"},
+    "claude-desktop": {"durable_agent_jobs"},
+    "kimi-code": {"durable_agent_jobs"},
+    "hermes": {"durable_agent_jobs"},
+}
+CALLER_SURFACES = {
+    "codex": {"codex"},
+    "claude": {"claude-code", "claude-desktop"},
+    "kimi": {"kimi-code"},
+    "hermes": {"hermes"},
 }
 
 NATIVE_CODEX_CAPABILITIES = {"implementation", "exploration", "tests"}
@@ -62,12 +93,15 @@ def normalize_intent(intent: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(
             f"Unsupported routing protocol version: {version!r}; expected {PROTOCOL_VERSION}"
         )
-    if version != PROTOCOL_VERSION:
+    if version not in SUPPORTED_PROTOCOL_VERSIONS:
         raise ValueError(
-            f"Unsupported routing protocol version: {version}; expected {PROTOCOL_VERSION}"
+            f"Unsupported routing protocol version: {version}; supported versions are "
+            f"{sorted(SUPPORTED_PROTOCOL_VERSIONS)}"
         )
     caller = _required_enum(intent, "caller_provider", PROVIDERS)
     surface = _required_enum(intent, "surface", SURFACES)
+    if surface not in CALLER_SURFACES[caller]:
+        raise ValueError(f"Surface {surface} does not belong to caller {caller}")
     capability = _required_enum(intent, "capability", CAPABILITIES)
     complexity = _optional_enum(intent, "complexity", COMPLEXITIES, "standard")
     risk = _optional_enum(intent, "risk", RISKS, "medium")
@@ -93,6 +127,19 @@ def normalize_intent(intent: dict[str, Any]) -> dict[str, Any]:
     if len(session_id) > 200:
         raise ValueError("session_id is too long")
 
+    declared_capabilities = dict(sorted(capabilities.items()))
+    if version == 1:
+        effective_capabilities = {
+            "durable_agent_jobs": True,
+            "native_subagents": bool(declared_capabilities.get("native_subagents", False)),
+        }
+    else:
+        allowed = SURFACE_CAPABILITY_MATRIX[surface]
+        effective_capabilities = {
+            name: bool(declared_capabilities.get(name, False)) and name in allowed
+            for name in ("durable_agent_jobs", "native_subagents")
+        }
+
     return {
         "protocol_version": version,
         "caller_provider": caller,
@@ -104,11 +151,30 @@ def normalize_intent(intent: dict[str, Any]) -> dict[str, Any]:
         "duration": duration,
         "durability": durability,
         "parallelizable": intent.get("parallelizable", False),
-        "surface_capabilities": dict(sorted(capabilities.items())),
+        "surface_capabilities": declared_capabilities,
+        "effective_surface_capabilities": effective_capabilities,
         "explicit_provider": explicit_provider,
         "explicit_model": explicit_model,
         "session_id": session_id,
-    }
+}
+
+
+def _model_alias(provider: str, intent: dict[str, Any]) -> str:
+    if intent["protocol_version"] == 1:
+        return LEGACY_MODEL_ALIASES.get(provider, "")
+    if provider == "claude":
+        return "opus" if (
+            intent["capability"] in {
+                "code_review", "planning", "architecture", "design", "product",
+                "copywriting", "research",
+            }
+            or intent["complexity"] == "deep"
+        ) else "sonnet"
+    if provider == "kimi":
+        if intent["capability"] == "code_review" or intent["complexity"] in {"standard", "deep"}:
+            return "kimi-code/k3"
+        return "kimi-code/kimi-for-coding"
+    return "codex_standard"
 
 
 def decide(intent: dict[str, Any], routing_mode: str = "shadow") -> dict[str, Any]:
@@ -122,11 +188,17 @@ def decide(intent: dict[str, Any], routing_mode: str = "shadow") -> dict[str, An
     explicit_provider = intent["explicit_provider"]
     explicit_model = intent["explicit_model"]
 
-    canary = routing_mode == "codex_canary" and caller == "codex" and surface == "codex"
-    mode = "codex_canary" if canary else "shadow"
+    codex_canary = routing_mode in {"codex_canary", "surface_canary"} and caller == "codex" and surface == "codex"
+    surface_canary = (
+        routing_mode == "surface_canary"
+        and intent["protocol_version"] == 2
+        and surface in {"codex", "claude-code", "claude-desktop", "kimi-code"}
+    )
+    canary = codex_canary or surface_canary
+    mode = routing_mode if canary else "shadow"
     enforced = canary
     reasons = (
-        ["Codex canary decision is authoritative for this cooperating caller"]
+        [f"{mode} decision is authoritative for this cooperating caller"]
         if canary else
         ["shadow decision only; existing caller behavior remains authoritative"]
     )
@@ -149,7 +221,7 @@ def decide(intent: dict[str, Any], routing_mode: str = "shadow") -> dict[str, An
         and intent["scope"] in {"local", "single_module"}
         and intent["duration"] in {"short", "medium"}
         and intent["durability"] == "session"
-        and intent["surface_capabilities"].get("native_subagents", False)
+        and intent["effective_surface_capabilities"].get("native_subagents", False)
         and intent["session_id"]
     ):
         lane = "native_subagent"
@@ -169,9 +241,23 @@ def decide(intent: dict[str, Any], routing_mode: str = "shadow") -> dict[str, An
         fallback_provider = ""
         reasons.append("current policy does not automatically delegate this capability")
 
+    degraded_from_lane = ""
+    if (
+        intent["protocol_version"] == 2
+        and lane == "agent_jobs"
+        and not intent["effective_surface_capabilities"].get("durable_agent_jobs", False)
+    ):
+        degraded_from_lane = lane
+        lane = "direct"
+        provider = ""
+        fallback_provider = ""
+        reasons.append("client cannot execute durable agent jobs; degraded to direct")
+
     return {
-        "protocol_version": PROTOCOL_VERSION,
+        "protocol_version": intent["protocol_version"],
+        "latest_protocol_version": PROTOCOL_VERSION,
         "policy_version": POLICY_VERSION,
+        "capability_matrix_version": CAPABILITY_MATRIX_VERSION,
         "mode": mode,
         "enforced": enforced,
         "surface": surface,
@@ -180,11 +266,13 @@ def decide(intent: dict[str, Any], routing_mode: str = "shadow") -> dict[str, An
         "model_alias": (
             "" if lane == "direct" else
             "codex_fast" if lane == "native_subagent" else
-            explicit_model or MODEL_ALIASES.get(provider, "")
+            explicit_model or _model_alias(provider, intent)
         ),
         "worker_profile": "spark-worker" if lane == "native_subagent" else "",
         "fallback_provider": fallback_provider,
-        "fallback_model_alias": MODEL_ALIASES.get(fallback_provider, ""),
+        "fallback_model_alias": _model_alias(fallback_provider, intent) if fallback_provider else "",
+        "effective_surface_capabilities": intent["effective_surface_capabilities"],
+        "degraded_from_lane": degraded_from_lane,
         "reasons": reasons,
         "expires_at": None,
         "reservation_status": "none",

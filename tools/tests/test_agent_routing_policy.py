@@ -70,7 +70,7 @@ class AgentRoutingPolicyTest(unittest.TestCase):
 
     def test_protocol_and_surface_capability_validation_fail_closed(self) -> None:
         intent = self.intent("codex", "planning")
-        intent["protocol_version"] = 2
+        intent["protocol_version"] = 3
         with self.assertRaisesRegex(ValueError, "protocol version"):
             decide(intent)
         intent["protocol_version"] = 1.9
@@ -80,6 +80,76 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         intent["surface_capabilities"] = {"native_subagents": "yes"}
         with self.assertRaisesRegex(ValueError, "boolean"):
             decide(intent)
+
+    def test_v2_selects_exact_claude_and_kimi_models(self) -> None:
+        planning = self.intent("codex", "planning")
+        planning.update(
+            protocol_version=2,
+            surface_capabilities={"durable_agent_jobs": True},
+        )
+        review = self.intent("codex", "code_review")
+        review.update(
+            protocol_version=2,
+            surface_capabilities={"durable_agent_jobs": True},
+        )
+
+        planning_decision = decide(planning)
+        review_decision = decide(review)
+
+        self.assertEqual("opus", planning_decision["model_alias"])
+        self.assertEqual("kimi-code/k3", planning_decision["fallback_model_alias"])
+        self.assertEqual("kimi-code/k3", review_decision["model_alias"])
+        self.assertEqual("opus", review_decision["fallback_model_alias"])
+
+    def test_v2_degrades_when_surface_cannot_execute_selected_lane(self) -> None:
+        intent = self.intent("claude", "planning")
+        intent.update(protocol_version=2, surface_capabilities={})
+
+        decision = decide(intent, "surface_canary")
+
+        self.assertTrue(decision["enforced"])
+        self.assertEqual("direct", decision["lane"])
+        self.assertEqual("agent_jobs", decision["degraded_from_lane"])
+        self.assertEqual("", decision["provider"])
+
+    def test_surface_canary_enforces_v2_durable_route(self) -> None:
+        intent = self.intent("claude", "planning")
+        intent.update(
+            protocol_version=2,
+            surface_capabilities={"durable_agent_jobs": True},
+        )
+
+        decision = decide(intent, "surface_canary")
+
+        self.assertTrue(decision["enforced"])
+        self.assertEqual("surface_canary", decision["mode"])
+        self.assertEqual("agent_jobs", decision["lane"])
+        self.assertEqual("codex", decision["provider"])
+
+    def test_surface_matrix_rejects_unsupported_native_claim(self) -> None:
+        intent = self.intent("claude", "implementation")
+        intent.update(
+            protocol_version=2, complexity="focused", durability="session",
+            session_id="task", surface_capabilities={
+                "durable_agent_jobs": True, "native_subagents": True,
+            },
+        )
+
+        decision = decide(intent, "surface_canary")
+
+        self.assertFalse(decision["effective_surface_capabilities"]["native_subagents"])
+        self.assertEqual("direct", decision["lane"])
+
+    def test_surface_must_belong_to_caller(self) -> None:
+        intent = self.intent("claude", "planning")
+        intent["surface"] = "codex"
+        with self.assertRaisesRegex(ValueError, "does not belong"):
+            decide(intent)
+
+    def test_v1_claude_remains_shadow_in_surface_canary(self) -> None:
+        decision = decide(self.intent("claude", "planning"), "surface_canary")
+        self.assertFalse(decision["enforced"])
+        self.assertEqual("shadow", decision["mode"])
 
     def test_recursive_direct_route_has_no_model_alias(self) -> None:
         intent = self.intent("codex", "planning")

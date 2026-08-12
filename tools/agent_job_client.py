@@ -187,7 +187,7 @@ def _parser() -> argparse.ArgumentParser:
     inbox_parser.add_argument("--limit", type=int, default=20)
     inbox_parser.add_argument("--ack-delivery-id", action="append", dest="ack_delivery_ids")
     route = sub.add_parser("route-decide")
-    route.add_argument("--protocol-version", type=int, default=1)
+    route.add_argument("--protocol-version", type=int, default=2)
     route.add_argument("--caller-provider", required=True)
     route.add_argument("--surface", required=True)
     route.add_argument("--capability", required=True)

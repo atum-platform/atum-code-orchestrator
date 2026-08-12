@@ -52,19 +52,26 @@ former 400 KB ceiling are accepted end to end rather than only by one layer.
 
 ## Routing Protocol
 
-`route_decide` protocol version 1 accepts a bounded structured intent containing
+`route_decide` supports protocol versions 1 and 2. Both accept a bounded structured intent containing
 the caller provider, coding surface, capability, complexity, risk, scope,
 duration, durability, parallelizability, optional explicit target, stable session
 ID, and a boolean surface-capability map. Unknown fields are tolerated for mixed-version clients
 but discarded before persistence;
-unknown enum values and unsupported protocol versions fail closed.
+unknown enum values and unsupported protocol versions fail closed. New clients
+send v2 with `durable_agent_jobs=true` and only claim `native_subagents=true`
+when that tool is actually present. If an older server rejects v2, retry once
+with v1; old clients remain valid against a new server.
 
 The response includes a durable decision ID, policy version, lane, provider,
-stable model alias, worker profile, fallback, reasons, expiry, and reservation
+model alias, worker profile, fallback, effective surface capabilities, reasons,
+expiry, and reservation
 state. Shadow responses return `enforced=false` and never reserve. With
 `AGENT_JOB_ROUTING_MODE=codex_canary`, only a Codex caller on the Codex surface
 can receive `enforced=true`; focused session-scoped implementation, exploration,
-or test work may receive a `native_subagent` lane.
+or test work may receive a `native_subagent` lane. `surface_canary` extends v2
+enforcement to the supported Claude and Kimi coding surfaces. V2 selects Opus
+for Claude's deep/review/thinking work and K3 for Kimi review or standard/deep
+work; Fable remains explicit-only.
 
 Native admission and persistence occur in one SQLite `BEGIN IMMEDIATE`
 transaction. The default machine-wide cooperative limit is three active Codex
@@ -77,7 +84,8 @@ termination, integration, and verification.
 python3 tools/review_cli.py route-decide \
   --caller-provider codex --surface codex --capability planning \
   --complexity deep --scope repo --duration long --durability durable \
-  --surface-capabilities '{"native_subagents":true}'
+  --protocol-version 2 \
+  --surface-capabilities '{"durable_agent_jobs":true,"native_subagents":true}'
 ```
 
 Codex sends `route_feedback` after every enforced native decision. Identical

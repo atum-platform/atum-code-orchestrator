@@ -863,7 +863,7 @@ class Supervisor:
             for provider in ("claude", "kimi", "codex")
         }
         self.routing_mode = os.environ.get("AGENT_JOB_ROUTING_MODE", "shadow").strip().lower()
-        if self.routing_mode not in {"shadow", "codex_canary"}:
+        if self.routing_mode not in {"shadow", "codex_canary", "surface_canary"}:
             raise ValueError(f"Unsupported AGENT_JOB_ROUTING_MODE: {self.routing_mode}")
         self.native_reservation_limit = _bounded_int_env(
             "AGENT_JOB_CODEX_NATIVE_RESERVATIONS", 3, 1, 32
@@ -1698,7 +1698,10 @@ class Supervisor:
         )
 
     def route_status(self) -> dict[str, Any]:
-        from agent_routing_policy import POLICY_VERSION
+        from agent_routing_policy import (
+            CAPABILITY_MATRIX_VERSION, POLICY_VERSION, PROVIDER_CAPABILITY_MATRIX,
+            PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS, SURFACE_CAPABILITY_MATRIX,
+        )
 
         health = (
             self.store.refresh_provider_health(stale_seconds=self.quota_stale_seconds)
@@ -1711,6 +1714,14 @@ class Supervisor:
         join_rate = float(route_metrics["feedback_join_rate"] or 0.0)
         return {
             "policy_version": POLICY_VERSION,
+            "latest_protocol_version": PROTOCOL_VERSION,
+            "supported_protocol_versions": sorted(SUPPORTED_PROTOCOL_VERSIONS),
+            "capability_matrix_version": CAPABILITY_MATRIX_VERSION,
+            "provider_capabilities": PROVIDER_CAPABILITY_MATRIX,
+            "surface_capabilities": {
+                surface: sorted(capabilities)
+                for surface, capabilities in SURFACE_CAPABILITY_MATRIX.items()
+            },
             "routing_mode": self.routing_mode,
             "native_reservation_limit": self.native_reservation_limit,
             "native_reservation_ttl_seconds": self.native_reservation_ttl,

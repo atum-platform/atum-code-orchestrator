@@ -30,6 +30,7 @@ class AgentJobClientParserTest(unittest.TestCase):
             '{"native_subagents":true}',
         ]))
         self.assertEqual("route-decide", args["action"])
+        self.assertEqual(2, args["protocol_version"])
         self.assertEqual({"native_subagents": True}, args["surface_capabilities"])
 
     def test_route_lifecycle_commands_parse(self) -> None:

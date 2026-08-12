@@ -1736,6 +1736,44 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(row)
         self.assertEqual("test:shadow", row["owner"])
 
+    async def test_surface_canary_enforces_v2_and_degrades_missing_transport(self) -> None:
+        self.supervisor.routing_mode = "surface_canary"
+        payload = {
+            "action": "route_decide", "protocol_version": 2,
+            "caller_provider": "claude", "surface": "claude-code",
+            "capability": "planning", "session_id": "claude-session",
+        }
+
+        degraded = await self.call(payload)
+        durable = await self.call({
+            **payload,
+            "surface_capabilities": {"durable_agent_jobs": True},
+        })
+
+        self.assertTrue(degraded["enforced"])
+        self.assertEqual("direct", degraded["lane"])
+        self.assertEqual("agent_jobs", degraded["degraded_from_lane"])
+        self.assertTrue(durable["enforced"])
+        self.assertEqual("agent_jobs", durable["lane"])
+        self.assertEqual("codex", durable["provider"])
+
+    async def test_v2_quota_rebalance_preserves_exact_provider_models(self) -> None:
+        self.supervisor.quota_routing_enabled = True
+        self.supervisor.routing_mode = "surface_canary"
+        self.supervisor.store.record_provider_rate_limit("claude", time.time() + 60, "test")
+
+        decision = await self.call({
+            "action": "route_decide", "protocol_version": 2,
+            "caller_provider": "codex", "surface": "codex",
+            "capability": "planning",
+            "surface_capabilities": {"durable_agent_jobs": True},
+        })
+
+        self.assertEqual("kimi", decision["provider"])
+        self.assertEqual("kimi-code/k3", decision["model_alias"])
+        self.assertEqual("claude", decision["fallback_provider"])
+        self.assertEqual("opus", decision["fallback_model_alias"])
+
     async def test_quota_broker_rebalances_default_but_not_explicit_route(self) -> None:
         now = time.time()
         quota_dir = Path(os.environ["AGENT_JOB_QUOTA_HISTORY_DIR"])
@@ -1870,6 +1908,10 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, status["feedback_eligible"])
         self.assertEqual(1, status["feedback_joined"])
         self.assertEqual(0.5, status["feedback_join_rate"])
+        self.assertEqual([1, 2], status["supported_protocol_versions"])
+        self.assertEqual(2, status["latest_protocol_version"])
+        self.assertEqual("opus", status["provider_capabilities"]["claude"]["deep_model"])
+        self.assertIn("durable_agent_jobs", status["surface_capabilities"]["kimi-code"])
 
     async def test_route_decide_rejects_unknown_protocol_without_persisting(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "protocol version"):
