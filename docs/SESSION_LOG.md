@@ -15,8 +15,11 @@
   fallback health, route-shape changes, and explicit targets. Clarified the
   intentional fail-open quota semantics and identity contract, bounded evidence
   after redaction, improved MCP discovery text, and added the missing edge tests.
-- Verified the completed phase with 253 repository tests, focused escalation
+- Verified the completed phase with 254 repository tests, focused escalation
   integration tests, Python bytecode compilation, and `git diff --check`.
+- Kimi K3's targeted follow-up returned SHIP. Added its sole non-blocking
+  recommendation: a regression test for native-worker escalation degrading to
+  direct primary execution.
 
 ## 2026-08-13 - Capability-aware mixed-version routing P4
 

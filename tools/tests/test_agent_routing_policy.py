@@ -152,6 +152,22 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         )
         self.assertEqual("kimi", different_provider["provider"])
 
+    def test_native_worker_escalation_degrades_to_direct(self) -> None:
+        decision = {
+            "lane": "native_subagent", "provider": "codex",
+            "model_alias": "gpt-5.3-codex-spark", "worker_profile": "spark-worker",
+            "fallback_provider": "", "fallback_model_alias": "",
+            "reasons": ["focused native worker"],
+        }
+        escalated = apply_one_hop_escalation(
+            decision, {"provider": "codex"}, {},
+        )
+        self.assertEqual("direct", escalated["lane"])
+        self.assertEqual("", escalated["provider"])
+        self.assertEqual("", escalated["model_alias"])
+        self.assertEqual("", escalated["worker_profile"])
+        self.assertEqual(1, escalated["escalation_hop"])
+
     def test_v2_selects_exact_claude_and_kimi_models(self) -> None:
         planning = self.intent("codex", "planning")
         planning.update(
