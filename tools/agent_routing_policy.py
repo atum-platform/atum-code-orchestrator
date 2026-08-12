@@ -32,6 +32,12 @@ LEGACY_MODEL_ALIASES = {
 }
 
 PROVIDER_CAPABILITY_MATRIX = {
+    "codex": {
+        "deep_model": "gpt-5.6-sol",
+        "standard_model": "gpt-5.6-sol",
+        "fast_model": "gpt-5.3-codex-spark",
+        "strengths": ["implementation", "tests", "exploration", "code_review"],
+    },
     "claude": {
         "deep_model": "opus",
         "standard_model": "sonnet",
@@ -156,25 +162,26 @@ def normalize_intent(intent: dict[str, Any]) -> dict[str, Any]:
         "explicit_provider": explicit_provider,
         "explicit_model": explicit_model,
         "session_id": session_id,
-}
+    }
 
 
 def _model_alias(provider: str, intent: dict[str, Any]) -> str:
     if intent["protocol_version"] == 1:
         return LEGACY_MODEL_ALIASES.get(provider, "")
+    matrix = PROVIDER_CAPABILITY_MATRIX[provider]
     if provider == "claude":
-        return "opus" if (
+        return matrix["deep_model"] if (
             intent["capability"] in {
                 "code_review", "planning", "architecture", "design", "product",
                 "copywriting", "research",
             }
             or intent["complexity"] == "deep"
-        ) else "sonnet"
+        ) else matrix["standard_model"]
     if provider == "kimi":
         if intent["capability"] == "code_review" or intent["complexity"] in {"standard", "deep"}:
-            return "kimi-code/k3"
-        return "kimi-code/kimi-for-coding"
-    return "codex_standard"
+            return matrix["deep_model"]
+        return matrix["fast_model"] if intent["complexity"] == "trivial" else matrix["standard_model"]
+    return matrix["deep_model"] if intent["complexity"] == "deep" else matrix["standard_model"]
 
 
 def decide(intent: dict[str, Any], routing_mode: str = "shadow") -> dict[str, Any]:
@@ -188,7 +195,7 @@ def decide(intent: dict[str, Any], routing_mode: str = "shadow") -> dict[str, An
     explicit_provider = intent["explicit_provider"]
     explicit_model = intent["explicit_model"]
 
-    codex_canary = routing_mode in {"codex_canary", "surface_canary"} and caller == "codex" and surface == "codex"
+    codex_canary = routing_mode == "codex_canary" and caller == "codex" and surface == "codex"
     surface_canary = (
         routing_mode == "surface_canary"
         and intent["protocol_version"] == 2

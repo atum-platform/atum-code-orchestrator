@@ -71,7 +71,8 @@ can receive `enforced=true`; focused session-scoped implementation, exploration,
 or test work may receive a `native_subagent` lane. `surface_canary` extends v2
 enforcement to the supported Claude and Kimi coding surfaces. V2 selects Opus
 for Claude's deep/review/thinking work and K3 for Kimi review or standard/deep
-work; Fable remains explicit-only.
+work. Codex targets use concrete GPT-5.6 Sol, with Spark reserved for focused
+native work; Fable remains explicit-only.
 
 Native admission and persistence occur in one SQLite `BEGIN IMMEDIATE`
 transaction. The default machine-wide cooperative limit is three active Codex

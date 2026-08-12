@@ -151,6 +151,21 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         self.assertFalse(decision["enforced"])
         self.assertEqual("shadow", decision["mode"])
 
+    def test_v1_codex_also_remains_shadow_in_surface_canary(self) -> None:
+        decision = decide(self.intent("codex", "planning"), "surface_canary")
+        self.assertFalse(decision["enforced"])
+        self.assertEqual("shadow", decision["mode"])
+
+    def test_v2_codex_target_uses_concrete_model(self) -> None:
+        intent = self.intent("claude", "planning")
+        intent.update(
+            protocol_version=2,
+            surface_capabilities={"durable_agent_jobs": True},
+        )
+        decision = decide(intent, "surface_canary")
+        self.assertEqual("codex", decision["provider"])
+        self.assertEqual("gpt-5.6-sol", decision["model_alias"])
+
     def test_recursive_direct_route_has_no_model_alias(self) -> None:
         intent = self.intent("codex", "planning")
         intent.update(explicit_provider="codex", explicit_model="gpt-test")

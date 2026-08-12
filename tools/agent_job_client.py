@@ -87,7 +87,13 @@ def submit(socket_path: Path | str = DEFAULT_SOCKET_PATH, **kwargs: Any) -> dict
 
 
 def route_decide(socket_path: Path | str = DEFAULT_SOCKET_PATH, **intent: Any) -> dict[str, Any]:
-    return request({"action": "route_decide", **intent}, socket_path)
+    payload = {"action": "route_decide", **intent}
+    try:
+        return request(payload, socket_path)
+    except RuntimeError as exc:
+        if payload.get("protocol_version") != 2 or "protocol version" not in str(exc).lower():
+            raise
+        return request({**payload, "protocol_version": 1}, socket_path)
 
 
 def route_feedback(

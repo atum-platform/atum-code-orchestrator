@@ -3,12 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 
 TOOLS_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS_DIR))
 
-from agent_job_client import _parser  # noqa: E402
+from agent_job_client import _parser, route_decide  # noqa: E402
 
 
 class AgentJobClientParserTest(unittest.TestCase):
@@ -45,6 +46,16 @@ class AgentJobClientParserTest(unittest.TestCase):
 
         self.assertEqual("completed", feedback["outcome"])
         self.assertEqual(["decision"], reconcile["active_decision_id"])
+
+    def test_route_decide_retries_v1_only_for_old_protocol_rejection(self) -> None:
+        with patch("agent_job_client.request", side_effect=[
+            RuntimeError("Unsupported routing protocol version: 2; expected 1"),
+            {"protocol_version": 1},
+        ]) as mocked:
+            result = route_decide(protocol_version=2, caller_provider="codex")
+        self.assertEqual(1, result["protocol_version"])
+        self.assertEqual(2, mocked.call_count)
+        self.assertEqual(1, mocked.call_args_list[1].args[0]["protocol_version"])
 
 
 if __name__ == "__main__":

@@ -8,7 +8,8 @@
 - Added server-owned surface capability ceilings. V2 intersects client claims
   with those ceilings and degrades unavailable durable lanes to `direct` rather
   than returning instructions the calling app cannot execute.
-- Added exact Claude/Kimi capability matrices: Opus handles Claude review and
+- Added exact Codex/Claude/Kimi capability matrices: GPT-5.6 Sol handles Codex
+  durable targets, Opus handles Claude review and
   deep thinking domains, K3 handles Kimi review and standard/deep work, and
   Fable remains explicit-only.
 - Added opt-in `surface_canary` enforcement for cooperating v2 Codex, Claude,
@@ -17,6 +18,13 @@
   mixed-version, exact-model, false-capability, and degradation regressions.
 - Verification passes all 242 unit/integration tests, Python compile checks, and
   diff whitespace validation.
+- Kimi K3 returned SHIP and identified two mixed-version ambiguities. Gated every
+  `surface_canary` caller, including Codex, to v2; derived exact models from the
+  published matrices; automated CLI fallback to v1-only supervisors; and
+  documented trusted-local identity plus caller/surface validation in both
+  protocol versions.
+- Post-review verification passes all 245 unit/integration tests, Python compile
+  checks, and diff whitespace validation.
 
 ## 2026-08-12 - Dynamic durable concurrency P3
 

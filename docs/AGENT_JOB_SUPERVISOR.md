@@ -104,18 +104,23 @@ The same socket accepts protocol-v1 and protocol-v2 `route_decide` requests plus
 `route_feedback`, `route_reconcile`, and `route_status`. V1 preserves the legacy
 model aliases and assumes durable jobs are available. V2 intersects declared
 client capabilities with the server-owned surface matrix and returns exact
-Claude/Kimi model IDs. A lane the client cannot execute degrades explicitly to
+Codex/Claude/Kimi model IDs. Caller/surface mismatches fail closed in both
+versions. A lane the client cannot execute degrades explicitly to
 `direct`; unsupported native claims never create reservations.
 
 Shadow mode validates and records
 centralized recommendations without changing caller behavior. Set
 `AGENT_JOB_ROUTING_MODE=codex_canary` to make only Codex-on-Codex responses
 authoritative. `surface_canary` also makes v2 decisions authoritative for Codex,
-Claude Code/Desktop, and Kimi Code while keeping v1 non-Codex callers in shadow.
+Claude Code/Desktop, and Kimi Code while keeping every v1 caller in shadow.
 Eligible focused Codex work atomically claims an expiring cooperative
 native reservation; the supervisor does not spawn or terminate the subagent and
 does not change durable `submit` behavior.
 Unknown routing modes fail during supervisor startup.
+
+Routing identity and capabilities are self-asserted by clients on a trusted
+per-user Unix socket; they coordinate cooperating processes and are not an
+authentication boundary against another process running as the same user.
 
 `AGENT_JOB_CODEX_NATIVE_RESERVATIONS` controls the machine-wide cooperative
 reservation limit (default 3), and `AGENT_JOB_ROUTE_RESERVATION_SECONDS` controls
