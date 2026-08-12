@@ -15,6 +15,36 @@ mcp = FastMCP("agent-jobs")
 
 
 @mcp.tool()
+async def route_decide(
+    caller_provider: str,
+    surface: str,
+    capability: str,
+    protocol_version: int = 1,
+    complexity: str = "standard",
+    risk: str = "medium",
+    scope: str = "single_module",
+    duration: str = "medium",
+    durability: str = "session",
+    parallelizable: bool = False,
+    surface_capabilities: dict[str, bool] | None = None,
+    explicit_provider: str = "",
+    explicit_model: str = "",
+    owner: str = "",
+) -> str:
+    """Record the sidecar's versioned shadow routing decision without enforcing it."""
+    result = await asyncio.to_thread(
+        review_core.routing_decide,
+        protocol_version=protocol_version, caller_provider=caller_provider,
+        surface=surface, capability=capability, complexity=complexity, risk=risk,
+        scope=scope, duration=duration, durability=durability,
+        parallelizable=parallelizable,
+        surface_capabilities=surface_capabilities or {},
+        explicit_provider=explicit_provider, explicit_model=explicit_model, owner=owner,
+    )
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
 async def job_submit(
     provider: str,
     instructions: str,

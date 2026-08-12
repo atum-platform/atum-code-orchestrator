@@ -1,5 +1,28 @@
 # Session Log
 
+## 2026-08-12 - Shadow routing protocol P0
+
+- Added versioned `route_decide` protocol v1 across the supervisor socket,
+  guarded review CLI, raw client CLI, and MCP surface. The protocol accepts
+  structured task intent and surface capabilities, but P0 is explicitly
+  shadow-only and cannot reserve, launch, submit, or alter existing jobs.
+- Centralized a machine-readable copy of the current caller-based specialist
+  routing table with stable provider-family model aliases. Explicit targets are
+  represented, recursive delegation still resolves to a direct lane, and
+  current policy does not automatically delegate implementation.
+- Persisted bounded routing requests and responses in a separate SQLite
+  `route_decisions` table with decision IDs, policy versions, reasons, and the
+  existing 14-day retention policy. Existing `job_submit` behavior and schemas
+  remain compatible.
+- Added policy, validation, persistence, and CLI/MCP parity tests. The installed
+  skill table remains authoritative during P0 so shadow decisions can be
+  compared before the Codex-only enforcement canary; P1 will remove that
+  temporary duplication.
+- K3 independently returned a ship verdict with no blockers. Follow-up hardening
+  canonicalizes persisted fields, rejects non-integer protocol versions, removes
+  model aliases from direct routes, discards unknown fields before persistence,
+  and covers retention and size boundaries.
+
 ## 2026-08-12 - Quote-safe provider process identity
 
 - Traced four Kimi launch failures across the Mac mini and MacBook to process

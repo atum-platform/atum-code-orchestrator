@@ -1461,6 +1461,87 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("2800.0", env["AGENT_JOB_DEADLINE_EPOCH"])
         self.assertNotIn("ANTHROPIC_API_KEY", env)
 
+    async def test_route_decide_persists_shadow_decision_without_creating_job(self) -> None:
+        decision = await self.call({
+            "action": "route_decide",
+            "protocol_version": 1,
+            "caller_provider": "codex",
+            "surface": "codex",
+            "capability": "planning",
+            "complexity": "deep",
+            "risk": "medium",
+            "scope": "repo",
+            "duration": "long",
+            "durability": "durable",
+            "parallelizable": False,
+            "surface_capabilities": {"native_subagents": True},
+            "owner": "test:shadow",
+        })
+        self.assertEqual("shadow", decision["mode"])
+        self.assertFalse(decision["enforced"])
+        self.assertEqual("agent_jobs", decision["lane"])
+        self.assertEqual("claude", decision["provider"])
+        self.assertEqual([], self.supervisor.store.list())
+        row = self.supervisor.store.db.execute(
+            "SELECT * FROM route_decisions WHERE decision_id = ?",
+            (decision["decision_id"],),
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual("test:shadow", row["owner"])
+
+    async def test_route_decide_rejects_unknown_protocol_without_persisting(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "protocol version"):
+            await self.call({
+                "action": "route_decide", "protocol_version": 99,
+                "caller_provider": "codex", "surface": "codex",
+                "capability": "planning",
+            })
+        count = self.supervisor.store.db.execute(
+            "SELECT COUNT(*) FROM route_decisions"
+        ).fetchone()[0]
+        self.assertEqual(0, count)
+
+    async def test_route_decide_canonicalizes_and_discards_unknown_persisted_fields(self) -> None:
+        decision = await self.call({
+            "action": "route_decide", "protocol_version": 1,
+            "caller_provider": " Codex ", "surface": " CODEX ",
+            "capability": " Planning ", "future_field": "do not persist",
+        })
+        row = self.supervisor.store.db.execute(
+            "SELECT * FROM route_decisions WHERE decision_id = ?",
+            (decision["decision_id"],),
+        ).fetchone()
+        self.assertEqual("codex", row["caller_provider"])
+        self.assertEqual("codex", row["surface"])
+        self.assertEqual("planning", row["capability"])
+        self.assertNotIn("future_field", json.loads(row["request_json"]))
+
+    async def test_route_decide_rejects_oversized_intent(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "exceeds"):
+            await self.call({
+                "action": "route_decide", "protocol_version": 1,
+                "caller_provider": "codex", "surface": "codex",
+                "capability": "planning", "future_field": "x" * 20_000,
+            })
+
+    async def test_prune_removes_expired_route_decisions(self) -> None:
+        decision = await self.call({
+            "action": "route_decide", "protocol_version": 1,
+            "caller_provider": "codex", "surface": "codex",
+            "capability": "planning",
+        })
+        self.supervisor.store.db.execute(
+            "UPDATE route_decisions SET created_at = 1 WHERE decision_id = ?",
+            (decision["decision_id"],),
+        )
+        self.supervisor.store.db.commit()
+        self.supervisor.store.prune(2)
+        row = self.supervisor.store.db.execute(
+            "SELECT 1 FROM route_decisions WHERE decision_id = ?",
+            (decision["decision_id"],),
+        ).fetchone()
+        self.assertIsNone(row)
+
     async def test_cao_backend_fails_closed_for_unenforceable_contracts(self) -> None:
         with patch.dict(os.environ, {"AGENT_JOB_EXECUTION_BACKEND": "cao"}):
             codex = self.spec("review")

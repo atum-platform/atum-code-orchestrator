@@ -86,6 +86,10 @@ def submit(socket_path: Path | str = DEFAULT_SOCKET_PATH, **kwargs: Any) -> dict
     raise AssertionError("unreachable")
 
 
+def route_decide(socket_path: Path | str = DEFAULT_SOCKET_PATH, **intent: Any) -> dict[str, Any]:
+    return request({"action": "route_decide", **intent}, socket_path)
+
+
 def read(
     job_id: str,
     cursor: int = 0,
@@ -158,6 +162,21 @@ def _parser() -> argparse.ArgumentParser:
     inbox_parser.add_argument("--owner", required=True)
     inbox_parser.add_argument("--limit", type=int, default=20)
     inbox_parser.add_argument("--ack-delivery-id", action="append", dest="ack_delivery_ids")
+    route = sub.add_parser("route-decide")
+    route.add_argument("--protocol-version", type=int, default=1)
+    route.add_argument("--caller-provider", required=True)
+    route.add_argument("--surface", required=True)
+    route.add_argument("--capability", required=True)
+    route.add_argument("--complexity", default="standard")
+    route.add_argument("--risk", default="medium")
+    route.add_argument("--scope", default="single_module")
+    route.add_argument("--duration", default="medium")
+    route.add_argument("--durability", default="session")
+    route.add_argument("--parallelizable", action="store_true")
+    route.add_argument("--surface-capabilities", type=json.loads, default={})
+    route.add_argument("--explicit-provider", default="")
+    route.add_argument("--explicit-model", default="")
+    route.add_argument("--owner", default="")
     sub.add_parser("ping")
     return parser
 
@@ -170,12 +189,13 @@ def main() -> int:
     payload = vars(args).copy()
     payload.pop("socket")
     action = payload.pop("action")
-    if action == "submit":
-        payload.pop("action", None)
     try:
-        result = submit(socket_path=args.socket, **payload) if action == "submit" else request(
-            {"action": action, **payload}, args.socket
-        )
+        if action == "submit":
+            result = submit(socket_path=args.socket, **payload)
+        elif action == "route-decide":
+            result = route_decide(socket_path=args.socket, **payload)
+        else:
+            result = request({"action": action, **payload}, args.socket)
     except Exception as exc:
         print(str(exc), file=sys.stderr)
         return 1

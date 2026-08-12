@@ -49,6 +49,21 @@ def _parser() -> argparse.ArgumentParser:
     inbox.add_argument("--owner", required=True)
     inbox.add_argument("--limit", type=int, default=20)
     inbox.add_argument("--ack-delivery-id", action="append", dest="ack_delivery_ids")
+    route = sub.add_parser("route-decide")
+    route.add_argument("--protocol-version", type=int, default=1)
+    route.add_argument("--caller-provider", required=True)
+    route.add_argument("--surface", required=True)
+    route.add_argument("--capability", required=True)
+    route.add_argument("--complexity", default="standard")
+    route.add_argument("--risk", default="medium")
+    route.add_argument("--scope", default="single_module")
+    route.add_argument("--duration", default="medium")
+    route.add_argument("--durability", default="session")
+    route.add_argument("--parallelizable", action="store_true")
+    route.add_argument("--surface-capabilities", type=json.loads, default={})
+    route.add_argument("--explicit-provider", default="")
+    route.add_argument("--explicit-model", default="")
+    route.add_argument("--owner", default="")
     return parser
 
 
@@ -56,6 +71,8 @@ def dispatch(values: dict[str, object]) -> dict[str, object]:
     action = str(values.pop("action"))
     if action == "submit":
         return review_core.job_submit(**values)  # type: ignore[arg-type]
+    if action == "route-decide":
+        return review_core.routing_decide(**values)  # type: ignore[arg-type]
     if action == "read":
         return review_core.job_read(**values)  # type: ignore[arg-type]
     if action == "list":

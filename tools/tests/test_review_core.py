@@ -85,7 +85,7 @@ class ReviewCoreTest(unittest.IsolatedAsyncioTestCase):
     async def test_mcp_surface_has_only_guarded_generic_tools(self) -> None:
         tools = set(agent_jobs_server.mcp._tool_manager._tools)
         self.assertEqual(
-            {"job_submit", "job_read", "job_list", "job_cancel", "job_inbox"}, tools
+            {"route_decide", "job_submit", "job_read", "job_list", "job_cancel", "job_inbox"}, tools
         )
         parameters = inspect.signature(agent_jobs_server.job_submit).parameters
         self.assertNotIn("mode", parameters)
@@ -135,6 +135,25 @@ class ReviewCoreTest(unittest.IsolatedAsyncioTestCase):
             ) as mocked:
                 review_cli.dispatch({"action": action, **values})
                 mocked.assert_called_once_with(**values)
+
+    async def test_cli_and_mcp_route_payloads_match(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        def fake_route(**kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            return {"decision_id": "decision"}
+
+        values: dict[str, object] = {
+            "protocol_version": 1, "caller_provider": "codex", "surface": "codex",
+            "capability": "planning", "complexity": "deep", "risk": "medium",
+            "scope": "repo", "duration": "long", "durability": "durable",
+            "parallelizable": False, "surface_capabilities": {},
+            "explicit_provider": "", "explicit_model": "", "owner": "test",
+        }
+        with patch.object(review_core, "routing_decide", side_effect=fake_route):
+            review_cli.dispatch({"action": "route-decide", **values})
+            await agent_jobs_server.route_decide(**values)
+        self.assertEqual(calls[0], calls[1])
 
     async def test_git_base_includes_committed_branch_changes(self) -> None:
         subprocess.run(["git", "init", "-q", str(self.workdir)], check=True)
