@@ -1199,6 +1199,31 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         result = await self.wait_for(str(submitted["job_id"]), {"completed"})
         self.assertEqual(0, result["job"]["exit_code"])
 
+    async def test_argv_prompt_with_unclosed_quotes_does_not_break_launch_identity(self) -> None:
+        original_builder = self.supervisor.command_builder
+
+        def argv_prompt_command(job: dict[str, object]) -> tuple[list[str], None, dict[str, str]]:
+            return [
+                sys.executable,
+                "-c",
+                "import time; print('ok', flush=True); time.sleep(.3)",
+                str(job["prompt"]),
+            ], None, os.environ.copy()
+
+        self.supervisor.command_builder = argv_prompt_command
+        try:
+            spec = self.spec("Review the user's intent")
+            spec["provider"] = "kimi"
+            submitted = await self.call(spec)
+            result = await self.wait_for(str(submitted["job_id"]), {"completed", "failed"})
+        finally:
+            self.supervisor.command_builder = original_builder
+
+        self.assertEqual("completed", result["job"]["status"])
+        live_binary = Path(str(result["job"]["binary_path"]))
+        self.assertTrue(live_binary.is_file())
+        self.assertIn("python", live_binary.name.lower())
+
     async def test_prompt_over_four_mib_is_rejected(self) -> None:
         spec = self.spec("x" * (supervisor_module.MAX_PROMPT_BYTES + 1))
         with self.assertRaisesRegex(RuntimeError, "Prompt must contain"):
@@ -1290,8 +1315,8 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         job_id = "identity-match-job"
         self.supervisor.store.create(spec, job_id, self.supervisor.log_dir / f"{job_id}.log")
         process_start = await self.supervisor._ps_field(process.pid, "lstart")
-        live_command = await self.supervisor._ps_field(process.pid, "command")
-        live_binary = str(Path(live_command.split()[0]).resolve())
+        live_executable = await self.supervisor._ps_field(process.pid, "comm")
+        live_binary = str(Path(live_executable).resolve())
         self.supervisor.store.update(
             job_id, status="running", pid=process.pid, pgid=process.pid,
             binary_path=live_binary, process_start=process_start,
@@ -1300,6 +1325,42 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         process.wait(timeout=5)
         self.assertIsNotNone(process.returncode)
         self.assertEqual("interrupted", self.supervisor.store.get(job_id)["status"])
+
+    async def test_restart_cleanup_ignores_quotes_in_process_arguments(self) -> None:
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import time; time.sleep(30)",
+                "Review the user's intent",
+            ],
+            start_new_session=True,
+        )
+        try:
+            spec = self.spec("complete")
+            spec.update({
+                "soft_stall_seconds": 30,
+                "idempotency_key": "identity-quoted-argument",
+                "request_hash": "hash",
+            })
+            job_id = "identity-quoted-argument-job"
+            self.supervisor.store.create(spec, job_id, self.supervisor.log_dir / f"{job_id}.log")
+            process_start = await self.supervisor._ps_field(process.pid, "lstart")
+            live_executable = await self.supervisor._ps_field(process.pid, "comm")
+            self.supervisor.store.update(
+                job_id, status="running", pid=process.pid, pgid=process.pid,
+                binary_path=str(Path(live_executable).resolve()), process_start=process_start,
+            )
+
+            await self.supervisor._cleanup_interrupted()
+            process.wait(timeout=5)
+
+            self.assertIsNotNone(process.returncode)
+            self.assertEqual("interrupted", self.supervisor.store.get(job_id)["status"])
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=5)
 
     async def test_running_job_hard_deadline_terminates_process(self) -> None:
         spec = self.spec("slow")

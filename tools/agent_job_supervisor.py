@@ -13,7 +13,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shlex
 import shutil
 import signal
 import sqlite3
@@ -1012,8 +1011,7 @@ class Supervisor:
             self.processes[job_id] = proc
             self.job_log_paths[job_id] = Path(job["log_path"])
             process_start = await self._ps_field(proc.pid, "lstart")
-            live_command = await self._ps_field(proc.pid, "command")
-            live_first_arg = shlex.split(live_command)[0] if live_command else argv[0]
+            live_executable = await self._ps_field(proc.pid, "comm")
             current = self.store.get(job_id)
             if current["cancel_requested"] or current["status"] != "launching":
                 await self._terminate(proc)
@@ -1025,7 +1023,8 @@ class Supervisor:
             started = _now()
             self.store.update(
                 job_id, status="running", started_at=started, last_output_at=started,
-                pid=proc.pid, pgid=proc.pid, binary_path=str(Path(live_first_arg).resolve()),
+                pid=proc.pid, pgid=proc.pid,
+                binary_path=str(Path(live_executable or argv[0]).resolve()),
                 process_start=process_start, prompt="", message="",
             )
             if self._has_semantic_adapter(job):
@@ -1147,16 +1146,15 @@ class Supervisor:
             try:
                 process_start = await self._ps_field(pid, "lstart")
                 live_pgid = await self._ps_field(pid, "pgid")
-                command = await self._ps_field(pid, "command")
-                first_arg = shlex.split(command)[0] if command else ""
+                executable = await self._ps_field(pid, "comm")
             except (OSError, ValueError):
                 continue
             if (
                 not process_start
                 or process_start != str(job.get("process_start") or "")
                 or int(live_pgid or 0) != int(pgid)
-                or not first_arg
-                or Path(first_arg).expanduser().resolve() != Path(str(job.get("binary_path") or "")).expanduser().resolve()
+                or not executable
+                or Path(executable).expanduser().resolve() != Path(str(job.get("binary_path") or "")).expanduser().resolve()
             ):
                 self.store.update(job["job_id"], message="Restart cleanup skipped: process identity did not match")
                 continue
