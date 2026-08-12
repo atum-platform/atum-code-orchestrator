@@ -7,7 +7,7 @@ from typing import Any
 
 PROTOCOL_VERSION = 2
 SUPPORTED_PROTOCOL_VERSIONS = {1, 2}
-POLICY_VERSION = "2026-08-13.1"
+POLICY_VERSION = "2026-08-13.2"
 CAPABILITY_MATRIX_VERSION = "2026-08-13.1"
 ROUTING_MODES = {"shadow", "codex_canary", "surface_canary"}
 
@@ -24,6 +24,11 @@ DURATIONS = {"short", "medium", "long"}
 DURABILITIES = {"session", "durable"}
 TARGET_PROVIDERS = {"codex", "claude", "kimi"}
 MAX_INTENT_BYTES = 16 * 1024
+ESCALATION_REASONS = {
+    "provider_failure", "rate_limit", "unusable_output", "scope_growth",
+    "capability_mismatch",
+}
+MAX_ESCALATION_EVIDENCE_CHARS = 2_000
 
 LEGACY_MODEL_ALIASES = {
     "codex": "codex_standard",
@@ -126,12 +131,30 @@ def normalize_intent(intent: dict[str, Any]) -> dict[str, Any]:
     explicit_provider = str(intent.get("explicit_provider") or "").strip().lower()
     explicit_model = str(intent.get("explicit_model") or "").strip()
     session_id = str(intent.get("session_id") or "").strip()
+    previous_decision_id = str(intent.get("previous_decision_id") or "").strip()
+    escalation_reason = str(intent.get("escalation_reason") or "").strip().lower()
+    escalation_evidence = str(intent.get("escalation_evidence") or "").strip()
     if explicit_provider and explicit_provider not in TARGET_PROVIDERS:
         raise ValueError(f"Unsupported explicit_provider: {explicit_provider}")
     if len(explicit_model) > 200:
         raise ValueError("explicit_model is too long")
     if len(session_id) > 200:
         raise ValueError("session_id is too long")
+    if len(previous_decision_id) > 200:
+        raise ValueError("previous_decision_id is too long")
+    if previous_decision_id:
+        if version != 2:
+            raise ValueError("Escalation requires routing protocol version 2")
+        if not session_id:
+            raise ValueError("Escalation requires session_id")
+        if escalation_reason not in ESCALATION_REASONS:
+            raise ValueError(f"Unsupported escalation_reason: {escalation_reason or '<empty>'}")
+        if not escalation_evidence or len(escalation_evidence) > MAX_ESCALATION_EVIDENCE_CHARS:
+            raise ValueError(
+                f"escalation_evidence must contain 1 to {MAX_ESCALATION_EVIDENCE_CHARS} characters"
+            )
+    elif escalation_reason or escalation_evidence:
+        raise ValueError("Escalation reason/evidence require previous_decision_id")
 
     declared_capabilities = dict(sorted(capabilities.items()))
     if version == 1:
@@ -162,7 +185,35 @@ def normalize_intent(intent: dict[str, Any]) -> dict[str, Any]:
         "explicit_provider": explicit_provider,
         "explicit_model": explicit_model,
         "session_id": session_id,
+        "previous_decision_id": previous_decision_id,
+        "escalation_reason": escalation_reason,
+        "escalation_evidence": escalation_evidence,
     }
+
+
+def apply_one_hop_escalation(
+    decision: dict[str, Any], previous: dict[str, Any], health: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Exclude the parent provider and return one terminal fallback decision."""
+    escalated = dict(decision)
+    previous_provider = str(previous.get("provider") or "")
+    if escalated["lane"] == "native_subagent" and escalated["provider"] == previous_provider:
+        escalated.update(lane="direct", provider="", model_alias="", worker_profile="")
+    elif escalated["lane"] == "agent_jobs" and escalated["provider"] == previous_provider:
+        fallback = str(escalated.get("fallback_provider") or "")
+        if fallback and health.get(fallback, {}).get("state") != "rate_limited":
+            escalated.update(
+                provider=fallback,
+                model_alias=str(escalated.get("fallback_model_alias") or ""),
+            )
+        else:
+            escalated.update(lane="direct", provider="", model_alias="", worker_profile="")
+    escalated.update(fallback_provider="", fallback_model_alias="", escalation_hop=1)
+    escalated["reasons"] = [
+        *escalated["reasons"],
+        "one-hop escalation excludes the parent decision provider",
+    ]
+    return escalated
 
 
 def _model_alias(provider: str, intent: dict[str, Any]) -> str:

@@ -98,6 +98,32 @@ join rate. Session IDs prevent accidental
 cross-session updates but are not an authentication boundary against other
 processes running as the same macOS user.
 
+An enforced v2 decision can produce exactly one durable escalation child. The
+caller first records `route_feedback --outcome escalated`, then repeats the same
+caller, surface, and session identity with `previous_decision_id`, one of
+`provider_failure`, `rate_limit`, `unusable_output`, `scope_growth`, or
+`capability_mismatch`, and 1-2000 characters of non-secret evidence. The
+supervisor excludes the parent's provider after normal quota/cooldown routing,
+clears any further fallback, and returns `parent_decision_id` plus
+`escalation_hop=1`. Shadow parents, identity changes, a missing feedback marker,
+conflicting retries, and second hops fail closed. An identical retry returns the
+same child with `idempotent=true`. Common secret-like values are redacted before
+the evidence is persisted as defense in depth. Route shape may change when the
+typed reason is `scope_growth` or `capability_mismatch`. An explicit provider may
+also change, but the parent's provider is always excluded; explicitly selecting
+that same provider therefore returns `direct` rather than retrying it.
+
+```bash
+python3 tools/review_cli.py route-feedback PARENT_ID \
+  --session-id task-123 --outcome escalated
+python3 tools/review_cli.py route-decide \
+  --protocol-version 2 --caller-provider codex --surface codex \
+  --capability planning --durability durable --session-id task-123 \
+  --surface-capabilities '{"durable_agent_jobs":true}' \
+  --previous-decision-id PARENT_ID --escalation-reason provider_failure \
+  --escalation-evidence 'Provider exited before producing a usable review.'
+```
+
 When quota routing is enabled, the returned provider/model pair already includes
 the supervisor's health decision. Clients must execute that pair when
 `enforced=true`; they must not independently reinterpret CodexBar percentages.

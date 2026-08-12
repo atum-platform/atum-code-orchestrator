@@ -34,6 +34,18 @@ class AgentJobClientParserTest(unittest.TestCase):
         self.assertEqual(2, args["protocol_version"])
         self.assertEqual({"native_subagents": True}, args["surface_capabilities"])
 
+    def test_route_decide_parses_one_hop_escalation(self) -> None:
+        args = vars(_parser().parse_args([
+            "route-decide", "--caller-provider", "codex", "--surface", "codex",
+            "--capability", "planning", "--session-id", "task",
+            "--previous-decision-id", "parent",
+            "--escalation-reason", "provider_failure",
+            "--escalation-evidence", "provider exited",
+        ]))
+        self.assertEqual("parent", args["previous_decision_id"])
+        self.assertEqual("provider_failure", args["escalation_reason"])
+        self.assertEqual("provider exited", args["escalation_evidence"])
+
     def test_route_lifecycle_commands_parse(self) -> None:
         feedback = vars(_parser().parse_args([
             "route-feedback", "decision", "--session-id", "task",

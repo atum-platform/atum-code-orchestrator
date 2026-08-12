@@ -171,6 +171,26 @@ Disable `AGENT_JOB_QUOTA_ROUTING` for immediate policy rollback without deleting
 prior health evidence or changing queued jobs. Disabled mode performs no quota
 cache reads, health writes, route changes, or failure-kind normalization.
 
+### One-hop escalation
+
+Protocol v2 supports one terminal retry through the routing layer. A caller must
+first mark an enforced parent decision `escalated`, then submit the same caller,
+surface, and session identity with the parent ID, a typed reason, and bounded
+non-secret evidence. Parent validation, child uniqueness, and persistence run in
+one SQLite `BEGIN IMMEDIATE` transaction. An identical request recovers the same
+child; a different child request and any child-of-child request fail closed.
+
+The supervisor computes the ordinary route, applies quota/cooldown rebalancing,
+and then excludes the provider used by the parent. A fallback that is not in an
+active rate-limit cooldown becomes the terminal provider; stale, missing, and
+pressured quota telemetry retain the system-wide fail-open routing semantics.
+An actively rate-limited fallback degrades to direct execution by the primary
+agent. Native-worker escalation also degrades to direct
+execution because recursively spawning the same worker family would not change
+the failure boundary. Every child clears its fallback fields. `route_status`
+reports child counts by escalation reason, while the SQLite record retains the
+bounded evidence for diagnosis.
+
 CAO migration is provider-scoped. Keep `AGENT_JOB_EXECUTION_BACKEND=native`,
 then set both `AGENT_JOB_CAO_CANARY_PROVIDERS` and
 `AGENT_JOB_CAO_CANARY_OWNER_PREFIXES` to route only matching provider/owner

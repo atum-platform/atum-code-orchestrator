@@ -30,9 +30,12 @@ async def route_decide(
     explicit_provider: str = "",
     explicit_model: str = "",
     session_id: str = "",
+    previous_decision_id: str = "",
+    escalation_reason: str = "",
+    escalation_evidence: str = "",
     owner: str = "",
 ) -> str:
-    """Decide a route; pass protocol v2 capabilities for deterministic degradation."""
+    """Decide a route; v2 also accepts a parent ID, reason, and evidence for one escalation."""
     result = await asyncio.to_thread(
         review_core.routing_decide,
         protocol_version=protocol_version, caller_provider=caller_provider,
@@ -42,6 +45,8 @@ async def route_decide(
         surface_capabilities=surface_capabilities or {},
         explicit_provider=explicit_provider, explicit_model=explicit_model,
         session_id=session_id, owner=owner,
+        previous_decision_id=previous_decision_id,
+        escalation_reason=escalation_reason, escalation_evidence=escalation_evidence,
     )
     return json.dumps(result, ensure_ascii=False, indent=2)
 

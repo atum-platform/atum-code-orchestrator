@@ -305,6 +305,10 @@ class JobStore:
                 reservation_status TEXT NOT NULL DEFAULT 'none',
                 feedback_outcome TEXT NOT NULL DEFAULT '',
                 feedback_at REAL,
+                parent_decision_id TEXT NOT NULL DEFAULT '',
+                escalation_hop INTEGER NOT NULL DEFAULT 0,
+                escalation_reason TEXT NOT NULL DEFAULT '',
+                escalation_evidence TEXT NOT NULL DEFAULT '',
                 request_json TEXT NOT NULL,
                 response_json TEXT NOT NULL
             );
@@ -383,6 +387,10 @@ class JobStore:
             "reservation_status": "TEXT NOT NULL DEFAULT 'none'",
             "feedback_outcome": "TEXT NOT NULL DEFAULT ''",
             "feedback_at": "REAL",
+            "parent_decision_id": "TEXT NOT NULL DEFAULT ''",
+            "escalation_hop": "INTEGER NOT NULL DEFAULT 0",
+            "escalation_reason": "TEXT NOT NULL DEFAULT ''",
+            "escalation_evidence": "TEXT NOT NULL DEFAULT ''",
         }
         for name, definition in route_migrations.items():
             if name not in route_columns:
@@ -390,6 +398,10 @@ class JobStore:
         self.db.execute(
             "CREATE INDEX IF NOT EXISTS route_reservations "
             "ON route_decisions(surface, reservation_status, expires_at)"
+        )
+        self.db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS route_escalation_parent "
+            "ON route_decisions(parent_decision_id) WHERE parent_decision_id <> ''"
         )
         self.db.execute(
             "CREATE INDEX IF NOT EXISTS provider_health_events_provider "
@@ -452,9 +464,41 @@ class JobStore:
         decision_id = str(uuid.uuid4())
         created_at = _now()
         admitted = dict(decision)
+        parent_id = str(intent.get("previous_decision_id") or "")
         try:
             self.db.execute("BEGIN IMMEDIATE")
             self._expire_route_reservations(created_at)
+            escalation_hop = 0
+            if parent_id:
+                parent = self.db.execute(
+                    "SELECT * FROM route_decisions WHERE decision_id = ?", (parent_id,)
+                ).fetchone()
+                if not parent:
+                    raise ValueError(f"Unknown parent routing decision: {parent_id}")
+                if (
+                    str(parent["session_id"]) != intent["session_id"]
+                    or str(parent["caller_provider"]) != intent["caller_provider"]
+                    or str(parent["surface"]) != intent["surface"]
+                ):
+                    raise PermissionError("Parent routing decision does not belong to this caller session")
+                parent_response = json.loads(str(parent["response_json"]))
+                if not parent_response.get("enforced"):
+                    raise ValueError("Parent routing decision must be enforced before escalation")
+                if str(parent["feedback_outcome"]) != "escalated":
+                    raise ValueError("Parent routing decision must record escalated feedback first")
+                if int(parent["escalation_hop"] or 0) >= 1:
+                    raise ValueError("Routing escalation is limited to one hop")
+                existing = self.db.execute(
+                    "SELECT * FROM route_decisions WHERE parent_decision_id = ?", (parent_id,)
+                ).fetchone()
+                if existing:
+                    if str(existing["request_json"]) != _json(intent):
+                        raise ValueError("Parent routing decision already has a different escalation")
+                    response = json.loads(str(existing["response_json"]))
+                    response["idempotent"] = True
+                    self.db.commit()
+                    return response
+                escalation_hop = 1
             if admitted["lane"] == "native_subagent" and admitted["enforced"]:
                 active = self.db.execute(
                     """SELECT COUNT(*) FROM route_decisions
@@ -478,14 +522,17 @@ class JobStore:
                     decision_id, protocol_version, policy_version, mode, caller_provider,
                     surface, capability, lane, provider, model_alias, created_at,
                     expires_at, owner, session_id, reservation_status,
-                    request_json, response_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    parent_decision_id, escalation_hop, escalation_reason,
+                    escalation_evidence, request_json, response_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     decision_id, response["protocol_version"], response["policy_version"],
                     response["mode"], intent["caller_provider"], intent["surface"],
                     intent["capability"], response["lane"], response["provider"],
                     response["model_alias"], created_at, response["expires_at"], owner,
                     intent["session_id"], response["reservation_status"],
+                    parent_id, escalation_hop, intent.get("escalation_reason", ""),
+                    intent.get("escalation_evidence", ""),
                     _json(intent), _json(response),
                 ),
             )
@@ -590,12 +637,21 @@ class JobStore:
                 """SELECT COUNT(*) FROM route_decisions
                    WHERE lane = 'native_subagent' AND feedback_at IS NOT NULL"""
             ).fetchone()[0])
+            escalation_counts = {
+                str(row["escalation_reason"]): int(row["count"])
+                for row in self.db.execute(
+                    """SELECT escalation_reason, COUNT(*) AS count
+                       FROM route_decisions WHERE parent_decision_id <> ''
+                       GROUP BY escalation_reason"""
+                ).fetchall()
+            }
             self.db.commit()
             return {
                 "native_reservations": counts,
                 "feedback_joined": joined,
                 "feedback_eligible": terminal,
                 "feedback_join_rate": None if terminal == 0 else joined / terminal,
+                "one_hop_escalations": escalation_counts,
             }
         except Exception:
             self.db.rollback()
@@ -1651,14 +1707,25 @@ class Supervisor:
         return self._public(self.store.get(job["job_id"]))
 
     def route_decide(self, payload: dict[str, Any]) -> dict[str, Any]:
-        from agent_routing_policy import MAX_INTENT_BYTES, decide, normalize_intent
+        from agent_routing_policy import (
+            MAX_ESCALATION_EVIDENCE_CHARS, MAX_INTENT_BYTES,
+            apply_one_hop_escalation, decide, normalize_intent,
+        )
         from agent_quota_broker import rebalance_default_route
+        from review_core import redact
 
         intent = {key: value for key, value in payload.items() if key != "action"}
         owner = str(intent.pop("owner", "") or "")[:200]
         if len(_json(intent).encode("utf-8")) > MAX_INTENT_BYTES:
             raise ValueError(f"Routing intent exceeds {MAX_INTENT_BYTES} UTF-8 bytes")
         canonical_intent = normalize_intent(intent)
+        if canonical_intent["escalation_evidence"]:
+            clean_evidence, _ = redact(
+                canonical_intent["escalation_evidence"]
+            )
+            canonical_intent["escalation_evidence"] = clean_evidence[
+                :MAX_ESCALATION_EVIDENCE_CHARS
+            ]
         decision = decide(canonical_intent, self.routing_mode)
         health = (
             self.store.refresh_provider_health(stale_seconds=self.quota_stale_seconds)
@@ -1666,6 +1733,19 @@ class Supervisor:
         )
         if self.quota_routing_enabled and not canonical_intent["explicit_provider"]:
             decision = rebalance_default_route(decision, health)
+        parent_id = canonical_intent["previous_decision_id"]
+        if parent_id:
+            # A persisted decision's provider is immutable; transaction-time checks
+            # below validate its mutable feedback and ownership fields atomically.
+            parent = self.store.db.execute(
+                "SELECT response_json FROM route_decisions WHERE decision_id = ?", (parent_id,)
+            ).fetchone()
+            if not parent:
+                raise ValueError(f"Unknown parent routing decision: {parent_id}")
+            decision = apply_one_hop_escalation(
+                decision, json.loads(str(parent["response_json"])), health
+            )
+            decision["parent_decision_id"] = parent_id
         return self.store.create_route_decision(
             canonical_intent, decision, owner,
             self.native_reservation_limit, self.native_reservation_ttl,

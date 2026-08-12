@@ -50,6 +50,8 @@ class JobStoreMigrationTest(unittest.TestCase):
 
             self.assertTrue({
                 "session_id", "reservation_status", "feedback_outcome", "feedback_at",
+                "parent_decision_id", "escalation_hop", "escalation_reason",
+                "escalation_evidence",
             }.issubset(columns))
 
     def test_rate_limit_cooldown_never_shortens_and_events_prune(self) -> None:
@@ -1756,6 +1758,103 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(durable["enforced"])
         self.assertEqual("agent_jobs", durable["lane"])
         self.assertEqual("codex", durable["provider"])
+
+    def durable_planning_route(self, session_id: str) -> dict[str, object]:
+        return {
+            "action": "route_decide", "protocol_version": 2,
+            "caller_provider": "codex", "surface": "codex",
+            "capability": "planning", "complexity": "deep", "risk": "medium",
+            "scope": "repo", "duration": "long", "durability": "durable",
+            "parallelizable": False,
+            "surface_capabilities": {"durable_agent_jobs": True},
+            "session_id": session_id,
+        }
+
+    async def escalate_route(
+        self, parent_id: str, session_id: str, evidence: str = "provider exited"
+    ) -> dict[str, object]:
+        return await self.call({
+            **self.durable_planning_route(session_id),
+            "previous_decision_id": parent_id,
+            "escalation_reason": "provider_failure",
+            "escalation_evidence": evidence,
+        })
+
+    async def test_one_hop_escalation_is_atomic_idempotent_and_persisted(self) -> None:
+        self.supervisor.routing_mode = "surface_canary"
+        parent = await self.call(self.durable_planning_route("escalation-session"))
+        await self.call({
+            "action": "route_feedback", "decision_id": parent["decision_id"],
+            "session_id": "escalation-session", "outcome": "escalated",
+        })
+
+        evidence = "provider exited; api_key=must-not-persist"
+        child = await self.escalate_route(
+            str(parent["decision_id"]), "escalation-session", evidence
+        )
+        retry = await self.escalate_route(
+            str(parent["decision_id"]), "escalation-session", evidence
+        )
+
+        self.assertEqual("claude", parent["provider"])
+        self.assertEqual("kimi", child["provider"])
+        self.assertEqual("kimi-code/k3", child["model_alias"])
+        self.assertEqual("", child["fallback_provider"])
+        self.assertEqual(parent["decision_id"], child["parent_decision_id"])
+        self.assertEqual(1, child["escalation_hop"])
+        self.assertEqual(child["decision_id"], retry["decision_id"])
+        self.assertTrue(retry["idempotent"])
+        row = self.supervisor.store.db.execute(
+            "SELECT * FROM route_decisions WHERE decision_id = ?", (child["decision_id"],)
+        ).fetchone()
+        self.assertEqual("provider_failure", row["escalation_reason"])
+        self.assertEqual("provider exited; api_key=[REDACTED]", row["escalation_evidence"])
+        status = await self.call({"action": "route_status"})
+        self.assertEqual({"provider_failure": 1}, status["one_hop_escalations"])
+
+        with self.assertRaisesRegex(RuntimeError, "different escalation"):
+            await self.escalate_route(
+                str(parent["decision_id"]), "escalation-session", "different evidence"
+            )
+
+    async def test_escalation_requires_enforced_marked_parent_and_same_identity(self) -> None:
+        shadow = await self.call(self.durable_planning_route("shadow-session"))
+        await self.call({
+            "action": "route_feedback", "decision_id": shadow["decision_id"],
+            "session_id": "shadow-session", "outcome": "escalated",
+        })
+        with self.assertRaisesRegex(RuntimeError, "must be enforced"):
+            await self.escalate_route(str(shadow["decision_id"]), "shadow-session")
+
+        self.supervisor.routing_mode = "surface_canary"
+        parent = await self.call(self.durable_planning_route("owned-session"))
+        with self.assertRaisesRegex(RuntimeError, "record escalated feedback"):
+            await self.escalate_route(str(parent["decision_id"]), "owned-session")
+        await self.call({
+            "action": "route_feedback", "decision_id": parent["decision_id"],
+            "session_id": "owned-session", "outcome": "escalated",
+        })
+        with self.assertRaisesRegex(RuntimeError, "does not belong"):
+            await self.escalate_route(str(parent["decision_id"]), "other-session")
+
+    async def test_escalation_stops_after_one_hop_and_respects_cooldown(self) -> None:
+        self.supervisor.routing_mode = "surface_canary"
+        parent = await self.call(self.durable_planning_route("bounded-session"))
+        await self.call({
+            "action": "route_feedback", "decision_id": parent["decision_id"],
+            "session_id": "bounded-session", "outcome": "escalated",
+        })
+        self.supervisor.quota_routing_enabled = True
+        self.supervisor.store.record_provider_rate_limit("kimi", time.time() + 60, "test")
+        child = await self.escalate_route(str(parent["decision_id"]), "bounded-session")
+        self.assertEqual("direct", child["lane"])
+
+        await self.call({
+            "action": "route_feedback", "decision_id": child["decision_id"],
+            "session_id": "bounded-session", "outcome": "escalated",
+        })
+        with self.assertRaisesRegex(RuntimeError, "limited to one hop"):
+            await self.escalate_route(str(child["decision_id"]), "bounded-session")
 
     async def test_v2_quota_rebalance_preserves_exact_provider_models(self) -> None:
         self.supervisor.quota_routing_enabled = True

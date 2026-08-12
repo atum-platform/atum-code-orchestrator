@@ -147,11 +147,13 @@ class ReviewCoreTest(unittest.IsolatedAsyncioTestCase):
             return {"decision_id": "decision"}
 
         values: dict[str, object] = {
-            "protocol_version": 1, "caller_provider": "codex", "surface": "codex",
+            "protocol_version": 2, "caller_provider": "codex", "surface": "codex",
             "capability": "planning", "complexity": "deep", "risk": "medium",
             "scope": "repo", "duration": "long", "durability": "durable",
             "parallelizable": False, "surface_capabilities": {},
             "explicit_provider": "", "explicit_model": "", "session_id": "task-1",
+            "previous_decision_id": "parent", "escalation_reason": "provider_failure",
+            "escalation_evidence": "provider exited",
             "owner": "test",
         }
         with patch.object(review_core, "routing_decide", side_effect=fake_route):
