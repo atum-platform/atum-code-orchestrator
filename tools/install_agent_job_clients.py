@@ -65,7 +65,8 @@ CODEX_ROUTING_GUIDANCE = """## Codex Routing Canary
 
 For focused implementation, exploration, or test work that is separable from the
 primary task, call the agent-jobs `route_decide` tool before spawning a native
-subagent. Pass a stable task/session ID and `native_subagents=true`. Follow the
+subagent. Pass protocol v2, a stable task/session ID, and both
+`durable_agent_jobs=true` and `native_subagents=true`. Follow the
 returned lane only when `enforced=true`; shadow responses are telemetry. A
 `native_subagent` lane means spawn one worker using the returned worker profile
 and model alias, retain the decision ID, and send `route_feedback` exactly once

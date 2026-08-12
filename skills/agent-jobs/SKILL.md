@@ -48,8 +48,10 @@ telemetry is fail-open to the static table and appears in `route_status` alerts.
 
 For a separable implementation, exploration, or test scope, Codex calls
 `route_decide` before spawning a native worker. Pass a stable ID for the current
-task as `session_id` and report `surface_capabilities.native_subagents=true` only
-when native agents are actually available. A `native_subagent` response includes
+task as `session_id`, use protocol v2, and report
+`surface_capabilities.durable_agent_jobs=true`. Report `native_subagents=true`
+only when native agents are actually available. If an older supervisor rejects
+v2, retry once with v1 and follow its legacy result. A `native_subagent` response includes
 an active, expiring reservation plus a worker profile and model alias; the call
 does not itself spawn or control an agent.
 

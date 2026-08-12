@@ -87,7 +87,13 @@ def submit(socket_path: Path | str = DEFAULT_SOCKET_PATH, **kwargs: Any) -> dict
 
 
 def route_decide(socket_path: Path | str = DEFAULT_SOCKET_PATH, **intent: Any) -> dict[str, Any]:
-    return request({"action": "route_decide", **intent}, socket_path)
+    payload = {"action": "route_decide", **intent}
+    try:
+        return request(payload, socket_path)
+    except RuntimeError as exc:
+        if payload.get("protocol_version") != 2 or "protocol version" not in str(exc).lower():
+            raise
+        return request({**payload, "protocol_version": 1}, socket_path)
 
 
 def route_feedback(
@@ -187,7 +193,7 @@ def _parser() -> argparse.ArgumentParser:
     inbox_parser.add_argument("--limit", type=int, default=20)
     inbox_parser.add_argument("--ack-delivery-id", action="append", dest="ack_delivery_ids")
     route = sub.add_parser("route-decide")
-    route.add_argument("--protocol-version", type=int, default=1)
+    route.add_argument("--protocol-version", type=int, default=2)
     route.add_argument("--caller-provider", required=True)
     route.add_argument("--surface", required=True)
     route.add_argument("--capability", required=True)
