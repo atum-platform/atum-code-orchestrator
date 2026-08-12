@@ -110,6 +110,43 @@ it measures whether callers returned, not transport delivery reliability. Both
 jobs and inactive route decisions use the configured retention window; active
 reservations are retained until feedback, reconciliation, or TTL expiry.
 
+### Quota broker
+
+Set `AGENT_JOB_QUOTA_ROUTING=1` to let the supervisor rebalance default
+`agent_jobs` routes. The broker reads `claude.json`, `codex.json`, and any future
+`kimi.json` from CodexBar's local history directory. Override the directory with
+`AGENT_JOB_QUOTA_HISTORY_DIR`; no browser cookies, provider credentials, or
+CodexBar process access are required.
+
+For every active quota window, pressure is the greater of current utilization
+and utilization projected linearly to the reset, capped at 100%. A provider
+enters `pressured` at 85% and leaves only below 70%, providing hysteresis across
+samples. Telemetry older than two hours (`AGENT_JOB_QUOTA_STALE_SECONDS`) is
+`stale`; missing telemetry is `unknown`. An expired quota window is also stale
+until a post-reset sample arrives. Stale or missing evidence for the primary
+provider preserves static routing and emits an alert rather than inventing
+pressure. A known-pressured primary may still move to an unknown fallback, but
+never to a rate-limited fallback or an equally/more pressured fallback. A
+rate-limited primary may use a pressured fallback because it cannot serve the
+request itself.
+
+With quota routing enabled, nonzero provider exits containing a bounded,
+provider-specific rate-limit signature in stderr are
+normalized to `failure_kind=rate_limit` and persisted in the health ledger. A
+nearby reset interval sets the cooldown; otherwise the default is
+15 minutes (`AGENT_JOB_RATE_LIMIT_COOLDOWN_SECONDS`). Repeated failures can
+extend but never shorten a cooldown. Once it expires, the next route/status
+refresh automatically reconsiders the provider, so callers do not permanently
+abandon a recovered model.
+
+Only default routes are rebalanced. Explicit user provider/model choices remain
+authoritative, recursive delegation remains forbidden, and a rate-limited
+fallback is never selected. `route_status` exposes the feature flag, provider
+states, pressure, reset/cooldown timestamps, telemetry source, and alerts.
+Disable `AGENT_JOB_QUOTA_ROUTING` for immediate policy rollback without deleting
+prior health evidence or changing queued jobs. Disabled mode performs no quota
+cache reads, health writes, route changes, or failure-kind normalization.
+
 CAO migration is provider-scoped. Keep `AGENT_JOB_EXECUTION_BACKEND=native`,
 then set both `AGENT_JOB_CAO_CANARY_PROVIDERS` and
 `AGENT_JOB_CAO_CANARY_OWNER_PREFIXES` to route only matching provider/owner

@@ -10,6 +10,10 @@ Codex-only canary. In the canary, focused session work can receive an atomic,
 expiring native-worker reservation; Codex still performs the actual spawn and
 reports the outcome. Other surfaces remain shadow-only.
 
+An optional local quota broker reads CodexBar history without credentials,
+normalizes provider rate-limit failures, and rebalances default specialist routes
+when fresh evidence shows pressure. Explicit provider requests are never changed.
+
 The supervisor is coding-agent infrastructure. Hermes can consume it, but does
 not own its runtime, protocol, or repository.
 
@@ -54,6 +58,7 @@ CLIs, so usage is charged to the account or subscription configured in each CLI.
 .venv/bin/python tools/agent_job_client.py ping
 .venv/bin/python tools/install_agent_job_clients.py --check
 .venv/bin/python tools/install_agent_job_supervisor.py status
+.venv/bin/python tools/agent_job_client.py route-status
 .venv/bin/python -m unittest discover -s tools/tests -v
 ```
 

@@ -1,5 +1,38 @@
 # Session Log
 
+## 2026-08-12 - Local quota broker P2
+
+- Added a credential-free CodexBar history reader for Claude, Codex, and a
+  future Kimi history file. Pressure combines current use with projected use at
+  reset; 85% entry and 70% exit thresholds provide deterministic hysteresis.
+- Added persistent provider health and event ledgers. Canonical nonzero
+  rate-limit exits now record a reset-derived or default 15-minute cooldown;
+  repeated failures cannot shorten an existing cooldown and providers are
+  reconsidered automatically after expiry.
+- Added opt-in `AGENT_JOB_QUOTA_ROUTING`. It rebalances only default durable
+  specialist routes, preserves explicit targets, refuses a rate-limited
+  fallback, and leaves static routing intact when telemetry is stale or absent.
+- Extended `route_status` with health, pressure, reset/cooldown evidence, and
+  alerts. The rollout is independently reversible without deleting evidence or
+  changing queued jobs.
+- Verification before independent review: 217 unit/integration tests, Python
+  compile checks, and diff whitespace validation pass.
+- Kimi K3's first review found two ship blockers: broad stdout/stderr matching
+  could falsely cooldown healthy providers, and fallback selection could move
+  onto a provider under greater pressure. It also identified lazy env parsing,
+  expired-window carryover, incomplete feature isolation, and retention/test
+  gaps.
+- Tightened normalization to bounded provider-specific stderr signatures with
+  adjacent retry evidence, compare pressured providers before swapping, validate
+  quota timing at startup, reject expired-window pressure, preserve hysteresis
+  after cooldown, gate all behavior behind the rollout flag, validate health
+  keys, and prune retained health events. Added focused regressions for each.
+- Post-review verification passes all 224 unit/integration tests, Python compile
+  checks, and diff whitespace validation.
+- Kimi K3's targeted follow-up returned SHIP with no remaining blockers. Its one
+  non-blocking note clarified that a rate-limited primary may legitimately use a
+  pressured fallback; the operator documentation now states that exception.
+
 ## 2026-08-12 - Codex native routing canary P1
 
 - Added an opt-in `codex_canary` policy that routes only focused, low/medium-risk,

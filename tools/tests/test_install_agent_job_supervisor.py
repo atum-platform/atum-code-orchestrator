@@ -32,6 +32,10 @@ class SupervisorInstallerTest(unittest.TestCase):
             "AGENT_JOB_MAX_PARTIAL_RESPONSE_BYTES": "3000",
             "AGENT_JOB_RETENTION_SECONDS": "4000",
             "AGENT_JOB_ROUTING_MODE": "codex_canary",
+            "AGENT_JOB_QUOTA_ROUTING": "1",
+            "AGENT_JOB_QUOTA_HISTORY_DIR": "/tmp/quota-history",
+            "AGENT_JOB_QUOTA_STALE_SECONDS": "7200",
+            "AGENT_JOB_RATE_LIMIT_COOLDOWN_SECONDS": "900",
             "AGENT_JOB_CODEX_NATIVE_RESERVATIONS": "3",
             "AGENT_JOB_ROUTE_RESERVATION_SECONDS": "900",
         }

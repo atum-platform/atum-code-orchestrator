@@ -116,6 +116,10 @@ def _service_environment() -> dict[str, str]:
         "AGENT_JOB_ROUTING_MODE",
         "AGENT_JOB_CODEX_NATIVE_RESERVATIONS",
         "AGENT_JOB_ROUTE_RESERVATION_SECONDS",
+        "AGENT_JOB_QUOTA_ROUTING",
+        "AGENT_JOB_QUOTA_HISTORY_DIR",
+        "AGENT_JOB_QUOTA_STALE_SECONDS",
+        "AGENT_JOB_RATE_LIMIT_COOLDOWN_SECONDS",
     ):
         if os.environ.get(name):
             environment[name] = os.environ[name]

@@ -63,6 +63,12 @@ For routing-only rollback, reinstall the supervisor with
 jobs drain. Existing native reservations expire automatically; the additive
 SQLite columns remain backward compatible and require no down migration.
 
+Quota routing has a narrower rollback: reinstall the service without
+`AGENT_JOB_QUOTA_ROUTING=1`. Provider health rows and rate-limit events are
+additive evidence and may remain in SQLite; default route selection immediately
+returns to the static policy. The CodexBar history files are read-only inputs and
+are never modified by this service.
+
 Keep the previous checkout until all coding clients and optional Hermes profiles
 have completed a smoke run through the standalone service. After that, the old
 Hermes copy is historical source only and can be removed once its Git state is

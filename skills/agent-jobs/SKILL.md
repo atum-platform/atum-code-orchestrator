@@ -38,6 +38,12 @@ An explicit user model/provider request overrides these defaults. A fallback is
 for provider failure, quota exhaustion, or unusable output, not disagreement.
 Do not routinely call both providers.
 
+When the supervisor returns an enforced `agent_jobs` route, use its provider and
+model alias exactly. It may have rebalanced the static table using fresh local
+quota evidence and canonical rate-limit cooldowns. Do not duplicate pressure
+math in the skill or override an explicit user target. Stale or missing quota
+telemetry is fail-open to the static table and appears in `route_status` alerts.
+
 ## Route focused Codex work
 
 For a separable implementation, exploration, or test scope, Codex calls
