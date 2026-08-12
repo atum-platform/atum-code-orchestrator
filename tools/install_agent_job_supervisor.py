@@ -120,13 +120,33 @@ def _service_environment() -> dict[str, str]:
         "AGENT_JOB_QUOTA_HISTORY_DIR",
         "AGENT_JOB_QUOTA_STALE_SECONDS",
         "AGENT_JOB_RATE_LIMIT_COOLDOWN_SECONDS",
+        "AGENT_JOB_DYNAMIC_CONCURRENCY",
     ):
         if os.environ.get(name):
             environment[name] = os.environ[name]
     return environment
 
 
+def _boolean_setting(environment: dict[str, str], name: str, default: bool = False) -> bool:
+    raw = environment.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name} must be a boolean, got {raw!r}")
+
+
 def install() -> None:
+    environment = _service_environment()
+    if _boolean_setting(environment, "AGENT_JOB_DYNAMIC_CONCURRENCY") and not _boolean_setting(
+        environment, "AGENT_JOB_QUOTA_ROUTING"
+    ):
+        raise RuntimeError(
+            "AGENT_JOB_DYNAMIC_CONCURRENCY=1 requires AGENT_JOB_QUOTA_ROUTING=1"
+        )
     old_ping = _socket_request({"action": "ping"})
     active = _active_jobs() if old_ping else []
     if active:
@@ -155,7 +175,7 @@ def install() -> None:
         "ThrottleInterval": 5,
         "ProcessType": "Background",
         "Umask": 0o077,
-        "EnvironmentVariables": _service_environment(),
+        "EnvironmentVariables": environment,
         "StandardOutPath": str(STATE_DIR / "supervisor.stdout.log"),
         "StandardErrorPath": str(STATE_DIR / "supervisor.stderr.log"),
     }

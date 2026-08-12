@@ -80,8 +80,19 @@ python3 tools/agent_job_client.py cancel JOB_ID
 python3 tools/install_agent_job_supervisor.py status
 ```
 
-Provider concurrency defaults to Claude 2, Codex 2, and Kimi 1. Override with
-`AGENT_JOB_<PROVIDER>_CONCURRENCY` in the LaunchAgent environment. Approved
+Durable provider concurrency defaults to a ceiling of three jobs per provider.
+Override with `AGENT_JOB_<PROVIDER>_CONCURRENCY`; integer values are clamped to
+the one-to-three supported range. Set `AGENT_JOB_DYNAMIC_CONCURRENCY=1` alongside
+quota routing to reduce a pressured provider by one slot and pause new launches
+while that provider is in a canonical rate-limit cooldown. Running jobs are
+never cancelled when capacity falls, and missing or stale quota telemetry keeps
+the configured ceiling. Cooldown expiry restores at least one slot; pressure
+hysteresis may keep the provider one slot below its ceiling until pressure falls
+below 70%. `route_status` exposes configured and effective slots.
+
+Native-agent reservations remain fixed and advisory. The status response reports
+whether their decision-to-feedback join rate has reached the 95% prerequisite
+for any later dynamic enforcement; P3 does not change native capacity. Approved
 Kimi's omitted-model default is `kimi-code/k3`; deployments may override it with
 `AGENT_JOB_KIMI_DEFAULT_MODEL` after confirming the target machine's Kimi Code
 configuration supports that canonical model ID. Approved

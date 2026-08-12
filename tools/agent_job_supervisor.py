@@ -88,6 +88,8 @@ KIMI_AUTH_KEYS = {"KIMI_API_KEY", "KIMI_CN_API_KEY", "MOONSHOT_API_KEY", "MOONSH
 PROVIDER_AUTH_KEYS = {"claude": CLAUDE_AUTH_KEYS, "kimi": KIMI_AUTH_KEYS, "codex": set()}
 SEMANTIC_PROVIDERS = {"claude", "codex", "kimi"}
 SEMANTIC_LIVENESS_PROVIDERS = {"claude", "codex"}
+DYNAMIC_HEALTH_REFRESH_SECONDS = 15
+NATIVE_FEEDBACK_JOIN_GATE = 0.95
 
 
 class AlreadyRunning(RuntimeError):
@@ -857,9 +859,8 @@ class Supervisor:
         self.normalization_failed: set[str] = set()
         self.open_tools: dict[str, dict[str, tuple[str, float]]] = {}
         self.provider_limits = {
-            "claude": int(os.environ.get("AGENT_JOB_CLAUDE_CONCURRENCY", "2")),
-            "kimi": int(os.environ.get("AGENT_JOB_KIMI_CONCURRENCY", "1")),
-            "codex": int(os.environ.get("AGENT_JOB_CODEX_CONCURRENCY", "2")),
+            provider: _bounded_int_env(f"AGENT_JOB_{provider.upper()}_CONCURRENCY", 3, 1, 3)
+            for provider in ("claude", "kimi", "codex")
         }
         self.routing_mode = os.environ.get("AGENT_JOB_ROUTING_MODE", "shadow").strip().lower()
         if self.routing_mode not in {"shadow", "codex_canary"}:
@@ -877,8 +878,41 @@ class Supervisor:
         self.rate_limit_cooldown_seconds = _bounded_int_env(
             "AGENT_JOB_RATE_LIMIT_COOLDOWN_SECONDS", 15 * 60, 60, 7 * 24 * 3600
         )
+        self.dynamic_concurrency_enabled = _boolean_env(
+            "AGENT_JOB_DYNAMIC_CONCURRENCY", False
+        )
+        if self.dynamic_concurrency_enabled and not self.quota_routing_enabled:
+            raise ValueError("AGENT_JOB_DYNAMIC_CONCURRENCY requires AGENT_JOB_QUOTA_ROUTING")
+        self._capacity_health: dict[str, dict[str, Any]] = {}
+        self._capacity_health_refresh_at = 0.0
         self._stopping = False
         self._lock_handle = None
+
+    def _capacity_health_snapshot(self) -> dict[str, dict[str, Any]]:
+        if not self.dynamic_concurrency_enabled:
+            return {}
+        now = _now()
+        if now >= self._capacity_health_refresh_at:
+            self._capacity_health = self.store.refresh_provider_health(
+                now=now, stale_seconds=self.quota_stale_seconds
+            )
+            self._capacity_health_refresh_at = now + DYNAMIC_HEALTH_REFRESH_SECONDS
+        return self._capacity_health
+
+    def _effective_provider_limits(
+        self, health: dict[str, dict[str, Any]] | None = None
+    ) -> dict[str, int]:
+        effective = dict(self.provider_limits)
+        if not self.dynamic_concurrency_enabled:
+            return effective
+        snapshot = self._capacity_health_snapshot() if health is None else health
+        for provider, value in snapshot.items():
+            state = value.get("state")
+            if state == "rate_limited":
+                effective[provider] = 0
+            elif state == "pressured":
+                effective[provider] = max(1, effective[provider] - 1)
+        return effective
 
     def _signal_change(self, job_id: str) -> None:
         event = self.change_events.get(job_id)
@@ -1448,6 +1482,7 @@ class Supervisor:
                     self.store.record_provider_rate_limit(
                         str(job["provider"]), cooldown_until, evidence
                     )
+                    self._capacity_health_refresh_at = 0.0
             self._finish_job(
                 job_id, outcome, failure_kind, message, exit_code=proc.returncode,
             )
@@ -1488,10 +1523,11 @@ class Supervisor:
                                 pass
                     next_prune = _now() + 3600
                 active = Counter(self.store.get(job_id)["provider"] for job_id in self.tasks)
+                effective_limits = self._effective_provider_limits()
                 for job in self.store.queued():
                     job_id = job["job_id"]
                     provider = job["provider"]
-                    if job_id in self.tasks or active[provider] >= max(1, self.provider_limits[provider]):
+                    if job_id in self.tasks or active[provider] >= effective_limits[provider]:
                         continue
                     if not self.store.claim(job_id):
                         continue
@@ -1668,17 +1704,28 @@ class Supervisor:
             self.store.refresh_provider_health(stale_seconds=self.quota_stale_seconds)
             if self.quota_routing_enabled else {}
         )
+        if self.dynamic_concurrency_enabled:
+            self._capacity_health = health
+            self._capacity_health_refresh_at = _now() + DYNAMIC_HEALTH_REFRESH_SECONDS
+        route_metrics = self.store.route_status()
+        join_rate = float(route_metrics["feedback_join_rate"] or 0.0)
         return {
             "policy_version": POLICY_VERSION,
             "routing_mode": self.routing_mode,
             "native_reservation_limit": self.native_reservation_limit,
             "native_reservation_ttl_seconds": self.native_reservation_ttl,
             "quota_routing_enabled": self.quota_routing_enabled,
+            "dynamic_concurrency_enabled": self.dynamic_concurrency_enabled,
+            "configured_provider_slots": dict(self.provider_limits),
+            "effective_provider_slots": self._effective_provider_limits(health),
+            "native_capacity_mode": "fixed_advisory",
+            "native_feedback_join_gate": NATIVE_FEEDBACK_JOIN_GATE,
+            "native_feedback_gate_met": join_rate >= NATIVE_FEEDBACK_JOIN_GATE,
             "provider_health": health,
             "quota_alerts": [
                 value["alert"] for value in health.values() if value.get("alert")
             ],
-            **self.store.route_status(),
+            **route_metrics,
         }
 
     def _read_events(
@@ -2008,7 +2055,7 @@ def main() -> int:
     except AlreadyRunning as exc:
         print(str(exc), file=sys.stderr)
         return 75
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     return 0

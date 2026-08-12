@@ -1,5 +1,30 @@
 # Session Log
 
+## 2026-08-12 - Dynamic durable concurrency P3
+
+- Raised each durable provider's default and hard concurrency ceiling to three.
+- Added opt-in quota-aware effective slots: pressure removes one slot, canonical
+  rate-limit cooldowns pause new launches at zero, and recovery restores capacity
+  without cancelling jobs already running.
+- Kept native reservations fixed and advisory. Status reports the 95% feedback
+  join prerequisite instead of silently treating today's 50% live rate as ready
+  for dynamic enforcement.
+- Added startup, scheduler recovery, status, and installer propagation coverage.
+- Verification passes all 227 unit/integration tests, Python compile checks, and
+  diff whitespace validation.
+- Kimi K3 conditionally approved the scheduler design. The three-slot default and
+  hard ceiling for every provider is an intentional product decision from the
+  concurrency roadmap, not part of the feature flag. Follow-up hardening validates
+  the dynamic/quota pairing before replacing launchd, cleanly handles startup
+  configuration errors, clarifies hysteretic recovery, and adds the requested
+  scheduler-level capacity, running-job, automatic-recovery, bounds, stale-health,
+  and native-gate tests.
+- Post-review verification passes all 233 unit/integration tests, Python compile
+  checks, and diff whitespace validation.
+- Kimi K3's targeted follow-up returned SHIP with no blockers. The installer now
+  also normalizes every supported boolean spelling during preflight, closing its
+  non-blocking parity note before release.
+
 ## 2026-08-12 - Local quota broker P2
 
 - Added a credential-free CodexBar history reader for Claude, Codex, and a
