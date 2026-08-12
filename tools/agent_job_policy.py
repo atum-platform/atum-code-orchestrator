@@ -16,6 +16,7 @@ def default_allowed_roots(home: Path | None = None) -> list[Path]:
     home = (home or Path.home()).expanduser().resolve()
     return [
         home / "Documents",
+        home / "Projects",
         home / "projects",
         Path("/Users/Shared"),
         home / ".local/share/atum-agent-jobs",
