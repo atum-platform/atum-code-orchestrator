@@ -39,6 +39,7 @@ SERVER_DIR = Path(__file__).resolve().parent
 MAX_PROMPT_BYTES = 4 * 1024 * 1024
 MAX_READ_BYTES = 256_000
 MAX_JOB_LOG_BYTES = int(os.environ.get("AGENT_JOB_MAX_LOG_BYTES", str(10 * 1024 * 1024)))
+ROUTE_FEEDBACK_OUTCOMES = {"completed", "failed", "abandoned", "escalated", "not_started"}
 MAX_EVENT_LOG_BYTES = int(os.environ.get("AGENT_JOB_MAX_EVENT_BYTES", str(2 * 1024 * 1024)))
 MAX_PARTIAL_RESPONSE_BYTES = int(
     os.environ.get("AGENT_JOB_MAX_PARTIAL_RESPONSE_BYTES", str(256 * 1024))
@@ -277,6 +278,10 @@ class JobStore:
                 created_at REAL NOT NULL,
                 expires_at REAL,
                 owner TEXT NOT NULL DEFAULT '',
+                session_id TEXT NOT NULL DEFAULT '',
+                reservation_status TEXT NOT NULL DEFAULT 'none',
+                feedback_outcome TEXT NOT NULL DEFAULT '',
+                feedback_at REAL,
                 request_json TEXT NOT NULL,
                 response_json TEXT NOT NULL
             );
@@ -327,6 +332,22 @@ class JobStore:
         self.db.execute(
             "CREATE INDEX IF NOT EXISTS route_decisions_created ON route_decisions(created_at)"
         )
+        route_columns = {
+            str(row["name"]) for row in self.db.execute("PRAGMA table_info(route_decisions)")
+        }
+        route_migrations = {
+            "session_id": "TEXT NOT NULL DEFAULT ''",
+            "reservation_status": "TEXT NOT NULL DEFAULT 'none'",
+            "feedback_outcome": "TEXT NOT NULL DEFAULT ''",
+            "feedback_at": "REAL",
+        }
+        for name, definition in route_migrations.items():
+            if name not in route_columns:
+                self.db.execute(f"ALTER TABLE route_decisions ADD COLUMN {name} {definition}")
+        self.db.execute(
+            "CREATE INDEX IF NOT EXISTS route_reservations "
+            "ON route_decisions(surface, reservation_status, expires_at)"
+        )
         self.db.execute(
             "UPDATE jobs SET prompt = '' WHERE status IN ('completed','failed','cancelled','interrupted')"
         )
@@ -369,28 +390,170 @@ class JobStore:
             self.on_change(job_id)
         return self.get(job_id)
 
+    def _expire_route_reservations(self, now: float) -> int:
+        cursor = self.db.execute(
+            """UPDATE route_decisions SET reservation_status = 'expired'
+               WHERE reservation_status = 'active' AND expires_at <= ?""",
+            (now,),
+        )
+        return cursor.rowcount
+
     def create_route_decision(
-        self, intent: dict[str, Any], decision: dict[str, Any], owner: str
+        self, intent: dict[str, Any], decision: dict[str, Any], owner: str,
+        reservation_limit: int, reservation_ttl: int,
     ) -> dict[str, Any]:
         decision_id = str(uuid.uuid4())
         created_at = _now()
-        response = {"decision_id": decision_id, "created_at": created_at, **decision}
-        self.db.execute(
-            """INSERT INTO route_decisions (
-                decision_id, protocol_version, policy_version, mode, caller_provider,
-                surface, capability, lane, provider, model_alias, created_at,
-                expires_at, owner, request_json, response_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                decision_id, response["protocol_version"], response["policy_version"],
-                response["mode"], intent["caller_provider"], intent["surface"],
-                intent["capability"], response["lane"], response["provider"],
-                response["model_alias"], created_at, response["expires_at"], owner,
-                _json(intent), _json(response),
-            ),
-        )
-        self.db.commit()
-        return response
+        admitted = dict(decision)
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            self._expire_route_reservations(created_at)
+            if admitted["lane"] == "native_subagent" and admitted["enforced"]:
+                active = self.db.execute(
+                    """SELECT COUNT(*) FROM route_decisions
+                       WHERE surface = ? AND reservation_status = 'active'""",
+                    (intent["surface"],),
+                ).fetchone()[0]
+                if active >= reservation_limit:
+                    admitted.update(
+                        lane="direct", provider="", model_alias="", worker_profile="",
+                        expires_at=None, reservation_status="none",
+                    )
+                    admitted["reasons"] = [
+                        *admitted["reasons"],
+                        "native worker reservation capacity is full; continue directly",
+                    ]
+                else:
+                    admitted["expires_at"] = created_at + reservation_ttl
+                    admitted["reservation_status"] = "active"
+            response = {"decision_id": decision_id, "created_at": created_at, **admitted}
+            self.db.execute(
+                """INSERT INTO route_decisions (
+                    decision_id, protocol_version, policy_version, mode, caller_provider,
+                    surface, capability, lane, provider, model_alias, created_at,
+                    expires_at, owner, session_id, reservation_status,
+                    request_json, response_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    decision_id, response["protocol_version"], response["policy_version"],
+                    response["mode"], intent["caller_provider"], intent["surface"],
+                    intent["capability"], response["lane"], response["provider"],
+                    response["model_alias"], created_at, response["expires_at"], owner,
+                    intent["session_id"], response["reservation_status"],
+                    _json(intent), _json(response),
+                ),
+            )
+            self.db.commit()
+            return response
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def route_feedback(
+        self, decision_id: str, session_id: str, outcome: str
+    ) -> dict[str, Any]:
+        now = _now()
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            self._expire_route_reservations(now)
+            row = self.db.execute(
+                "SELECT * FROM route_decisions WHERE decision_id = ?", (decision_id,)
+            ).fetchone()
+            if not row:
+                raise ValueError(f"Unknown routing decision: {decision_id}")
+            if str(row["session_id"]) != session_id:
+                raise PermissionError("Routing decision does not belong to this session")
+            existing = str(row["feedback_outcome"])
+            if existing:
+                if existing != outcome:
+                    raise ValueError("Routing feedback conflicts with the recorded outcome")
+                self.db.commit()
+                return {
+                    "decision_id": decision_id, "outcome": existing,
+                    "reservation_status": row["reservation_status"],
+                    "feedback_at": row["feedback_at"], "idempotent": True,
+                }
+            status = "released" if row["reservation_status"] == "active" else row["reservation_status"]
+            self.db.execute(
+                """UPDATE route_decisions
+                   SET feedback_outcome = ?, feedback_at = ?, reservation_status = ?
+                   WHERE decision_id = ?""",
+                (outcome, now, status, decision_id),
+            )
+            self.db.commit()
+            return {
+                "decision_id": decision_id, "outcome": outcome,
+                "reservation_status": status, "feedback_at": now, "idempotent": False,
+            }
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def reconcile_route_session(
+        self, session_id: str, active_decision_ids: list[str]
+    ) -> dict[str, Any]:
+        now = _now()
+        retained = set(active_decision_ids)
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            expired = self._expire_route_reservations(now)
+            rows = self.db.execute(
+                "SELECT decision_id, reservation_status FROM route_decisions WHERE session_id = ?",
+                (session_id,),
+            ).fetchall()
+            owned = {str(row["decision_id"]) for row in rows}
+            active = {
+                str(row["decision_id"]) for row in rows
+                if row["reservation_status"] == "active"
+            }
+            unknown = retained - owned
+            if unknown:
+                raise ValueError("Active routing decisions are unknown or belong to another session")
+            retained_active = retained & active
+            released = sorted(active - retained_active)
+            if released:
+                placeholders = ",".join("?" for _ in released)
+                self.db.execute(
+                    f"UPDATE route_decisions SET reservation_status = 'reconciled' "
+                    f"WHERE decision_id IN ({placeholders})",
+                    released,
+                )
+            self.db.commit()
+            return {
+                "session_id": session_id, "retained_decision_ids": sorted(retained),
+                "retained_active_decision_ids": sorted(retained_active),
+                "released_decision_ids": released, "expired_count": expired,
+            }
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def route_status(self) -> dict[str, Any]:
+        now = _now()
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            self._expire_route_reservations(now)
+            rows = self.db.execute(
+                """SELECT reservation_status, COUNT(*) AS count
+                   FROM route_decisions WHERE lane = 'native_subagent'
+                   GROUP BY reservation_status"""
+            ).fetchall()
+            counts = {str(row["reservation_status"]): int(row["count"]) for row in rows}
+            terminal = sum(value for key, value in counts.items() if key != "active")
+            joined = int(self.db.execute(
+                """SELECT COUNT(*) FROM route_decisions
+                   WHERE lane = 'native_subagent' AND feedback_at IS NOT NULL"""
+            ).fetchone()[0])
+            self.db.commit()
+            return {
+                "native_reservations": counts,
+                "feedback_joined": joined,
+                "feedback_eligible": terminal,
+                "feedback_join_rate": None if terminal == 0 else joined / terminal,
+            }
+        except Exception:
+            self.db.rollback()
+            raise
 
     def get(self, job_id: str) -> dict[str, Any]:
         row = self.db.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
@@ -570,6 +733,13 @@ class Supervisor:
             "kimi": int(os.environ.get("AGENT_JOB_KIMI_CONCURRENCY", "1")),
             "codex": int(os.environ.get("AGENT_JOB_CODEX_CONCURRENCY", "2")),
         }
+        self.routing_mode = os.environ.get("AGENT_JOB_ROUTING_MODE", "shadow").strip().lower()
+        self.native_reservation_limit = max(
+            1, min(int(os.environ.get("AGENT_JOB_CODEX_NATIVE_RESERVATIONS", "3")), 32)
+        )
+        self.native_reservation_ttl = max(
+            30, min(int(os.environ.get("AGENT_JOB_ROUTE_RESERVATION_SECONDS", "900")), 86_400)
+        )
         self._stopping = False
         self._lock_handle = None
 
@@ -1289,8 +1459,48 @@ class Supervisor:
         if len(_json(intent).encode("utf-8")) > MAX_INTENT_BYTES:
             raise ValueError(f"Routing intent exceeds {MAX_INTENT_BYTES} UTF-8 bytes")
         canonical_intent = normalize_intent(intent)
-        decision = decide(canonical_intent)
-        return self.store.create_route_decision(canonical_intent, decision, owner)
+        decision = decide(canonical_intent, self.routing_mode)
+        return self.store.create_route_decision(
+            canonical_intent, decision, owner,
+            self.native_reservation_limit, self.native_reservation_ttl,
+        )
+
+    def route_feedback(self, payload: dict[str, Any]) -> dict[str, Any]:
+        decision_id = str(payload.get("decision_id") or "").strip()
+        session_id = str(payload.get("session_id") or "").strip()
+        outcome = str(payload.get("outcome") or "").strip().lower()
+        if not decision_id or len(decision_id) > 200:
+            raise ValueError("A bounded routing decision_id is required")
+        if not session_id or len(session_id) > 200:
+            raise ValueError("A bounded routing session_id is required")
+        if outcome not in ROUTE_FEEDBACK_OUTCOMES:
+            raise ValueError(f"Unsupported routing outcome: {outcome or '<empty>'}")
+        return self.store.route_feedback(decision_id, session_id, outcome)
+
+    def route_reconcile(self, payload: dict[str, Any]) -> dict[str, Any]:
+        session_id = str(payload.get("session_id") or "").strip()
+        raw_ids = payload.get("active_decision_ids") or []
+        if not session_id or len(session_id) > 200:
+            raise ValueError("A bounded routing session_id is required")
+        if (
+            not isinstance(raw_ids, list) or len(raw_ids) > 100
+            or any(not isinstance(item, str) or not item or len(item) > 200 for item in raw_ids)
+        ):
+            raise ValueError("active_decision_ids must contain at most 100 bounded strings")
+        return self.store.reconcile_route_session(
+            session_id, list(dict.fromkeys(raw_ids))
+        )
+
+    def route_status(self) -> dict[str, Any]:
+        from agent_routing_policy import POLICY_VERSION
+
+        return {
+            "policy_version": POLICY_VERSION,
+            "routing_mode": self.routing_mode,
+            "native_reservation_limit": self.native_reservation_limit,
+            "native_reservation_ttl_seconds": self.native_reservation_ttl,
+            **self.store.route_status(),
+        }
 
     def _read_events(
         self, job: dict[str, Any], cursor: int, max_bytes: int
@@ -1518,6 +1728,12 @@ class Supervisor:
                 result = self.submit(payload)
             elif action == "route_decide":
                 result = self.route_decide(payload)
+            elif action == "route_feedback":
+                result = self.route_feedback(payload)
+            elif action == "route_reconcile":
+                result = self.route_reconcile(payload)
+            elif action == "route_status":
+                result = self.route_status()
             elif action == "read":
                 result = await self.read_wait(payload)
             elif action == "list":

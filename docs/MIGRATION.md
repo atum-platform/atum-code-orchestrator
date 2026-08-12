@@ -12,6 +12,11 @@ guidance already present on a machine is adopted verbatim to preserve local and
 temporary routing policy; a fresh machine receives the repository default, so
 machine-specific overrides may intentionally differ.
 
+Codex routing instructions use a separate installer-owned marked block. This
+block may be updated without replacing customized provider guidance. The
+installer also adds the `spark-worker` role and a three-thread native ceiling
+only when no ceiling is already configured.
+
 Before replacing an existing supervisor, let all `running` and `launching` jobs
 finish. The installer refuses to proceed while active jobs exist. Quit Codex
 Desktop, Claude Desktop, and Kimi before rewriting their configuration so an app
@@ -52,6 +57,11 @@ Stop submitting jobs and let active jobs drain. Restore the timestamped
 `*.bak.agent-jobs-*` client files and profile backups, then reinstall the prior
 supervisor from its checkout. The SQLite database and retained job results are
 not deleted by either installation.
+
+For routing-only rollback, reinstall the supervisor with
+`AGENT_JOB_ROUTING_MODE=shadow` (or remove that variable) after active durable
+jobs drain. Existing native reservations expire automatically; the additive
+SQLite columns remain backward compatible and require no down migration.
 
 Keep the previous checkout until all coding clients and optional Hermes profiles
 have completed a smoke run through the standalone service. After that, the old

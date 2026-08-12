@@ -31,6 +31,9 @@ class SupervisorInstallerTest(unittest.TestCase):
             "AGENT_JOB_MAX_EVENT_BYTES": "2000",
             "AGENT_JOB_MAX_PARTIAL_RESPONSE_BYTES": "3000",
             "AGENT_JOB_RETENTION_SECONDS": "4000",
+            "AGENT_JOB_ROUTING_MODE": "codex_canary",
+            "AGENT_JOB_CODEX_NATIVE_RESERVATIONS": "3",
+            "AGENT_JOB_ROUTE_RESERVATION_SECONDS": "900",
         }
         with patch.dict(os.environ, values, clear=False):
             environment = installer._service_environment()

@@ -1,6 +1,6 @@
 ---
 name: agent-jobs
-description: Route durable cross-agent reviews, consultations, planning, design, copywriting, research, or explicitly delegated implementation among Codex, Claude, and Kimi. Use when an independent model can materially improve a checkpoint or when the user explicitly asks one provider to perform scoped work. The skill owns routing and review policy; the generic job tools only submit, observe, list, cancel, and deliver durable job notices.
+description: Route focused native Codex subagents and durable cross-agent reviews, consultations, planning, design, copywriting, research, or explicitly delegated implementation among Codex, Claude, and Kimi. Use when a separable worker or independent model can materially improve a checkpoint, or when the user explicitly asks one provider to perform scoped work. The skill owns routing policy and lifecycle feedback.
 ---
 
 # Agent Jobs
@@ -21,10 +21,10 @@ unverified authority.
 
 ## Route independent reviews
 
-The supervisor now exposes a versioned `route_decide` shadow protocol. Until the
-Codex canary phase explicitly enables enforcement, its response is telemetry
-only (`mode=shadow`, `enforced=false`) and this table remains authoritative.
-Do not treat a shadow decision as a reservation or launched job.
+The supervisor exposes a versioned `route_decide` protocol. Follow its lane only
+when `enforced=true`; `mode=shadow` is telemetry and creates no reservation.
+During the first canary, only Codex-on-Codex decisions can be enforced. The table
+below remains the fail-open policy for shadow responses or supervisor outage.
 
 Default routing by caller:
 
@@ -37,6 +37,23 @@ Default routing by caller:
 An explicit user model/provider request overrides these defaults. A fallback is
 for provider failure, quota exhaustion, or unusable output, not disagreement.
 Do not routinely call both providers.
+
+## Route focused Codex work
+
+For a separable implementation, exploration, or test scope, Codex calls
+`route_decide` before spawning a native worker. Pass a stable ID for the current
+task as `session_id` and report `surface_capabilities.native_subagents=true` only
+when native agents are actually available. A `native_subagent` response includes
+an active, expiring reservation plus a worker profile and model alias; the call
+does not itself spawn or control an agent.
+
+Retain the decision ID. Spawn one native worker for the bounded scope, integrate
+and verify its result, then call `route_feedback` once with `completed`, `failed`,
+`abandoned`, `escalated`, or `not_started`. Identical feedback retries are safe.
+On task resume, call `route_reconcile` with that session's decision IDs that are
+still running; omitted active reservations are released. `codex_fast` means the
+current Codex Spark-class worker available on that surface. Capacity exhaustion
+returns `direct`, so the primary continues the work itself.
 
 1. Inspect the exact project and define one checkpoint, risk, and expected output.
 2. Load only the relevant rubric and incorporate it into `instructions`.
@@ -70,7 +87,8 @@ otherwise healthy run after its tokens have already been spent.
 
 ## Use the available binding
 
-- **Codex/Hermes with MCP:** call `route_decide`, `job_submit`, `job_read`, `job_list`,
+- **Codex/Hermes with MCP:** call `route_decide`, `route_feedback`,
+  `route_reconcile`, `route_status`, `job_submit`, `job_read`, `job_list`,
   `job_cancel`, and `job_inbox` from the `agent-jobs` server.
 - **Claude or a shell-only session:** run `scripts/review.py` with the equivalent
   `submit`, `read`, `list`, `cancel`, or `inbox` arguments.

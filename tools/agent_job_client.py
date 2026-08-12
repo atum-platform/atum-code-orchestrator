@@ -90,6 +90,30 @@ def route_decide(socket_path: Path | str = DEFAULT_SOCKET_PATH, **intent: Any) -
     return request({"action": "route_decide", **intent}, socket_path)
 
 
+def route_feedback(
+    decision_id: str, session_id: str, outcome: str,
+    socket_path: Path | str = DEFAULT_SOCKET_PATH,
+) -> dict[str, Any]:
+    return request({
+        "action": "route_feedback", "decision_id": decision_id,
+        "session_id": session_id, "outcome": outcome,
+    }, socket_path)
+
+
+def route_reconcile(
+    session_id: str, active_decision_ids: list[str],
+    socket_path: Path | str = DEFAULT_SOCKET_PATH,
+) -> dict[str, Any]:
+    return request({
+        "action": "route_reconcile", "session_id": session_id,
+        "active_decision_ids": active_decision_ids,
+    }, socket_path)
+
+
+def route_status(socket_path: Path | str = DEFAULT_SOCKET_PATH) -> dict[str, Any]:
+    return request({"action": "route_status"}, socket_path)
+
+
 def read(
     job_id: str,
     cursor: int = 0,
@@ -176,7 +200,20 @@ def _parser() -> argparse.ArgumentParser:
     route.add_argument("--surface-capabilities", type=json.loads, default={})
     route.add_argument("--explicit-provider", default="")
     route.add_argument("--explicit-model", default="")
+    route.add_argument("--session-id", default="")
     route.add_argument("--owner", default="")
+    feedback = sub.add_parser("route-feedback")
+    feedback.add_argument("decision_id")
+    feedback.add_argument("--session-id", required=True)
+    feedback.add_argument(
+        "--outcome",
+        choices=("completed", "failed", "abandoned", "escalated", "not_started"),
+        required=True,
+    )
+    reconcile = sub.add_parser("route-reconcile")
+    reconcile.add_argument("--session-id", required=True)
+    reconcile.add_argument("--active-decision-id", action="append", default=[])
+    sub.add_parser("route-status")
     sub.add_parser("ping")
     return parser
 
@@ -194,6 +231,13 @@ def main() -> int:
             result = submit(socket_path=args.socket, **payload)
         elif action == "route-decide":
             result = route_decide(socket_path=args.socket, **payload)
+        elif action == "route-feedback":
+            result = route_feedback(socket_path=args.socket, **payload)
+        elif action == "route-reconcile":
+            payload["active_decision_ids"] = payload.pop("active_decision_id")
+            result = route_reconcile(socket_path=args.socket, **payload)
+        elif action == "route-status":
+            result = route_status(socket_path=args.socket)
         else:
             result = request({"action": action, **payload}, args.socket)
     except Exception as exc:

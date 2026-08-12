@@ -19,9 +19,12 @@ from agent_job_policy import allowed_roots_value
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SERVER_PATH = REPO_ROOT / "tools" / "agent_jobs_server.py"
 SKILL_SOURCE = REPO_ROOT / "skills" / "agent-jobs"
+CODEX_SPARK_WORKER = REPO_ROOT / "clients" / "codex" / "spark-worker.toml"
 PYTHON_PATH = REPO_ROOT / ".venv" / "bin" / "python"
 GUIDANCE_START = "<!-- AGENT_JOBS_GUIDANCE_START -->"
 GUIDANCE_END = "<!-- AGENT_JOBS_GUIDANCE_END -->"
+CODEX_ROUTING_START = "<!-- AGENT_JOBS_CODEX_ROUTING_START -->"
+CODEX_ROUTING_END = "<!-- AGENT_JOBS_CODEX_ROUTING_END -->"
 LEGACY_SKILL_ROOTS = (
     Path.home() / ".local/share/hermes-agent-review-sidecars/skills/agent-jobs",
 )
@@ -57,6 +60,20 @@ secrets. Retain job IDs and cursors, treat `possibly_stalled` as alive but quiet
 and leave `max_turns=0` by default. Verify all returned work locally.
 """,
 }
+
+CODEX_ROUTING_GUIDANCE = """## Codex Routing Canary
+
+For focused implementation, exploration, or test work that is separable from the
+primary task, call the agent-jobs `route_decide` tool before spawning a native
+subagent. Pass a stable task/session ID and `native_subagents=true`. Follow the
+returned lane only when `enforced=true`; shadow responses are telemetry. A
+`native_subagent` lane means spawn one worker using the returned worker profile
+and model alias, retain the decision ID, and send `route_feedback` exactly once
+when it completes, fails, is abandoned, or is escalated. On a resumed task, call
+`route_reconcile` with that session's still-active decision IDs. The routing tool
+does not spawn or terminate native agents; Codex remains responsible for their
+lifecycle, integration, verification, and the final result.
+"""
 
 
 def python_path(home: Path | None = None) -> Path:
@@ -166,8 +183,6 @@ def merge_codex_config(path: Path, suffix: str, apply: bool, home: Path | None =
         },
     }
     has_timeouts = current is not None and "startup_timeout_sec" in current and "tool_timeout_sec" in current
-    if managed_current == desired and has_timeouts:
-        return False
     table = current if current is not None else tomlkit.table()
     table["command"] = desired["command"]
     table["args"] = desired["args"]
@@ -182,10 +197,22 @@ def merge_codex_config(path: Path, suffix: str, apply: bool, home: Path | None =
     if existing_env is None:
         table.add("env", env)
     servers["agent-jobs"] = table
+    agents = document.setdefault("agents", tomlkit.table())
+    if "max_concurrent_threads_per_session" not in agents and "max_threads" not in agents:
+        agents["max_concurrent_threads_per_session"] = 3
+    role = agents.get("spark-worker") or tomlkit.table()
+    role["description"] = (
+        "Fast Codex worker for one focused implementation, exploration, or test scope."
+    )
+    role["config_file"] = str(CODEX_SPARK_WORKER)
+    agents["spark-worker"] = role
+    updated = tomlkit.dumps(document)
+    if managed_current == desired and has_timeouts and updated == original:
+        return False
     if apply:
         _backup(path, suffix)
         mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
-        _atomic_write(path, tomlkit.dumps(document), mode)
+        _atomic_write(path, updated, mode)
     return True
 
 
@@ -207,7 +234,7 @@ def merge_guidance(path: Path, name: str, suffix: str, apply: bool) -> bool:
     if start != -1:
         # Existing marked guidance is locally owned policy. Provider availability
         # overrides and team-specific routing must not be silently overwritten.
-        return False
+        updated = original
     else:
         # Adopt legacy policy verbatim; the shared skill carries portable defaults.
         import re
@@ -218,6 +245,23 @@ def merge_guidance(path: Path, name: str, suffix: str, apply: bool) -> bool:
             updated = original[:match.start()] + adopted + "\n\n" + original[match.end():].lstrip("\n")
         else:
             updated = (managed + "\n\n" + original.lstrip()) if original else managed
+    if name == "Codex guidance":
+        if original.count(CODEX_ROUTING_START) > 1 or original.count(CODEX_ROUTING_END) > 1:
+            raise ValueError(f"Duplicate Codex routing guidance markers: {path}")
+        route_start = updated.find(CODEX_ROUTING_START)
+        route_end = updated.find(CODEX_ROUTING_END)
+        if (route_start == -1) != (route_end == -1) or (
+            route_start != -1 and route_end < route_start
+        ):
+            raise ValueError(f"Malformed Codex routing guidance markers: {path}")
+        route_block = (
+            f"{CODEX_ROUTING_START}\n{CODEX_ROUTING_GUIDANCE.rstrip()}\n{CODEX_ROUTING_END}"
+        )
+        if route_start == -1:
+            updated = updated.rstrip() + "\n\n" + route_block + "\n"
+        else:
+            route_end += len(CODEX_ROUTING_END)
+            updated = updated[:route_start] + route_block + updated[route_end:]
     updated = updated.rstrip() + "\n"
     if updated == original:
         return False

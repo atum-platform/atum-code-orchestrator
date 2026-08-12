@@ -175,6 +175,9 @@ class ClientInstallerTest(unittest.TestCase):
         self.assertIn(str(installer.SERVER_PATH), result)
         self.assertIn("startup_timeout_sec = 30.0", result)
         self.assertIn("tool_timeout_sec = 120.0", result)
+        self.assertIn("max_concurrent_threads_per_session = 3", result)
+        self.assertIn("[agents.spark-worker]", result)
+        self.assertIn(str(installer.CODEX_SPARK_WORKER), result)
         self.assertFalse(installer.merge_codex_config(path, "second", True, self.root))
 
     def test_codex_toml_merge_preserves_existing_timeouts_and_env(self) -> None:
@@ -190,6 +193,16 @@ class ClientInstallerTest(unittest.TestCase):
         self.assertIn("tool_timeout_sec = 900.0", result)
         self.assertIn('KEEP = "yes"', result)
         self.assertFalse(installer.merge_codex_config(path, "second", True, self.root))
+
+    def test_codex_merge_preserves_existing_native_thread_limit(self) -> None:
+        path = self.root / "config.toml"
+        path.write_text("[agents]\nmax_concurrent_threads_per_session = 2\n", encoding="utf-8")
+
+        self.assertTrue(installer.merge_codex_config(path, "test", True, self.root))
+
+        result = path.read_text(encoding="utf-8")
+        self.assertIn("max_concurrent_threads_per_session = 2", result)
+        self.assertNotIn("max_concurrent_threads_per_session = 3", result)
 
     def test_legacy_guidance_section_is_adopted(self) -> None:
         path = self.root / "AGENTS.md"

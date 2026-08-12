@@ -1,5 +1,26 @@
 # Session Log
 
+## 2026-08-12 - Codex native routing canary P1
+
+- Added an opt-in `codex_canary` policy that routes only focused, low/medium-risk,
+  session-scoped Codex implementation, exploration, and test work to a native
+  Spark worker. Claude, Kimi, Hermes, and all unsupported intents remain shadow;
+  direct fallback is returned when cooperative capacity is full.
+- Made decision persistence and native reservation admission one SQLite
+  transaction. Added additive lifecycle columns, a default three-reservation
+  machine limit, 15-minute TTL expiry, idempotent terminal feedback,
+  session-scoped reconciliation, and decision-to-feedback join telemetry.
+- Exposed `route_feedback`, `route_reconcile`, and `route_status` through the raw
+  client, guarded CLI, review core, and MCP alongside `route_decide`.
+- Added an installer-managed Codex `spark-worker` role using
+  `gpt-5.3-codex-spark`, a default three-thread native session ceiling, and a
+  separate routing guidance block that does not overwrite customized provider
+  policy. The primary Codex model remains unchanged by this work.
+- Covered concurrent admission, capacity fallback, ownership, idempotency,
+  conflicting feedback, reconciliation, expiry, telemetry, old-database
+  migration, transport parity, installer behavior, and shadow compatibility.
+  The final full verification pass completed 203 tests successfully.
+
 ## 2026-08-12 - Shadow routing protocol P0
 
 - Added versioned `route_decide` protocol v1 across the supervisor socket,

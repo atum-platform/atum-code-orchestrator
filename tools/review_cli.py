@@ -63,7 +63,20 @@ def _parser() -> argparse.ArgumentParser:
     route.add_argument("--surface-capabilities", type=json.loads, default={})
     route.add_argument("--explicit-provider", default="")
     route.add_argument("--explicit-model", default="")
+    route.add_argument("--session-id", default="")
     route.add_argument("--owner", default="")
+    feedback = sub.add_parser("route-feedback")
+    feedback.add_argument("decision_id")
+    feedback.add_argument("--session-id", required=True)
+    feedback.add_argument(
+        "--outcome",
+        choices=("completed", "failed", "abandoned", "escalated", "not_started"),
+        required=True,
+    )
+    reconcile = sub.add_parser("route-reconcile")
+    reconcile.add_argument("--session-id", required=True)
+    reconcile.add_argument("--active-decision-id", action="append", default=[])
+    sub.add_parser("route-status")
     return parser
 
 
@@ -73,6 +86,13 @@ def dispatch(values: dict[str, object]) -> dict[str, object]:
         return review_core.job_submit(**values)  # type: ignore[arg-type]
     if action == "route-decide":
         return review_core.routing_decide(**values)  # type: ignore[arg-type]
+    if action == "route-feedback":
+        return review_core.routing_feedback(**values)  # type: ignore[arg-type]
+    if action == "route-reconcile":
+        values["active_decision_ids"] = values.pop("active_decision_id")
+        return review_core.routing_reconcile(**values)  # type: ignore[arg-type]
+    if action == "route-status":
+        return review_core.routing_status()
     if action == "read":
         return review_core.job_read(**values)  # type: ignore[arg-type]
     if action == "list":

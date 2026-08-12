@@ -5,10 +5,10 @@ It lets any supported coding surface submit work to another provider, observe
 incremental progress, recover partial responses, and receive durable completion
 notices without keeping one MCP request open.
 
-The versioned `route_decide` protocol is currently available in shadow mode. It
-records the centralized policy's recommendation but does not reserve capacity,
-spawn a native subagent, submit a durable job, or override existing caller
-behavior.
+The versioned routing protocol supports shadow mode everywhere and an opt-in
+Codex-only canary. In the canary, focused session work can receive an atomic,
+expiring native-worker reservation; Codex still performs the actual spawn and
+reports the outcome. Other surfaces remain shadow-only.
 
 The supervisor is coding-agent infrastructure. Hermes can consume it, but does
 not own its runtime, protocol, or repository.

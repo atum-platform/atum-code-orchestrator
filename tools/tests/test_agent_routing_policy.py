@@ -87,3 +87,37 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         decision = decide(intent)
         self.assertEqual("direct", decision["lane"])
         self.assertEqual("", decision["model_alias"])
+
+    def test_codex_canary_routes_focused_work_to_native_spark_worker(self) -> None:
+        intent = self.intent("codex", "implementation")
+        intent.update(
+            complexity="focused", risk="low", scope="single_module",
+            duration="short", durability="session",
+            surface_capabilities={"native_subagents": True}, session_id="task-123",
+        )
+
+        decision = decide(intent, "codex_canary")
+
+        self.assertEqual("codex_canary", decision["mode"])
+        self.assertTrue(decision["enforced"])
+        self.assertEqual("native_subagent", decision["lane"])
+        self.assertEqual("codex_fast", decision["model_alias"])
+        self.assertEqual("spark-worker", decision["worker_profile"])
+
+    def test_codex_canary_requires_native_capability_and_session_identity(self) -> None:
+        without_native = self.intent("codex", "implementation")
+        without_native.update(complexity="focused", durability="session", session_id="task-123")
+        without_session = self.intent("codex", "implementation")
+        without_session.update(
+            complexity="focused", durability="session",
+            surface_capabilities={"native_subagents": True},
+        )
+
+        self.assertEqual("direct", decide(without_native, "codex_canary")["lane"])
+        self.assertEqual("direct", decide(without_session, "codex_canary")["lane"])
+
+    def test_non_codex_surface_remains_shadow_in_canary_mode(self) -> None:
+        decision = decide(self.intent("claude", "planning"), "codex_canary")
+
+        self.assertEqual("shadow", decision["mode"])
+        self.assertFalse(decision["enforced"])

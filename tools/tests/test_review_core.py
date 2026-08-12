@@ -85,7 +85,10 @@ class ReviewCoreTest(unittest.IsolatedAsyncioTestCase):
     async def test_mcp_surface_has_only_guarded_generic_tools(self) -> None:
         tools = set(agent_jobs_server.mcp._tool_manager._tools)
         self.assertEqual(
-            {"route_decide", "job_submit", "job_read", "job_list", "job_cancel", "job_inbox"}, tools
+            {
+                "route_decide", "route_feedback", "route_reconcile", "route_status",
+                "job_submit", "job_read", "job_list", "job_cancel", "job_inbox",
+            }, tools
         )
         parameters = inspect.signature(agent_jobs_server.job_submit).parameters
         self.assertNotIn("mode", parameters)
@@ -148,12 +151,36 @@ class ReviewCoreTest(unittest.IsolatedAsyncioTestCase):
             "capability": "planning", "complexity": "deep", "risk": "medium",
             "scope": "repo", "duration": "long", "durability": "durable",
             "parallelizable": False, "surface_capabilities": {},
-            "explicit_provider": "", "explicit_model": "", "owner": "test",
+            "explicit_provider": "", "explicit_model": "", "session_id": "task-1",
+            "owner": "test",
         }
         with patch.object(review_core, "routing_decide", side_effect=fake_route):
             review_cli.dispatch({"action": "route-decide", **values})
             await agent_jobs_server.route_decide(**values)
         self.assertEqual(calls[0], calls[1])
+
+    async def test_cli_dispatch_threads_routing_lifecycle_arguments(self) -> None:
+        cases = [
+            (
+                "route-feedback",
+                {"decision_id": "decision", "session_id": "task", "outcome": "completed"},
+                "routing_feedback",
+            ),
+            (
+                "route-reconcile",
+                {"session_id": "task", "active_decision_id": ["decision"]},
+                "routing_reconcile",
+            ),
+        ]
+        for action, values, target in cases:
+            with self.subTest(action=action), patch.object(
+                review_core, target, return_value={"ok": True}
+            ) as mocked:
+                review_cli.dispatch({"action": action, **values})
+                expected = dict(values)
+                if action == "route-reconcile":
+                    expected["active_decision_ids"] = expected.pop("active_decision_id")
+                mocked.assert_called_once_with(**expected)
 
     async def test_git_base_includes_committed_branch_changes(self) -> None:
         subprocess.run(["git", "init", "-q", str(self.workdir)], check=True)

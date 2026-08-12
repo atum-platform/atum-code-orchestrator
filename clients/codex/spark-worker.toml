@@ -1,0 +1,10 @@
+name = "spark-worker"
+description = "Fast Codex worker for one focused implementation, exploration, or test scope."
+model = "gpt-5.3-codex-spark"
+model_reasoning_effort = "medium"
+
+developer_instructions = """
+Complete only the bounded scope assigned by the primary agent. Do not delegate,
+broaden the task, commit, push, or modify unrelated files. Report files changed,
+verification run, remaining uncertainty, and anything the primary must integrate.
+"""
