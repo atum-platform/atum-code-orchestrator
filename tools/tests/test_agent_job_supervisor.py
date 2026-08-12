@@ -63,6 +63,21 @@ class JobStoreMigrationTest(unittest.TestCase):
                     db_path=root / "state/jobs.sqlite3", log_dir=root / "state/logs",
                 )
 
+    def test_invalid_native_routing_numbers_name_the_environment_variable(self) -> None:
+        for name in (
+            "AGENT_JOB_CODEX_NATIVE_RESERVATIONS",
+            "AGENT_JOB_ROUTE_RESERVATION_SECONDS",
+        ):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary, patch.dict(
+                os.environ, {name: "invalid"}
+            ):
+                root = Path(temporary)
+                with self.assertRaisesRegex(ValueError, name):
+                    Supervisor(
+                        state_dir=root / "state", socket_path=root / "state/socket",
+                        db_path=root / "state/jobs.sqlite3", log_dir=root / "state/logs",
+                    )
+
 
 def fake_command(job: dict[str, object]) -> tuple[list[str], str | None, dict[str, str]]:
     prompt = str(job["prompt"])
@@ -1558,6 +1573,21 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("active", admitted["reservation_status"])
         self.assertGreater(float(admitted["expires_at"]), time.time())
 
+    async def test_native_reservation_capacity_is_machine_wide(self) -> None:
+        self.supervisor.routing_mode = "codex_canary"
+        self.supervisor.native_reservation_limit = 1
+        first = await self.call(self.codex_native_route("session-a"))
+        self.supervisor.store.db.execute(
+            "UPDATE route_decisions SET surface = 'future-surface' WHERE decision_id = ?",
+            (first["decision_id"],),
+        )
+        self.supervisor.store.db.commit()
+
+        second = await self.call(self.codex_native_route("session-b"))
+
+        self.assertEqual("direct", second["lane"])
+        self.assertEqual("none", second["reservation_status"])
+
     async def test_route_feedback_is_idempotent_and_releases_reservation(self) -> None:
         self.supervisor.routing_mode = "codex_canary"
         decision = await self.call(self.codex_native_route("session-feedback"))
@@ -1675,6 +1705,23 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             (decision["decision_id"],),
         ).fetchone()
         self.assertIsNone(row)
+
+    async def test_prune_preserves_active_route_reservations(self) -> None:
+        self.supervisor.routing_mode = "codex_canary"
+        decision = await self.call(self.codex_native_route("session-active-prune"))
+        self.supervisor.store.db.execute(
+            "UPDATE route_decisions SET created_at = 1 WHERE decision_id = ?",
+            (decision["decision_id"],),
+        )
+        self.supervisor.store.db.commit()
+
+        self.supervisor.store.prune(2)
+
+        row = self.supervisor.store.db.execute(
+            "SELECT reservation_status FROM route_decisions WHERE decision_id = ?",
+            (decision["decision_id"],),
+        ).fetchone()
+        self.assertEqual("active", row["reservation_status"])
 
     async def test_cao_backend_fails_closed_for_unenforceable_contracts(self) -> None:
         with patch.dict(os.environ, {"AGENT_JOB_EXECUTION_BACKEND": "cao"}):

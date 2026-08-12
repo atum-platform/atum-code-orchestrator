@@ -102,6 +102,15 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+def _bounded_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
+    raw = os.environ.get(name, str(default))
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from None
+    return max(minimum, min(value, maximum))
+
+
 def _kimi_semantic_enabled() -> bool:
     return os.environ.get("AGENT_JOB_KIMI_SEMANTIC", "1").strip().lower() not in {
         "0", "false", "no", "off",
@@ -411,8 +420,7 @@ class JobStore:
             if admitted["lane"] == "native_subagent" and admitted["enforced"]:
                 active = self.db.execute(
                     """SELECT COUNT(*) FROM route_decisions
-                       WHERE surface = ? AND reservation_status = 'active'""",
-                    (intent["surface"],),
+                       WHERE reservation_status = 'active'""",
                 ).fetchone()[0]
                 if active >= reservation_limit:
                     admitted.update(
@@ -687,7 +695,12 @@ class JobStore:
             "DELETE FROM jobs WHERE status IN ('completed','failed','cancelled','interrupted') AND finished_at < ?",
             (cutoff,),
         )
-        self.db.execute("DELETE FROM route_decisions WHERE created_at < ?", (cutoff,))
+        self._expire_route_reservations(_now())
+        self.db.execute(
+            """DELETE FROM route_decisions
+               WHERE created_at < ? AND reservation_status <> 'active'""",
+            (cutoff,),
+        )
         self.db.commit()
         return [str(row["log_path"]) for row in rows]
 
@@ -736,11 +749,11 @@ class Supervisor:
         self.routing_mode = os.environ.get("AGENT_JOB_ROUTING_MODE", "shadow").strip().lower()
         if self.routing_mode not in {"shadow", "codex_canary"}:
             raise ValueError(f"Unsupported AGENT_JOB_ROUTING_MODE: {self.routing_mode}")
-        self.native_reservation_limit = max(
-            1, min(int(os.environ.get("AGENT_JOB_CODEX_NATIVE_RESERVATIONS", "3")), 32)
+        self.native_reservation_limit = _bounded_int_env(
+            "AGENT_JOB_CODEX_NATIVE_RESERVATIONS", 3, 1, 32
         )
-        self.native_reservation_ttl = max(
-            30, min(int(os.environ.get("AGENT_JOB_ROUTE_RESERVATION_SECONDS", "900")), 86_400)
+        self.native_reservation_ttl = _bounded_int_env(
+            "AGENT_JOB_ROUTE_RESERVATION_SECONDS", 900, 30, 86_400
         )
         self._stopping = False
         self._lock_handle = None

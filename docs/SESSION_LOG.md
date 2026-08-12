@@ -19,7 +19,13 @@
 - Covered concurrent admission, capacity fallback, ownership, idempotency,
   conflicting feedback, reconciliation, expiry, telemetry, old-database
   migration, transport parity, installer behavior, and shadow compatibility.
-  The final full verification pass completed 203 tests successfully.
+  The full verification pass before assembly review completed 204 tests; the
+  final post-review suite completed 208 tests successfully.
+- Kimi K3 assembly review `4f8ecab3-89b9-4860-b5df-4f82b60b057b` found no
+  blockers and recommended shipping. Addressed its capacity-accounting finding
+  by retaining active reservations during prune, made admission truly
+  machine-wide, preserved locally owned non-Codex guidance byte-for-byte, added
+  contextual numeric environment errors, and clarified feedback-return telemetry.
 
 ## 2026-08-12 - Shadow routing protocol P0
 

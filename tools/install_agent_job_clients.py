@@ -234,6 +234,8 @@ def merge_guidance(path: Path, name: str, suffix: str, apply: bool) -> bool:
     if start != -1:
         # Existing marked guidance is locally owned policy. Provider availability
         # overrides and team-specific routing must not be silently overwritten.
+        if name != "Codex guidance":
+            return False
         updated = original
     else:
         # Adopt legacy policy verbatim; the shared skill carries portable defaults.

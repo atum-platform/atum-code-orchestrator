@@ -69,6 +69,15 @@ class ClientInstallerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Duplicate"):
             installer.merge_kimi_guidance(path, "test", False)
 
+    def test_locally_owned_non_codex_guidance_is_byte_preserved(self) -> None:
+        path = self.root / "AGENTS.md"
+        original = f"{installer.GUIDANCE_START}\nCustom policy.\n{installer.GUIDANCE_END}"
+        path.write_text(original, encoding="utf-8")
+
+        self.assertFalse(installer.merge_guidance(path, "Kimi guidance", "test", True))
+        self.assertEqual(original, path.read_text(encoding="utf-8"))
+        self.assertFalse(path.with_name("AGENTS.md.bak.agent-jobs-test").exists())
+
     def test_invalid_json_has_actionable_error(self) -> None:
         path = self.root / "mcp.json"
         path.write_text('{"broken": }', encoding="utf-8")
