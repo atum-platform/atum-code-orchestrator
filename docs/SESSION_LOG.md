@@ -29,6 +29,9 @@
   keys, and prune retained health events. Added focused regressions for each.
 - Post-review verification passes all 224 unit/integration tests, Python compile
   checks, and diff whitespace validation.
+- Kimi K3's targeted follow-up returned SHIP with no remaining blockers. Its one
+  non-blocking note clarified that a rate-limited primary may legitimately use a
+  pressured fallback; the operator documentation now states that exception.
 
 ## 2026-08-12 - Codex native routing canary P1
 

@@ -126,7 +126,9 @@ samples. Telemetry older than two hours (`AGENT_JOB_QUOTA_STALE_SECONDS`) is
 until a post-reset sample arrives. Stale or missing evidence for the primary
 provider preserves static routing and emits an alert rather than inventing
 pressure. A known-pressured primary may still move to an unknown fallback, but
-never to a rate-limited fallback or an equally/more pressured fallback.
+never to a rate-limited fallback or an equally/more pressured fallback. A
+rate-limited primary may use a pressured fallback because it cannot serve the
+request itself.
 
 With quota routing enabled, nonzero provider exits containing a bounded,
 provider-specific rate-limit signature in stderr are
