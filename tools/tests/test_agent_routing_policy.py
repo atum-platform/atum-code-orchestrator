@@ -98,6 +98,16 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         intent["escalation_evidence"] = ""
         with self.assertRaisesRegex(ValueError, "1 to 2000"):
             normalize_intent(intent)
+        intent["escalation_evidence"] = "x" * 2001
+        with self.assertRaisesRegex(ValueError, "1 to 2000"):
+            normalize_intent(intent)
+
+        orphan = self.intent("codex", "planning")
+        orphan["protocol_version"] = 2
+        orphan["escalation_reason"] = "provider_failure"
+        orphan["escalation_evidence"] = "provider exited"
+        with self.assertRaisesRegex(ValueError, "require previous_decision_id"):
+            normalize_intent(orphan)
 
     def test_one_hop_escalation_excludes_parent_and_clears_fallback(self) -> None:
         decision = {
@@ -105,19 +115,42 @@ class AgentRoutingPolicyTest(unittest.TestCase):
             "fallback_provider": "kimi", "fallback_model_alias": "kimi-code/k3",
             "worker_profile": "", "reasons": ["default"],
         }
-        escalated = apply_one_hop_escalation(
-            decision, {"provider": "claude"}, {"kimi": {"state": "available"}},
-        )
-        self.assertEqual("kimi", escalated["provider"])
-        self.assertEqual("kimi-code/k3", escalated["model_alias"])
-        self.assertEqual("", escalated["fallback_provider"])
-        self.assertEqual(1, escalated["escalation_hop"])
+        for health in ({}, {"kimi": {"state": "pressured"}},
+                       {"kimi": {"state": "stale"}}, {"kimi": {"state": "unknown"}},
+                       {"kimi": {"state": "available"}}):
+            with self.subTest(health=health):
+                escalated = apply_one_hop_escalation(
+                    decision, {"provider": "claude"}, health,
+                )
+                self.assertEqual("kimi", escalated["provider"])
+                self.assertEqual("kimi-code/k3", escalated["model_alias"])
+                self.assertEqual("", escalated["fallback_provider"])
+                self.assertEqual(1, escalated["escalation_hop"])
 
         unavailable = apply_one_hop_escalation(
             decision, {"provider": "claude"}, {"kimi": {"state": "rate_limited"}},
         )
         self.assertEqual("direct", unavailable["lane"])
         self.assertEqual("", unavailable["provider"])
+
+    def test_explicit_escalation_target_still_excludes_parent_provider(self) -> None:
+        intent = self.intent("codex", "planning")
+        intent.update(
+            protocol_version=2, session_id="task", previous_decision_id="parent",
+            escalation_reason="provider_failure", escalation_evidence="provider exited",
+            explicit_provider="claude", explicit_model="opus",
+            surface_capabilities={"durable_agent_jobs": True},
+        )
+        same_provider = apply_one_hop_escalation(
+            decide(intent, "surface_canary"), {"provider": "claude"}, {},
+        )
+        self.assertEqual("direct", same_provider["lane"])
+
+        intent.update(explicit_provider="kimi", explicit_model="kimi-code/k3")
+        different_provider = apply_one_hop_escalation(
+            decide(intent, "surface_canary"), {"provider": "claude"}, {},
+        )
+        self.assertEqual("kimi", different_provider["provider"])
 
     def test_v2_selects_exact_claude_and_kimi_models(self) -> None:
         planning = self.intent("codex", "planning")

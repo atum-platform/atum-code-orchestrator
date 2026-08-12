@@ -35,7 +35,7 @@ async def route_decide(
     escalation_evidence: str = "",
     owner: str = "",
 ) -> str:
-    """Decide a route; pass protocol v2 capabilities for deterministic degradation."""
+    """Decide a route; v2 also accepts a parent ID, reason, and evidence for one escalation."""
     result = await asyncio.to_thread(
         review_core.routing_decide,
         protocol_version=protocol_version, caller_provider=caller_provider,

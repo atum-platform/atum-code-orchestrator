@@ -181,9 +181,11 @@ one SQLite `BEGIN IMMEDIATE` transaction. An identical request recovers the same
 child; a different child request and any child-of-child request fail closed.
 
 The supervisor computes the ordinary route, applies quota/cooldown rebalancing,
-and then excludes the provider used by the parent. A healthy fallback becomes
-the terminal provider; a rate-limited or unavailable fallback degrades to direct
-execution by the primary agent. Native-worker escalation also degrades to direct
+and then excludes the provider used by the parent. A fallback that is not in an
+active rate-limit cooldown becomes the terminal provider; stale, missing, and
+pressured quota telemetry retain the system-wide fail-open routing semantics.
+An actively rate-limited fallback degrades to direct execution by the primary
+agent. Native-worker escalation also degrades to direct
 execution because recursively spawning the same worker family would not change
 the failure boundary. Every child clears its fallback fields. `route_status`
 reports child counts by escalation reason, while the SQLite record retains the

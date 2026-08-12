@@ -1809,6 +1809,8 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         ).fetchone()
         self.assertEqual("provider_failure", row["escalation_reason"])
         self.assertEqual("provider exited; api_key=[REDACTED]", row["escalation_evidence"])
+        status = await self.call({"action": "route_status"})
+        self.assertEqual({"provider_failure": 1}, status["one_hop_escalations"])
 
         with self.assertRaisesRegex(RuntimeError, "different escalation"):
             await self.escalate_route(

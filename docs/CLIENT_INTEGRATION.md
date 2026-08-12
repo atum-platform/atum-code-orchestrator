@@ -100,7 +100,7 @@ processes running as the same macOS user.
 
 An enforced v2 decision can produce exactly one durable escalation child. The
 caller first records `route_feedback --outcome escalated`, then repeats the same
-route intent and identity with `previous_decision_id`, one of
+caller, surface, and session identity with `previous_decision_id`, one of
 `provider_failure`, `rate_limit`, `unusable_output`, `scope_growth`, or
 `capability_mismatch`, and 1-2000 characters of non-secret evidence. The
 supervisor excludes the parent's provider after normal quota/cooldown routing,
@@ -108,7 +108,10 @@ clears any further fallback, and returns `parent_decision_id` plus
 `escalation_hop=1`. Shadow parents, identity changes, a missing feedback marker,
 conflicting retries, and second hops fail closed. An identical retry returns the
 same child with `idempotent=true`. Common secret-like values are redacted before
-the evidence is persisted as defense in depth.
+the evidence is persisted as defense in depth. Route shape may change when the
+typed reason is `scope_growth` or `capability_mismatch`. An explicit provider may
+also change, but the parent's provider is always excluded; explicitly selecting
+that same provider therefore returns `direct` rather than retrying it.
 
 ```bash
 python3 tools/review_cli.py route-feedback PARENT_ID \

@@ -46,7 +46,9 @@ caller, surface, and `session_id`, plus the retained decision ID as
 atomically permits one child, excludes the parent provider after applying current
 quota/cooldown evidence, and rejects a second hop. Retry the identical escalation
 request to recover its retained decision; do not invent a new chain or call both
-providers speculatively.
+providers speculatively. `scope_growth` and `capability_mismatch` may change the
+route shape, but the caller, surface, and session identity stay fixed. An explicit
+target is still subject to parent-provider exclusion.
 
 When the supervisor returns an enforced `agent_jobs` route, use its provider and
 model alias exactly. It may have rebalanced the static table using fresh local

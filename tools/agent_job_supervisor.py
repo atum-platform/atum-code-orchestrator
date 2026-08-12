@@ -1708,7 +1708,8 @@ class Supervisor:
 
     def route_decide(self, payload: dict[str, Any]) -> dict[str, Any]:
         from agent_routing_policy import (
-            MAX_INTENT_BYTES, apply_one_hop_escalation, decide, normalize_intent,
+            MAX_ESCALATION_EVIDENCE_CHARS, MAX_INTENT_BYTES,
+            apply_one_hop_escalation, decide, normalize_intent,
         )
         from agent_quota_broker import rebalance_default_route
         from review_core import redact
@@ -1719,9 +1720,12 @@ class Supervisor:
             raise ValueError(f"Routing intent exceeds {MAX_INTENT_BYTES} UTF-8 bytes")
         canonical_intent = normalize_intent(intent)
         if canonical_intent["escalation_evidence"]:
-            canonical_intent["escalation_evidence"], _ = redact(
+            clean_evidence, _ = redact(
                 canonical_intent["escalation_evidence"]
             )
+            canonical_intent["escalation_evidence"] = clean_evidence[
+                :MAX_ESCALATION_EVIDENCE_CHARS
+            ]
         decision = decide(canonical_intent, self.routing_mode)
         health = (
             self.store.refresh_provider_health(stale_seconds=self.quota_stale_seconds)
@@ -1731,6 +1735,8 @@ class Supervisor:
             decision = rebalance_default_route(decision, health)
         parent_id = canonical_intent["previous_decision_id"]
         if parent_id:
+            # A persisted decision's provider is immutable; transaction-time checks
+            # below validate its mutable feedback and ownership fields atomically.
             parent = self.store.db.execute(
                 "SELECT response_json FROM route_decisions WHERE decision_id = ?", (parent_id,)
             ).fetchone()

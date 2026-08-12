@@ -11,6 +11,12 @@
   retries return the retained child response; conflicting retries fail closed.
 - Reused the guarded review redactor before persisting escalation evidence.
 - Exposed escalation fields in MCP, CLI, and shared skill guidance.
+- Kimi K3's primary review found the mechanics sound but flagged ambiguity around
+  fallback health, route-shape changes, and explicit targets. Clarified the
+  intentional fail-open quota semantics and identity contract, bounded evidence
+  after redaction, improved MCP discovery text, and added the missing edge tests.
+- Verified the completed phase with 253 repository tests, focused escalation
+  integration tests, Python bytecode compilation, and `git diff --check`.
 
 ## 2026-08-13 - Capability-aware mixed-version routing P4
 
