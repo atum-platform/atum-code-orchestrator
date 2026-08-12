@@ -272,7 +272,10 @@ def decide(intent: dict[str, Any], routing_mode: str = "shadow") -> dict[str, An
         "provider": provider,
         "model_alias": (
             "" if lane == "direct" else
-            "codex_fast" if lane == "native_subagent" else
+            (
+                "codex_fast" if intent["protocol_version"] == 1
+                else PROVIDER_CAPABILITY_MATRIX["codex"]["fast_model"]
+            ) if lane == "native_subagent" else
             explicit_model or _model_alias(provider, intent)
         ),
         "worker_profile": "spark-worker" if lane == "native_subagent" else "",

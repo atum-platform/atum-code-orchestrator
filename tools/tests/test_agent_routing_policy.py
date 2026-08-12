@@ -189,6 +189,20 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         self.assertEqual("codex_fast", decision["model_alias"])
         self.assertEqual("spark-worker", decision["worker_profile"])
 
+    def test_v2_native_worker_uses_concrete_spark_model(self) -> None:
+        intent = self.intent("codex", "implementation")
+        intent.update(
+            protocol_version=2, complexity="focused", risk="low",
+            scope="single_module", duration="short", durability="session",
+            surface_capabilities={
+                "durable_agent_jobs": True, "native_subagents": True,
+            },
+            session_id="task-v2",
+        )
+        decision = decide(intent, "surface_canary")
+        self.assertEqual("native_subagent", decision["lane"])
+        self.assertEqual("gpt-5.3-codex-spark", decision["model_alias"])
+
     def test_codex_canary_requires_native_capability_and_session_identity(self) -> None:
         without_native = self.intent("codex", "implementation")
         without_native.update(complexity="focused", durability="session", session_id="task-123")

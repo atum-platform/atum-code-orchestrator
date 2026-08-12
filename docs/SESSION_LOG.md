@@ -25,6 +25,9 @@
   protocol versions.
 - Post-review verification passes all 245 unit/integration tests, Python compile
   checks, and diff whitespace validation.
+- Kimi K3's targeted follow-up returned SHIP with no blockers. Its remaining
+  model-consistency note was resolved by returning the concrete Spark model ID
+  for v2 native-worker decisions while preserving `codex_fast` for v1.
 
 ## 2026-08-12 - Dynamic durable concurrency P3
 
