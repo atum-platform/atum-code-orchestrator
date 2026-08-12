@@ -109,6 +109,18 @@ class JobStoreMigrationTest(unittest.TestCase):
                     db_path=root / "state/jobs.sqlite3", log_dir=root / "state/logs",
                 )
 
+    def test_dynamic_concurrency_requires_quota_routing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(
+            os.environ,
+            {"AGENT_JOB_DYNAMIC_CONCURRENCY": "1", "AGENT_JOB_QUOTA_ROUTING": "0"},
+        ):
+            root = Path(temporary)
+            with self.assertRaisesRegex(ValueError, "requires AGENT_JOB_QUOTA_ROUTING"):
+                Supervisor(
+                    state_dir=root / "state", socket_path=root / "state/socket",
+                    db_path=root / "state/jobs.sqlite3", log_dir=root / "state/logs",
+                )
+
 
 def fake_command(job: dict[str, object]) -> tuple[list[str], str | None, dict[str, str]]:
     prompt = str(job["prompt"])
@@ -706,12 +718,14 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
     async def test_kimi_quota_failure_has_no_partial_and_public_stderr(self) -> None:
         os.environ["AGENT_JOB_KIMI_SEMANTIC"] = "1"
         self.supervisor.quota_routing_enabled = True
+        self.supervisor._capacity_health_refresh_at = time.time() + 60
         spec = self.spec("kimi-quota-fail")
         spec["provider"] = "kimi"
         submitted = await self.call(spec)
         result = await self.wait_for(str(submitted["job_id"]), {"failed"})
         self.assertEqual("none", result["partial_result_state"])
         self.assertEqual("rate_limit", result["job"]["failure_kind"])
+        self.assertEqual(0.0, self.supervisor._capacity_health_refresh_at)
         self.assertEqual("", result["stdout"])
         self.assertIn("usage limit reached", result["stderr"])
         status = await self.call({"action": "route_status"})
@@ -1165,6 +1179,33 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, self.launch_counts[str(submitted["job_id"])])
         await self.call({"action": "cancel", "job_id": submitted["job_id"]})
         await self.wait_for(str(submitted["job_id"]), {"cancelled"})
+
+    async def test_dynamic_capacity_reduces_pressure_and_pauses_cooldown(self) -> None:
+        self.supervisor.dynamic_concurrency_enabled = True
+        self.supervisor.provider_limits["claude"] = 3
+        self.assertEqual(2, self.supervisor._effective_provider_limits({
+            "claude": {"state": "pressured"},
+        })["claude"])
+
+        self.supervisor._capacity_health = {"claude": {"state": "rate_limited"}}
+        self.supervisor._capacity_health_refresh_at = time.time() + 60
+        submitted = await self.call(self.spec("complete"))
+        await asyncio.sleep(.4)
+        queued = await self.call({"action": "read", "job_id": submitted["job_id"]})
+        self.assertEqual("queued", queued["job"]["status"])
+
+        self.supervisor._capacity_health = {"claude": {"state": "available"}}
+        result = await self.wait_for(str(submitted["job_id"]), {"completed"}, timeout=5)
+        self.assertEqual("completed", result["job"]["status"])
+
+    async def test_route_status_reports_dynamic_slots_and_native_feedback_gate(self) -> None:
+        self.supervisor.quota_routing_enabled = True
+        self.supervisor.dynamic_concurrency_enabled = True
+        self.supervisor.provider_limits = {"claude": 3, "kimi": 3, "codex": 3}
+        status = await self.call({"action": "route_status"})
+        self.assertEqual({"claude": 3, "kimi": 3, "codex": 3}, status["configured_provider_slots"])
+        self.assertEqual("fixed_advisory", status["native_capacity_mode"])
+        self.assertFalse(status["native_feedback_gate_met"])
 
     async def test_scheduler_recovers_after_iteration_error(self) -> None:
         original_queued = self.supervisor.store.queued

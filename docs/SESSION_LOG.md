@@ -1,5 +1,18 @@
 # Session Log
 
+## 2026-08-12 - Dynamic durable concurrency P3
+
+- Raised each durable provider's default and hard concurrency ceiling to three.
+- Added opt-in quota-aware effective slots: pressure removes one slot, canonical
+  rate-limit cooldowns pause new launches at zero, and recovery restores capacity
+  without cancelling jobs already running.
+- Kept native reservations fixed and advisory. Status reports the 95% feedback
+  join prerequisite instead of silently treating today's 50% live rate as ready
+  for dynamic enforcement.
+- Added startup, scheduler recovery, status, and installer propagation coverage.
+- Verification passes all 227 unit/integration tests, Python compile checks, and
+  diff whitespace validation.
+
 ## 2026-08-12 - Local quota broker P2
 
 - Added a credential-free CodexBar history reader for Claude, Codex, and a

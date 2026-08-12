@@ -96,6 +96,12 @@ the supervisor's health decision. Clients must execute that pair when
 stale or absent telemetry for the primary leaves the static table unchanged. `route_status`
 provides provider health and `quota_alerts` for operator visibility.
 
+When `dynamic_concurrency_enabled=true`, durable-job clients continue to submit
+normally; the supervisor alone applies `effective_provider_slots`. A zero slot
+count means queued jobs are waiting for cooldown recovery, not rejected. Native
+worker capacity remains `fixed_advisory` until its reported feedback join gate
+is met and a later rollout explicitly enables enforcement.
+
 When quota routing is disabled, `provider_health` and `quota_alerts` are empty;
 the supervisor also preserves legacy provider failure classification.
 

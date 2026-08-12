@@ -120,6 +120,7 @@ def _service_environment() -> dict[str, str]:
         "AGENT_JOB_QUOTA_HISTORY_DIR",
         "AGENT_JOB_QUOTA_STALE_SECONDS",
         "AGENT_JOB_RATE_LIMIT_COOLDOWN_SECONDS",
+        "AGENT_JOB_DYNAMIC_CONCURRENCY",
     ):
         if os.environ.get(name):
             environment[name] = os.environ[name]

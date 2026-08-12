@@ -36,6 +36,7 @@ class SupervisorInstallerTest(unittest.TestCase):
             "AGENT_JOB_QUOTA_HISTORY_DIR": "/tmp/quota-history",
             "AGENT_JOB_QUOTA_STALE_SECONDS": "7200",
             "AGENT_JOB_RATE_LIMIT_COOLDOWN_SECONDS": "900",
+            "AGENT_JOB_DYNAMIC_CONCURRENCY": "1",
             "AGENT_JOB_CODEX_NATIVE_RESERVATIONS": "3",
             "AGENT_JOB_ROUTE_RESERVATION_SECONDS": "900",
         }
