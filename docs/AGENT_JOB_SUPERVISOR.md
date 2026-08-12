@@ -122,12 +122,16 @@ For every active quota window, pressure is the greater of current utilization
 and utilization projected linearly to the reset, capped at 100%. A provider
 enters `pressured` at 85% and leaves only below 70%, providing hysteresis across
 samples. Telemetry older than two hours (`AGENT_JOB_QUOTA_STALE_SECONDS`) is
-`stale`; missing telemetry is `unknown`. Both preserve static routing and emit a
-status alert rather than inventing capacity.
+`stale`; missing telemetry is `unknown`. An expired quota window is also stale
+until a post-reset sample arrives. Stale or missing evidence for the primary
+provider preserves static routing and emits an alert rather than inventing
+pressure. A known-pressured primary may still move to an unknown fallback, but
+never to a rate-limited fallback or an equally/more pressured fallback.
 
-Nonzero provider exits containing a bounded rate-limit or quota signature are
+With quota routing enabled, nonzero provider exits containing a bounded,
+provider-specific rate-limit signature in stderr are
 normalized to `failure_kind=rate_limit` and persisted in the health ledger. A
-reset interval in provider output sets the cooldown; otherwise the default is
+nearby reset interval sets the cooldown; otherwise the default is
 15 minutes (`AGENT_JOB_RATE_LIMIT_COOLDOWN_SECONDS`). Repeated failures can
 extend but never shorten a cooldown. Once it expires, the next route/status
 refresh automatically reconsiders the provider, so callers do not permanently
@@ -138,7 +142,8 @@ authoritative, recursive delegation remains forbidden, and a rate-limited
 fallback is never selected. `route_status` exposes the feature flag, provider
 states, pressure, reset/cooldown timestamps, telemetry source, and alerts.
 Disable `AGENT_JOB_QUOTA_ROUTING` for immediate policy rollback without deleting
-health evidence or changing queued jobs.
+prior health evidence or changing queued jobs. Disabled mode performs no quota
+cache reads, health writes, route changes, or failure-kind normalization.
 
 CAO migration is provider-scoped. Keep `AGENT_JOB_EXECUTION_BACKEND=native`,
 then set both `AGENT_JOB_CAO_CANARY_PROVIDERS` and

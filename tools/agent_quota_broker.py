@@ -18,11 +18,21 @@ PRESSURE_ENTER = 85.0
 PRESSURE_EXIT = 70.0
 DEFAULT_STALE_SECONDS = 2 * 3600
 DEFAULT_COOLDOWN_SECONDS = 15 * 60
-RATE_LIMIT_PATTERN = re.compile(
-    r"(?:rate[ -]?limit|usage[ -]?limit|quota|too many requests|out of usage|"
-    r"exhausted|\b429\b)",
-    re.IGNORECASE,
-)
+RATE_LIMIT_PATTERNS = {
+    "claude": re.compile(
+        r"(?:rate[ -]?limit(?:ed| reached| exceeded)?|usage[ -]?limit(?: reached| exceeded)|"
+        r"credit balance is too low|too many requests|\b429\b)", re.IGNORECASE,
+    ),
+    "codex": re.compile(
+        r"(?:rate[ -]?limit(?:ed| reached| exceeded)?|usage[ -]?limit(?: reached| exceeded)|"
+        r"quota (?:exceeded|exhausted|reached)|too many requests|\b429\b)", re.IGNORECASE,
+    ),
+    "kimi": re.compile(
+        r"(?:rate[ -]?limit(?:ed| reached| exceeded)?|usage[ -]?limit(?: reached| exceeded)|"
+        r"quota (?:exceeded|exhausted|reached)|out of usage|too many requests|\b429\b)",
+        re.IGNORECASE,
+    ),
+}
 RETRY_AFTER_PATTERN = re.compile(
     r"(?:try again|retry|resets?)(?:\s+at|\s+after|\s+in)?\s+"
     r"(?P<amount>\d+(?:\.\d+)?)\s*(?P<unit>seconds?|secs?|minutes?|mins?|hours?|hrs?)",
@@ -100,7 +110,17 @@ def read_codexbar_history(provider: str, now: float) -> dict[str, Any] | None:
         return None
     freshest = max(sample["captured_at"] for sample in samples)
     active = [sample for sample in samples if sample["resets_at"] is None or sample["resets_at"] > now]
-    considered = active or samples
+    if not active:
+        return {
+            "provider": provider,
+            "source": "codexbar",
+            "captured_at": freshest,
+            "resets_at": None,
+            "pressure": None,
+            "windows": [],
+            "expired": True,
+        }
+    considered = active
     pressure = max(
         max(sample["used_percent"], sample["projected_percent"])
         for sample in considered
@@ -121,12 +141,9 @@ def evaluate_health(
     now: float,
     previous_state: str = "unknown",
     cooldown_until: float | None = None,
+    stale_seconds: int = DEFAULT_STALE_SECONDS,
 ) -> dict[str, Any]:
     telemetry = read_codexbar_history(provider, now)
-    stale_seconds = max(
-        60,
-        int(os.environ.get("AGENT_JOB_QUOTA_STALE_SECONDS", str(DEFAULT_STALE_SECONDS))),
-    )
     if cooldown_until is not None and cooldown_until > now:
         return {
             "provider": provider,
@@ -149,6 +166,13 @@ def evaluate_health(
             "cooldown_until": None,
             "alert": "quota telemetry is unavailable; static routing remains in effect",
         }
+    if telemetry.get("expired"):
+        return {
+            **telemetry,
+            "state": "stale",
+            "cooldown_until": None,
+            "alert": "quota telemetry belongs to an expired window; static routing remains in effect",
+        }
     age = max(0.0, now - float(telemetry["captured_at"]))
     if age > stale_seconds:
         return {
@@ -159,7 +183,7 @@ def evaluate_health(
         }
     pressure = float(telemetry["pressure"])
     pressured = pressure >= PRESSURE_ENTER or (
-        previous_state == "pressured" and pressure > PRESSURE_EXIT
+        previous_state in {"pressured", "rate_limited"} and pressure > PRESSURE_EXIT
     )
     return {
         **telemetry,
@@ -169,12 +193,17 @@ def evaluate_health(
     }
 
 
-def rate_limit_cooldown(text: str, now: float) -> tuple[bool, float | None, str]:
-    bounded = text[-128_000:]
-    match = RATE_LIMIT_PATTERN.search(bounded)
+def rate_limit_cooldown(
+    provider: str, text: str, now: float,
+    default_cooldown_seconds: int = DEFAULT_COOLDOWN_SECONDS,
+) -> tuple[bool, float | None, str]:
+    bounded = text[-16_000:]
+    pattern = RATE_LIMIT_PATTERNS.get(provider)
+    match = None if pattern is None else pattern.search(bounded)
     if not match:
         return False, None, ""
-    retry = RETRY_AFTER_PATTERN.search(bounded)
+    nearby = bounded[max(0, match.start() - 500):min(len(bounded), match.end() + 500)]
+    retry = RETRY_AFTER_PATTERN.search(nearby)
     if retry:
         amount = float(retry.group("amount"))
         unit = retry.group("unit").lower()
@@ -182,12 +211,7 @@ def rate_limit_cooldown(text: str, now: float) -> tuple[bool, float | None, str]
         seconds = max(60, min(int(amount * multiplier), 7 * 24 * 3600))
         evidence = retry.group(0)[:300]
     else:
-        seconds = max(
-            60,
-            int(os.environ.get(
-                "AGENT_JOB_RATE_LIMIT_COOLDOWN_SECONDS", str(DEFAULT_COOLDOWN_SECONDS)
-            )),
-        )
+        seconds = default_cooldown_seconds
         evidence = match.group(0)[:300]
     return True, now + seconds, evidence
 
@@ -212,6 +236,19 @@ def rebalance_default_route(
             f"{result['provider']} is {primary_state}, but fallback {result['fallback_provider']} is rate limited",
         ]
         return result
+    if fallback_state == "pressured" and primary_state == "pressured":
+        primary_pressure = primary.get("pressure")
+        fallback_pressure = fallback.get("pressure")
+        if (
+            not isinstance(primary_pressure, (int, float))
+            or not isinstance(fallback_pressure, (int, float))
+            or fallback_pressure >= primary_pressure
+        ):
+            result["reasons"] = [
+                *result["reasons"],
+                f"both default providers are pressured; keeping lower-pressure {result['provider']}",
+            ]
+            return result
     old_provider = str(result["provider"])
     old_model = str(result["model_alias"])
     result["provider"], result["fallback_provider"] = (

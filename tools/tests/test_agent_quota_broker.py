@@ -72,7 +72,9 @@ class AgentQuotaBrokerTest(unittest.TestCase):
         ):
             root = Path(temporary)
             self.write_history(root, "codex", 20, now - 301, now + 1000)
-            self.assertEqual("stale", evaluate_health("codex", now)["state"])
+            self.assertEqual(
+                "stale", evaluate_health("codex", now, stale_seconds=300)["state"]
+            )
             self.assertEqual("unknown", evaluate_health("kimi", now)["state"])
 
     def test_active_failure_cooldown_overrides_cache(self) -> None:
@@ -82,12 +84,22 @@ class AgentQuotaBrokerTest(unittest.TestCase):
 
     def test_rate_limit_detection_uses_reset_evidence_or_default(self) -> None:
         limited, cooldown, evidence = rate_limit_cooldown(
-            "429 rate limit; try again in 2 hours", 100
+            "kimi", "429 rate limit; try again in 2 hours", 100
         )
         self.assertTrue(limited)
         self.assertEqual(7_300, cooldown)
         self.assertIn("2 hours", evidence)
-        self.assertEqual((False, None, ""), rate_limit_cooldown("syntax error", 100))
+        self.assertEqual(
+            (False, None, ""), rate_limit_cooldown("kimi", "syntax error", 100)
+        )
+
+    def test_retry_interval_must_be_near_provider_signature(self) -> None:
+        text = "rate limit reached\n" + ("x" * 600) + "try again in 2 hours"
+        limited, cooldown, _ = rate_limit_cooldown(
+            "kimi", text, 100, default_cooldown_seconds=900
+        )
+        self.assertTrue(limited)
+        self.assertEqual(1000, cooldown)
 
     def test_rebalance_changes_only_default_agent_job_routes(self) -> None:
         decision = {
@@ -105,6 +117,39 @@ class AgentQuotaBrokerTest(unittest.TestCase):
 
         direct = {**decision, "lane": "direct"}
         self.assertEqual(direct, rebalance_default_route(direct, {}))
+
+    def test_rebalance_keeps_lower_pressure_primary(self) -> None:
+        decision = {
+            "lane": "agent_jobs", "provider": "claude", "model_alias": "claude_deep",
+            "fallback_provider": "kimi", "fallback_model_alias": "kimi_standard",
+            "reasons": ["static"],
+        }
+        result = rebalance_default_route(decision, {
+            "claude": {"state": "pressured", "pressure": 86},
+            "kimi": {"state": "pressured", "pressure": 95},
+        })
+        self.assertEqual("claude", result["provider"])
+
+    def test_expired_window_is_not_used_as_current_pressure(self) -> None:
+        now = 30_000.0
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(
+            os.environ, {"AGENT_JOB_QUOTA_HISTORY_DIR": temporary}
+        ):
+            self.write_history(Path(temporary), "claude", 99, now - 30, now - 1)
+            health = evaluate_health("claude", now)
+        self.assertEqual("stale", health["state"])
+        self.assertIsNone(health["pressure"])
+
+    def test_expired_cooldown_retains_pressure_hysteresis(self) -> None:
+        now = 40_000.0
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(
+            os.environ, {"AGENT_JOB_QUOTA_HISTORY_DIR": temporary}
+        ):
+            self.write_history(Path(temporary), "kimi", 60, now - 30, now + 3570)
+            health = evaluate_health(
+                "kimi", now, previous_state="rate_limited", cooldown_until=now - 1
+            )
+        self.assertEqual("pressured", health["state"])
 
 
 if __name__ == "__main__":

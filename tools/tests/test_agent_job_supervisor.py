@@ -52,6 +52,24 @@ class JobStoreMigrationTest(unittest.TestCase):
                 "session_id", "reservation_status", "feedback_outcome", "feedback_at",
             }.issubset(columns))
 
+    def test_rate_limit_cooldown_never_shortens_and_events_prune(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = JobStore(Path(temporary) / "jobs.sqlite3")
+            store.record_provider_rate_limit("kimi", 2_000, "first")
+            store.record_provider_rate_limit("kimi", 1_500, "second")
+            row = store.db.execute(
+                "SELECT cooldown_until FROM provider_health WHERE provider = 'kimi'"
+            ).fetchone()
+            self.assertEqual(2_000, row["cooldown_until"])
+            store.db.execute("UPDATE provider_health_events SET observed_at = 1")
+            store.db.commit()
+            store.prune(2)
+            count = store.db.execute(
+                "SELECT COUNT(*) FROM provider_health_events"
+            ).fetchone()[0]
+            self.assertEqual(0, count)
+            store.db.close()
+
     def test_invalid_routing_mode_fails_at_supervisor_startup(self) -> None:
         with tempfile.TemporaryDirectory() as temporary, patch.dict(
             os.environ, {"AGENT_JOB_ROUTING_MODE": "invalid"}
@@ -67,6 +85,8 @@ class JobStoreMigrationTest(unittest.TestCase):
         for name in (
             "AGENT_JOB_CODEX_NATIVE_RESERVATIONS",
             "AGENT_JOB_ROUTE_RESERVATION_SECONDS",
+            "AGENT_JOB_QUOTA_STALE_SECONDS",
+            "AGENT_JOB_RATE_LIMIT_COOLDOWN_SECONDS",
         ):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary, patch.dict(
                 os.environ, {name: "invalid"}
@@ -229,6 +249,12 @@ time.sleep(30)
         script = """import json, sys
 print(json.dumps({"role": "meta", "type": "system.version", "version": "0.34.0"}), flush=True)
 print("usage limit reached", file=sys.stderr, flush=True)
+raise SystemExit(1)
+"""
+    elif prompt == "quota-subject-fail":
+        script = """import sys
+print("reviewing quota and 429 handling", flush=True)
+print("unrelated syntax failure", file=sys.stderr, flush=True)
 raise SystemExit(1)
 """
     else:
@@ -679,6 +705,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_kimi_quota_failure_has_no_partial_and_public_stderr(self) -> None:
         os.environ["AGENT_JOB_KIMI_SEMANTIC"] = "1"
+        self.supervisor.quota_routing_enabled = True
         spec = self.spec("kimi-quota-fail")
         spec["provider"] = "kimi"
         submitted = await self.call(spec)
@@ -689,6 +716,25 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("usage limit reached", result["stderr"])
         status = await self.call({"action": "route_status"})
         self.assertEqual("rate_limited", status["provider_health"]["kimi"]["state"])
+
+    async def test_quota_feature_off_preserves_legacy_failure_kind(self) -> None:
+        spec = self.spec("kimi-quota-fail")
+        spec["provider"] = "kimi"
+        submitted = await self.call(spec)
+        result = await self.wait_for(str(submitted["job_id"]), {"failed"})
+        self.assertEqual("provider_exit", result["job"]["failure_kind"])
+        status = await self.call({"action": "route_status"})
+        self.assertEqual({}, status["provider_health"])
+
+    async def test_quota_subject_in_stdout_does_not_create_rate_limit(self) -> None:
+        self.supervisor.quota_routing_enabled = True
+        spec = self.spec("quota-subject-fail")
+        spec["provider"] = "kimi"
+        submitted = await self.call(spec)
+        result = await self.wait_for(str(submitted["job_id"]), {"failed"})
+        self.assertEqual("provider_exit", result["job"]["failure_kind"])
+        status = await self.call({"action": "route_status"})
+        self.assertNotEqual("rate_limited", status["provider_health"]["kimi"]["state"])
 
     async def test_kimi_stderr_keeps_byte_based_liveness_active(self) -> None:
         os.environ["AGENT_JOB_KIMI_SEMANTIC"] = "1"

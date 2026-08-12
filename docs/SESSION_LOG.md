@@ -17,6 +17,18 @@
   changing queued jobs.
 - Verification before independent review: 217 unit/integration tests, Python
   compile checks, and diff whitespace validation pass.
+- Kimi K3's first review found two ship blockers: broad stdout/stderr matching
+  could falsely cooldown healthy providers, and fallback selection could move
+  onto a provider under greater pressure. It also identified lazy env parsing,
+  expired-window carryover, incomplete feature isolation, and retention/test
+  gaps.
+- Tightened normalization to bounded provider-specific stderr signatures with
+  adjacent retry evidence, compare pressured providers before swapping, validate
+  quota timing at startup, reject expired-window pressure, preserve hysteresis
+  after cooldown, gate all behavior behind the rollout flag, validate health
+  keys, and prune retained health events. Added focused regressions for each.
+- Post-review verification passes all 224 unit/integration tests, Python compile
+  checks, and diff whitespace validation.
 
 ## 2026-08-12 - Codex native routing canary P1
 

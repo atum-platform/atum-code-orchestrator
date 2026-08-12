@@ -93,8 +93,11 @@ When quota routing is enabled, the returned provider/model pair already includes
 the supervisor's health decision. Clients must execute that pair when
 `enforced=true`; they must not independently reinterpret CodexBar percentages.
 `reasons` records any pressure-driven swap. Explicit targets are preserved, and
-stale or absent telemetry leaves the static table unchanged. `route_status`
+stale or absent telemetry for the primary leaves the static table unchanged. `route_status`
 provides provider health and `quota_alerts` for operator visibility.
+
+When quota routing is disabled, `provider_health` and `quota_alerts` are empty;
+the supervisor also preserves legacy provider failure classification.
 
 `job_read(wait_seconds=N)` waits inside the supervisor and wakes on output,
 liveness, or terminal state; it does not spin up repeated client connections.

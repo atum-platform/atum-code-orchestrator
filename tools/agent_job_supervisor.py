@@ -599,7 +599,9 @@ class JobStore:
             self.db.rollback()
             raise
 
-    def refresh_provider_health(self, now: float | None = None) -> dict[str, dict[str, Any]]:
+    def refresh_provider_health(
+        self, now: float | None = None, stale_seconds: int = 2 * 3600,
+    ) -> dict[str, dict[str, Any]]:
         from agent_quota_broker import PROVIDERS, evaluate_health
 
         observed_at = _now() if now is None else now
@@ -614,6 +616,7 @@ class JobStore:
                 observed_at,
                 "unknown" if row is None else str(row["state"]),
                 None if row is None else row["cooldown_until"],
+                stale_seconds,
             )
             detail = {key: value for key, value in health.items() if key == "windows"}
             self.db.execute(
@@ -643,6 +646,10 @@ class JobStore:
     def record_provider_rate_limit(
         self, provider: str, cooldown_until: float, evidence: str
     ) -> None:
+        from agent_quota_broker import PROVIDERS
+
+        if provider not in PROVIDERS:
+            raise ValueError(f"Unsupported provider health key: {provider}")
         now = _now()
         self.db.execute(
             """INSERT INTO provider_health_events (
@@ -806,6 +813,9 @@ class JobStore:
                WHERE created_at < ? AND reservation_status <> 'active'""",
             (cutoff,),
         )
+        self.db.execute(
+            "DELETE FROM provider_health_events WHERE observed_at < ?", (cutoff,)
+        )
         self.db.commit()
         return [str(row["log_path"]) for row in rows]
 
@@ -861,6 +871,12 @@ class Supervisor:
             "AGENT_JOB_ROUTE_RESERVATION_SECONDS", 900, 30, 86_400
         )
         self.quota_routing_enabled = _boolean_env("AGENT_JOB_QUOTA_ROUTING", False)
+        self.quota_stale_seconds = _bounded_int_env(
+            "AGENT_JOB_QUOTA_STALE_SECONDS", 2 * 3600, 60, 7 * 24 * 3600
+        )
+        self.rate_limit_cooldown_seconds = _bounded_int_env(
+            "AGENT_JOB_RATE_LIMIT_COOLDOWN_SECONDS", 15 * 60, 60, 7 * 24 * 3600
+        )
         self._stopping = False
         self._lock_handle = None
 
@@ -1307,19 +1323,18 @@ class Supervisor:
             proc.kill()
         await proc.wait()
 
-    def _provider_failure_text(self, job_id: str) -> str:
+    def _provider_failure_stderr(self, job_id: str) -> str:
         base = self.job_log_paths.get(job_id)
         if base is None:
             return ""
         chunks: list[str] = []
-        for suffix in ("stdout", "stderr"):
-            path = Path(f"{base}.{suffix}")
-            try:
-                with path.open("rb") as handle:
-                    handle.seek(max(0, path.stat().st_size - 64_000))
-                    chunks.append(handle.read(64_000).decode("utf-8", errors="replace"))
-            except OSError:
-                continue
+        path = Path(f"{base}.stderr")
+        try:
+            with path.open("rb") as handle:
+                handle.seek(max(0, path.stat().st_size - 16_000))
+                chunks.append(handle.read(16_000).decode("utf-8", errors="replace"))
+        except OSError:
+            pass
         return "\n".join(chunks)
 
     async def _ps_field(self, pid: int, field: str) -> str:
@@ -1424,8 +1439,9 @@ class Supervisor:
                 from agent_quota_broker import rate_limit_cooldown
 
                 limited, cooldown_until, evidence = rate_limit_cooldown(
-                    self._provider_failure_text(job_id), _now()
-                )
+                    str(job["provider"]), self._provider_failure_stderr(job_id), _now(),
+                    self.rate_limit_cooldown_seconds,
+                ) if self.quota_routing_enabled else (False, None, "")
                 if limited and cooldown_until is not None:
                     failure_kind = "rate_limit"
                     message = "Provider rate limit detected; routing cooldown recorded"
@@ -1608,7 +1624,10 @@ class Supervisor:
             raise ValueError(f"Routing intent exceeds {MAX_INTENT_BYTES} UTF-8 bytes")
         canonical_intent = normalize_intent(intent)
         decision = decide(canonical_intent, self.routing_mode)
-        health = self.store.refresh_provider_health()
+        health = (
+            self.store.refresh_provider_health(stale_seconds=self.quota_stale_seconds)
+            if self.quota_routing_enabled else {}
+        )
         if self.quota_routing_enabled and not canonical_intent["explicit_provider"]:
             decision = rebalance_default_route(decision, health)
         return self.store.create_route_decision(
@@ -1645,7 +1664,10 @@ class Supervisor:
     def route_status(self) -> dict[str, Any]:
         from agent_routing_policy import POLICY_VERSION
 
-        health = self.store.refresh_provider_health()
+        health = (
+            self.store.refresh_provider_health(stale_seconds=self.quota_stale_seconds)
+            if self.quota_routing_enabled else {}
+        )
         return {
             "policy_version": POLICY_VERSION,
             "routing_mode": self.routing_mode,
