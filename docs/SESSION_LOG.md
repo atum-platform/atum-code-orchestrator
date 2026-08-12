@@ -89,3 +89,9 @@
   `MACBOOK_AGENT_JOBS_OK`.
 - The old Hermes-side checkout remains temporarily as rollback material. It is
   no longer the active supervisor or client/profile integration source.
+# 2026-08-12: Project root casing compatibility
+
+- Added both `~/Projects` and `~/projects` to the shared workspace policy.
+- This fixes rejected jobs when macOS resolves both spellings to the same
+  directory but Python path containment compares the submitted spelling.
+- Added a focused regression test and regenerated supervisor/client settings.
