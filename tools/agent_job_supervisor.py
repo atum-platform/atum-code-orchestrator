@@ -263,6 +263,23 @@ class JobStore:
                 created_at REAL NOT NULL,
                 acked_at REAL
             );
+            CREATE TABLE IF NOT EXISTS route_decisions (
+                decision_id TEXT PRIMARY KEY,
+                protocol_version INTEGER NOT NULL,
+                policy_version TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                caller_provider TEXT NOT NULL,
+                surface TEXT NOT NULL,
+                capability TEXT NOT NULL,
+                lane TEXT NOT NULL,
+                provider TEXT NOT NULL DEFAULT '',
+                model_alias TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                expires_at REAL,
+                owner TEXT NOT NULL DEFAULT '',
+                request_json TEXT NOT NULL,
+                response_json TEXT NOT NULL
+            );
             """
         )
         columns = {str(row["name"]) for row in self.db.execute("PRAGMA table_info(jobs)")}
@@ -308,6 +325,9 @@ class JobStore:
             "CREATE UNIQUE INDEX IF NOT EXISTS jobs_idempotency ON jobs(idempotency_key) WHERE idempotency_key <> ''"
         )
         self.db.execute(
+            "CREATE INDEX IF NOT EXISTS route_decisions_created ON route_decisions(created_at)"
+        )
+        self.db.execute(
             "UPDATE jobs SET prompt = '' WHERE status IN ('completed','failed','cancelled','interrupted')"
         )
         self.db.commit()
@@ -348,6 +368,29 @@ class JobStore:
         if self.on_change is not None:
             self.on_change(job_id)
         return self.get(job_id)
+
+    def create_route_decision(
+        self, intent: dict[str, Any], decision: dict[str, Any], owner: str
+    ) -> dict[str, Any]:
+        decision_id = str(uuid.uuid4())
+        created_at = _now()
+        response = {"decision_id": decision_id, "created_at": created_at, **decision}
+        self.db.execute(
+            """INSERT INTO route_decisions (
+                decision_id, protocol_version, policy_version, mode, caller_provider,
+                surface, capability, lane, provider, model_alias, created_at,
+                expires_at, owner, request_json, response_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                decision_id, response["protocol_version"], response["policy_version"],
+                response["mode"], intent["caller_provider"], intent["surface"],
+                intent["capability"], response["lane"], response["provider"],
+                response["model_alias"], created_at, response["expires_at"], owner,
+                _json(intent), _json(response),
+            ),
+        )
+        self.db.commit()
+        return response
 
     def get(self, job_id: str) -> dict[str, Any]:
         row = self.db.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
@@ -481,6 +524,7 @@ class JobStore:
             "DELETE FROM jobs WHERE status IN ('completed','failed','cancelled','interrupted') AND finished_at < ?",
             (cutoff,),
         )
+        self.db.execute("DELETE FROM route_decisions WHERE created_at < ?", (cutoff,))
         self.db.commit()
         return [str(row["log_path"]) for row in rows]
 
@@ -1237,6 +1281,17 @@ class Supervisor:
         job = self.store.create(spec, job_id, log_path)
         return self._public(self.store.get(job["job_id"]))
 
+    def route_decide(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from agent_routing_policy import MAX_INTENT_BYTES, decide, normalize_intent
+
+        intent = {key: value for key, value in payload.items() if key != "action"}
+        owner = str(intent.pop("owner", "") or "")[:200]
+        if len(_json(intent).encode("utf-8")) > MAX_INTENT_BYTES:
+            raise ValueError(f"Routing intent exceeds {MAX_INTENT_BYTES} UTF-8 bytes")
+        canonical_intent = normalize_intent(intent)
+        decision = decide(canonical_intent)
+        return self.store.create_route_decision(canonical_intent, decision, owner)
+
     def _read_events(
         self, job: dict[str, Any], cursor: int, max_bytes: int
     ) -> tuple[int, int, list[dict[str, Any]]]:
@@ -1461,6 +1516,8 @@ class Supervisor:
                 result = {"status": "ok", "pid": os.getpid(), "socket": str(self.socket_path)}
             elif action == "submit":
                 result = self.submit(payload)
+            elif action == "route_decide":
+                result = self.route_decide(payload)
             elif action == "read":
                 result = await self.read_wait(payload)
             elif action == "list":

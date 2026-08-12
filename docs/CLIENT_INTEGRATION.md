@@ -42,13 +42,40 @@ the corresponding `*.bak.agent-jobs-<suffix>` file, and restart the client.
 | Kimi Code | MCP | `~/.agents/skills` and Kimi `AGENTS.md` | Kimi CLI |
 | Hermes profiles | MCP | Per-profile skill copies | Not a provider |
 
-MCP intentionally exposes submit, read, list, cancel, and owner-inbox operations
-for read-only jobs.
+MCP intentionally exposes route-decision, submit, read, list, cancel, and
+owner-inbox operations for read-only jobs.
 Explicit implementation remains behind the local capability-protected delegation
 CLI. This prevents a general chat client from selecting write mode directly.
 Review prompts may contain up to 4 MiB of UTF-8 data. The supervisor's Unix
 socket reader is sized for that complete JSON request, so prompts larger than the
 former 400 KB ceiling are accepted end to end rather than only by one layer.
+
+## Shadow Routing Protocol
+
+`route_decide` protocol version 1 accepts a bounded structured intent containing
+the caller provider, coding surface, capability, complexity, risk, scope,
+duration, durability, parallelizability, optional explicit target, and a boolean
+surface-capability map. Unknown fields are tolerated for mixed-version clients
+but discarded before persistence;
+unknown enum values and unsupported protocol versions fail closed.
+
+The response includes a durable decision ID, policy version, lane, provider,
+stable model alias, fallback, and reasons. P0 always returns `mode=shadow` and
+`enforced=false`, with no expiry or reservation. The supervisor stores decisions
+in a separate SQLite table and prunes them with the normal 14-day retention
+window. It does not create or mutate an agent job.
+
+During P0, callers continue following the routing table in the installed skill.
+This temporary duplication permits behavior comparison before the Codex canary.
+The next phase will make the sidecar policy authoritative and remove the table
+from prose rather than maintaining two live policy owners.
+
+```bash
+python3 tools/review_cli.py route-decide \
+  --caller-provider codex --surface codex --capability planning \
+  --complexity deep --scope repo --duration long --durability durable \
+  --surface-capabilities '{"native_subagents":true}'
+```
 
 `job_read(wait_seconds=N)` waits inside the supervisor and wakes on output,
 liveness, or terminal state; it does not spin up repeated client connections.

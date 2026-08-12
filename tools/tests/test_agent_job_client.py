@@ -23,6 +23,15 @@ class AgentJobClientParserTest(unittest.TestCase):
         self.assertEqual(17, args["event_cursor"])
         self.assertEqual(30, args["wait_seconds"])
 
+    def test_route_decide_parses_structured_surface_capabilities(self) -> None:
+        args = vars(_parser().parse_args([
+            "route-decide", "--caller-provider", "codex", "--surface", "codex",
+            "--capability", "planning", "--surface-capabilities",
+            '{"native_subagents":true}',
+        ]))
+        self.assertEqual("route-decide", args["action"])
+        self.assertEqual({"native_subagents": True}, args["surface_capabilities"])
+
 
 if __name__ == "__main__":
     unittest.main()

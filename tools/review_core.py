@@ -11,7 +11,7 @@ import subprocess
 import time
 from typing import Any
 
-from agent_job_client import cancel, inbox, list_jobs, read, submit
+from agent_job_client import cancel, inbox, list_jobs, read, route_decide, submit
 from agent_job_policy import configured_allowed_roots, SENSITIVE_PATH_PARTS
 
 
@@ -303,6 +303,10 @@ def job_submit(
         timeout_seconds=timeout_seconds, max_turns=max_turns, owner=effective_owner,
         idempotency_key=idempotency_key,
     )
+
+
+def routing_decide(**intent: Any) -> dict[str, Any]:
+    return route_decide(**intent)
 
 
 def job_read(

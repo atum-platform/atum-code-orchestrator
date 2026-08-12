@@ -21,6 +21,11 @@ unverified authority.
 
 ## Route independent reviews
 
+The supervisor now exposes a versioned `route_decide` shadow protocol. Until the
+Codex canary phase explicitly enables enforcement, its response is telemetry
+only (`mode=shadow`, `enforced=false`) and this table remains authoritative.
+Do not treat a shadow decision as a reservation or launched job.
+
 Default routing by caller:
 
 | Caller | Code review | Planning, design, product, copy, research |
@@ -65,7 +70,7 @@ otherwise healthy run after its tokens have already been spent.
 
 ## Use the available binding
 
-- **Codex/Hermes with MCP:** call `job_submit`, `job_read`, `job_list`,
+- **Codex/Hermes with MCP:** call `route_decide`, `job_submit`, `job_read`, `job_list`,
   `job_cancel`, and `job_inbox` from the `agent-jobs` server.
 - **Claude or a shell-only session:** run `scripts/review.py` with the equivalent
   `submit`, `read`, `list`, `cancel`, or `inbox` arguments.
