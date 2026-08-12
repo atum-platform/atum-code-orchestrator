@@ -12,6 +12,15 @@
 - Added startup, scheduler recovery, status, and installer propagation coverage.
 - Verification passes all 227 unit/integration tests, Python compile checks, and
   diff whitespace validation.
+- Kimi K3 conditionally approved the scheduler design. The three-slot default and
+  hard ceiling for every provider is an intentional product decision from the
+  concurrency roadmap, not part of the feature flag. Follow-up hardening validates
+  the dynamic/quota pairing before replacing launchd, cleanly handles startup
+  configuration errors, clarifies hysteretic recovery, and adds the requested
+  scheduler-level capacity, running-job, automatic-recovery, bounds, stale-health,
+  and native-gate tests.
+- Post-review verification passes all 233 unit/integration tests, Python compile
+  checks, and diff whitespace validation.
 
 ## 2026-08-12 - Local quota broker P2
 

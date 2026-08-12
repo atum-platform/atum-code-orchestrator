@@ -86,7 +86,9 @@ one-to-three supported range. Set `AGENT_JOB_DYNAMIC_CONCURRENCY=1` alongside
 quota routing to reduce a pressured provider by one slot and pause new launches
 while that provider is in a canonical rate-limit cooldown. Running jobs are
 never cancelled when capacity falls, and missing or stale quota telemetry keeps
-the configured ceiling. `route_status` exposes configured and effective slots.
+the configured ceiling. Cooldown expiry restores at least one slot; pressure
+hysteresis may keep the provider one slot below its ceiling until pressure falls
+below 70%. `route_status` exposes configured and effective slots.
 
 Native-agent reservations remain fixed and advisory. The status response reports
 whether their decision-to-feedback join rate has reached the 95% prerequisite

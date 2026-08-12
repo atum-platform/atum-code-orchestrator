@@ -62,6 +62,17 @@ class SupervisorInstallerTest(unittest.TestCase):
                 installer.install()
         run.assert_not_called()
 
+    def test_install_rejects_dynamic_concurrency_without_quota_before_service_swap(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"AGENT_JOB_DYNAMIC_CONCURRENCY": "1", "AGENT_JOB_QUOTA_ROUTING": "0"},
+        ), patch.object(installer, "_socket_request") as socket_request, \
+             patch.object(installer, "_run") as run:
+            with self.assertRaisesRegex(RuntimeError, "requires AGENT_JOB_QUOTA_ROUTING"):
+                installer.install()
+        socket_request.assert_not_called()
+        run.assert_not_called()
+
     def test_active_job_check_fails_closed_on_unresponsive_supervisor(self) -> None:
         with patch.object(installer, "_socket_request", return_value=None):
             with self.assertRaisesRegex(RuntimeError, "Cannot verify active jobs"):

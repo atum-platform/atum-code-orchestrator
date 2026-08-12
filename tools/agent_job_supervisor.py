@@ -2055,7 +2055,7 @@ def main() -> int:
     except AlreadyRunning as exc:
         print(str(exc), file=sys.stderr)
         return 75
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     return 0
