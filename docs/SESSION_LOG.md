@@ -1,5 +1,43 @@
 # Session Log
 
+## 2026-08-12 - Codex native routing canary P1
+
+- Added an opt-in `codex_canary` policy that routes only focused, low/medium-risk,
+  session-scoped Codex implementation, exploration, and test work to a native
+  Spark worker. Claude, Kimi, Hermes, and all unsupported intents remain shadow;
+  direct fallback is returned when cooperative capacity is full.
+- Made decision persistence and native reservation admission one SQLite
+  transaction. Added additive lifecycle columns, a default three-reservation
+  machine limit, 15-minute TTL expiry, idempotent terminal feedback,
+  session-scoped reconciliation, and decision-to-feedback join telemetry.
+- Exposed `route_feedback`, `route_reconcile`, and `route_status` through the raw
+  client, guarded CLI, review core, and MCP alongside `route_decide`.
+- Added an installer-managed Codex `spark-worker` role using
+  `gpt-5.3-codex-spark`, a default three-thread native machine ceiling, and a
+  separate routing guidance block that does not overwrite customized provider
+  policy. The primary Codex model remains unchanged by this work.
+- Covered concurrent admission, capacity fallback, ownership, idempotency,
+  conflicting feedback, reconciliation, expiry, telemetry, old-database
+  migration, transport parity, installer behavior, and shadow compatibility.
+  The full verification pass before assembly review completed 204 tests; the
+  final post-review suite completed 210 tests successfully.
+- Kimi K3 assembly review `4f8ecab3-89b9-4860-b5df-4f82b60b057b` found no
+  blockers and recommended shipping. Addressed its capacity-accounting finding
+  by retaining active reservations during prune, made admission truly
+  machine-wide, preserved locally owned non-Codex guidance byte-for-byte, added
+  contextual numeric environment errors, and clarified feedback-return telemetry.
+- Live rollout caught a Codex 0.144.6 schema mismatch before merge. The stable
+  `multi_agent` surface uses `agents.max_threads`; the similarly named
+  `[features.multi_agent_v2]` setting is currently inert because v2 is disabled.
+  Corrected the installer to migrate the misplaced key into the stable setting
+  while preserving the chosen value, and removed non-config metadata from the
+  worker profile.
+- Strict Codex config loading and role/model resolution now pass. Codex CLI
+  0.144.6 on this machine does not expose a native spawn tool with either the
+  stable feature set or an ephemeral `multi_agent_v2` enablement, so cooperating
+  callers must continue to report `native_subagents=false` on that surface. The
+  canary then fails open to `direct`; no work is routed into a nonexistent lane.
+
 ## 2026-08-12 - Shadow routing protocol P0
 
 - Added versioned `route_decide` protocol v1 across the supervisor socket,

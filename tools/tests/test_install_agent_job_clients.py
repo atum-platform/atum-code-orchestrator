@@ -69,6 +69,15 @@ class ClientInstallerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Duplicate"):
             installer.merge_kimi_guidance(path, "test", False)
 
+    def test_locally_owned_non_codex_guidance_is_byte_preserved(self) -> None:
+        path = self.root / "AGENTS.md"
+        original = f"{installer.GUIDANCE_START}\nCustom policy.\n{installer.GUIDANCE_END}"
+        path.write_text(original, encoding="utf-8")
+
+        self.assertFalse(installer.merge_guidance(path, "Kimi guidance", "test", True))
+        self.assertEqual(original, path.read_text(encoding="utf-8"))
+        self.assertFalse(path.with_name("AGENTS.md.bak.agent-jobs-test").exists())
+
     def test_invalid_json_has_actionable_error(self) -> None:
         path = self.root / "mcp.json"
         path.write_text('{"broken": }', encoding="utf-8")
@@ -175,6 +184,9 @@ class ClientInstallerTest(unittest.TestCase):
         self.assertIn(str(installer.SERVER_PATH), result)
         self.assertIn("startup_timeout_sec = 30.0", result)
         self.assertIn("tool_timeout_sec = 120.0", result)
+        self.assertIn("max_threads = 3", result)
+        self.assertIn("[agents.spark-worker]", result)
+        self.assertIn(str(installer.CODEX_SPARK_WORKER), result)
         self.assertFalse(installer.merge_codex_config(path, "second", True, self.root))
 
     def test_codex_toml_merge_preserves_existing_timeouts_and_env(self) -> None:
@@ -190,6 +202,40 @@ class ClientInstallerTest(unittest.TestCase):
         self.assertIn("tool_timeout_sec = 900.0", result)
         self.assertIn('KEEP = "yes"', result)
         self.assertFalse(installer.merge_codex_config(path, "second", True, self.root))
+
+    def test_codex_merge_preserves_existing_native_thread_limit(self) -> None:
+        path = self.root / "config.toml"
+        path.write_text("[agents]\nmax_threads = 2\n", encoding="utf-8")
+
+        self.assertTrue(installer.merge_codex_config(path, "test", True, self.root))
+
+        result = path.read_text(encoding="utf-8")
+        self.assertIn("max_threads = 2", result)
+        self.assertNotIn("max_threads = 3", result)
+
+    def test_codex_merge_migrates_misplaced_native_thread_limit(self) -> None:
+        path = self.root / "config.toml"
+        path.write_text("[agents]\nmax_concurrent_threads_per_session = 2\n", encoding="utf-8")
+
+        self.assertTrue(installer.merge_codex_config(path, "test", True, self.root))
+
+        result = path.read_text(encoding="utf-8")
+        self.assertIn("max_threads = 2", result)
+        agents_section = result.split("[agents]", 1)[1].split("[", 1)[0]
+        self.assertNotIn("max_concurrent_threads_per_session", agents_section)
+
+    def test_codex_merge_migrates_inert_v2_thread_limit(self) -> None:
+        path = self.root / "config.toml"
+        path.write_text(
+            "[features.multi_agent_v2]\nmax_concurrent_threads_per_session = 2\n",
+            encoding="utf-8",
+        )
+
+        self.assertTrue(installer.merge_codex_config(path, "test", True, self.root))
+
+        result = path.read_text(encoding="utf-8")
+        self.assertIn("max_threads = 2", result)
+        self.assertNotIn("[features.multi_agent_v2]", result)
 
     def test_legacy_guidance_section_is_adopted(self) -> None:
         path = self.root / "AGENTS.md"

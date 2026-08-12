@@ -32,6 +32,19 @@ class AgentJobClientParserTest(unittest.TestCase):
         self.assertEqual("route-decide", args["action"])
         self.assertEqual({"native_subagents": True}, args["surface_capabilities"])
 
+    def test_route_lifecycle_commands_parse(self) -> None:
+        feedback = vars(_parser().parse_args([
+            "route-feedback", "decision", "--session-id", "task",
+            "--outcome", "completed",
+        ]))
+        reconcile = vars(_parser().parse_args([
+            "route-reconcile", "--session-id", "task",
+            "--active-decision-id", "decision",
+        ]))
+
+        self.assertEqual("completed", feedback["outcome"])
+        self.assertEqual(["decision"], reconcile["active_decision_id"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,9 +29,10 @@ async def route_decide(
     surface_capabilities: dict[str, bool] | None = None,
     explicit_provider: str = "",
     explicit_model: str = "",
+    session_id: str = "",
     owner: str = "",
 ) -> str:
-    """Record the sidecar's versioned shadow routing decision without enforcing it."""
+    """Decide a route; Codex canary native-worker decisions include a bounded lease."""
     result = await asyncio.to_thread(
         review_core.routing_decide,
         protocol_version=protocol_version, caller_provider=caller_provider,
@@ -39,8 +40,34 @@ async def route_decide(
         scope=scope, duration=duration, durability=durability,
         parallelizable=parallelizable,
         surface_capabilities=surface_capabilities or {},
-        explicit_provider=explicit_provider, explicit_model=explicit_model, owner=owner,
+        explicit_provider=explicit_provider, explicit_model=explicit_model,
+        session_id=session_id, owner=owner,
     )
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def route_feedback(decision_id: str, session_id: str, outcome: str) -> str:
+    """Close one routing decision; identical retries are idempotent."""
+    result = await asyncio.to_thread(
+        review_core.routing_feedback, decision_id, session_id, outcome
+    )
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def route_reconcile(session_id: str, active_decision_ids: list[str]) -> str:
+    """Release this session's native-worker leases absent from the active set."""
+    result = await asyncio.to_thread(
+        review_core.routing_reconcile, session_id, active_decision_ids
+    )
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def route_status() -> str:
+    """Report native reservation states and decision-to-feedback join rate."""
+    result = await asyncio.to_thread(review_core.routing_status)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 

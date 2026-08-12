@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -18,7 +19,64 @@ sys.path.insert(0, str(TOOLS_DIR))
 
 from agent_job_client import request  # noqa: E402
 import agent_job_supervisor as supervisor_module  # noqa: E402
-from agent_job_supervisor import Supervisor  # noqa: E402
+from agent_job_supervisor import JobStore, Supervisor  # noqa: E402
+
+
+class JobStoreMigrationTest(unittest.TestCase):
+    def test_existing_shadow_route_table_gains_canary_lifecycle_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "jobs.sqlite3"
+            db = sqlite3.connect(path)
+            db.execute(
+                """CREATE TABLE route_decisions (
+                    decision_id TEXT PRIMARY KEY, protocol_version INTEGER NOT NULL,
+                    policy_version TEXT NOT NULL, mode TEXT NOT NULL,
+                    caller_provider TEXT NOT NULL, surface TEXT NOT NULL,
+                    capability TEXT NOT NULL, lane TEXT NOT NULL,
+                    provider TEXT NOT NULL DEFAULT '', model_alias TEXT NOT NULL DEFAULT '',
+                    created_at REAL NOT NULL, expires_at REAL,
+                    owner TEXT NOT NULL DEFAULT '', request_json TEXT NOT NULL,
+                    response_json TEXT NOT NULL
+                )"""
+            )
+            db.commit()
+            db.close()
+
+            store = JobStore(path)
+            columns = {
+                str(row["name"])
+                for row in store.db.execute("PRAGMA table_info(route_decisions)")
+            }
+
+            self.assertTrue({
+                "session_id", "reservation_status", "feedback_outcome", "feedback_at",
+            }.issubset(columns))
+
+    def test_invalid_routing_mode_fails_at_supervisor_startup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(
+            os.environ, {"AGENT_JOB_ROUTING_MODE": "invalid"}
+        ):
+            root = Path(temporary)
+            with self.assertRaisesRegex(ValueError, "AGENT_JOB_ROUTING_MODE"):
+                Supervisor(
+                    state_dir=root / "state", socket_path=root / "state/socket",
+                    db_path=root / "state/jobs.sqlite3", log_dir=root / "state/logs",
+                )
+
+    def test_invalid_native_routing_numbers_name_the_environment_variable(self) -> None:
+        for name in (
+            "AGENT_JOB_CODEX_NATIVE_RESERVATIONS",
+            "AGENT_JOB_ROUTE_RESERVATION_SECONDS",
+        ):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary, patch.dict(
+                os.environ, {name: "invalid"}
+            ):
+                root = Path(temporary)
+                with self.assertRaisesRegex(ValueError, name):
+                    Supervisor(
+                        state_dir=root / "state", socket_path=root / "state/socket",
+                        db_path=root / "state/jobs.sqlite3", log_dir=root / "state/logs",
+                    )
 
 
 def fake_command(job: dict[str, object]) -> tuple[list[str], str | None, dict[str, str]]:
@@ -1489,6 +1547,112 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(row)
         self.assertEqual("test:shadow", row["owner"])
 
+    def codex_native_route(self, session_id: str) -> dict[str, object]:
+        return {
+            "action": "route_decide", "protocol_version": 1,
+            "caller_provider": "codex", "surface": "codex",
+            "capability": "implementation", "complexity": "focused",
+            "risk": "low", "scope": "single_module", "duration": "short",
+            "durability": "session", "parallelizable": True,
+            "surface_capabilities": {"native_subagents": True},
+            "session_id": session_id,
+        }
+
+    async def test_codex_canary_atomically_reserves_native_capacity(self) -> None:
+        self.supervisor.routing_mode = "codex_canary"
+        self.supervisor.native_reservation_limit = 1
+
+        first, second = await asyncio.gather(
+            self.call(self.codex_native_route("session-a")),
+            self.call(self.codex_native_route("session-b")),
+        )
+
+        lanes = sorted((str(first["lane"]), str(second["lane"])))
+        self.assertEqual(["direct", "native_subagent"], lanes)
+        admitted = first if first["lane"] == "native_subagent" else second
+        self.assertEqual("active", admitted["reservation_status"])
+        self.assertGreater(float(admitted["expires_at"]), time.time())
+
+    async def test_native_reservation_capacity_is_machine_wide(self) -> None:
+        self.supervisor.routing_mode = "codex_canary"
+        self.supervisor.native_reservation_limit = 1
+        first = await self.call(self.codex_native_route("session-a"))
+        self.supervisor.store.db.execute(
+            "UPDATE route_decisions SET surface = 'future-surface' WHERE decision_id = ?",
+            (first["decision_id"],),
+        )
+        self.supervisor.store.db.commit()
+
+        second = await self.call(self.codex_native_route("session-b"))
+
+        self.assertEqual("direct", second["lane"])
+        self.assertEqual("none", second["reservation_status"])
+
+    async def test_route_feedback_is_idempotent_and_releases_reservation(self) -> None:
+        self.supervisor.routing_mode = "codex_canary"
+        decision = await self.call(self.codex_native_route("session-feedback"))
+        payload = {
+            "action": "route_feedback", "decision_id": decision["decision_id"],
+            "session_id": "session-feedback", "outcome": "completed",
+        }
+
+        first = await self.call(payload)
+        second = await self.call(payload)
+
+        self.assertEqual("released", first["reservation_status"])
+        self.assertFalse(first["idempotent"])
+        self.assertTrue(second["idempotent"])
+        with self.assertRaisesRegex(RuntimeError, "conflicts"):
+            await self.call({**payload, "outcome": "failed"})
+
+    async def test_route_feedback_rejects_another_session(self) -> None:
+        self.supervisor.routing_mode = "codex_canary"
+        decision = await self.call(self.codex_native_route("session-owner"))
+
+        with self.assertRaisesRegex(RuntimeError, "does not belong"):
+            await self.call({
+                "action": "route_feedback", "decision_id": decision["decision_id"],
+                "session_id": "session-other", "outcome": "completed",
+            })
+
+    async def test_route_reconcile_releases_absent_session_reservations(self) -> None:
+        self.supervisor.routing_mode = "codex_canary"
+        first = await self.call(self.codex_native_route("session-reconcile"))
+        second = await self.call(self.codex_native_route("session-reconcile"))
+
+        result = await self.call({
+            "action": "route_reconcile", "session_id": "session-reconcile",
+            "active_decision_ids": [first["decision_id"]],
+        })
+
+        self.assertEqual([first["decision_id"]], result["retained_decision_ids"])
+        self.assertEqual([second["decision_id"]], result["released_decision_ids"])
+
+    async def test_route_status_expires_leases_and_reports_feedback_join_rate(self) -> None:
+        self.supervisor.routing_mode = "codex_canary"
+        completed = await self.call(self.codex_native_route("session-complete"))
+        expired = await self.call(self.codex_native_route("session-expire"))
+        await self.call({
+            "action": "route_feedback", "decision_id": completed["decision_id"],
+            "session_id": "session-complete", "outcome": "completed",
+        })
+        self.supervisor.store.db.execute(
+            "UPDATE route_decisions SET expires_at = 1 WHERE decision_id = ?",
+            (expired["decision_id"],),
+        )
+        self.supervisor.store.db.commit()
+
+        status = await self.call({"action": "route_status"})
+
+        self.assertEqual("codex_canary", status["routing_mode"])
+        self.assertEqual(3, status["native_reservation_limit"])
+        self.assertEqual(900, status["native_reservation_ttl_seconds"])
+        self.assertEqual(1, status["native_reservations"]["released"])
+        self.assertEqual(1, status["native_reservations"]["expired"])
+        self.assertEqual(2, status["feedback_eligible"])
+        self.assertEqual(1, status["feedback_joined"])
+        self.assertEqual(0.5, status["feedback_join_rate"])
+
     async def test_route_decide_rejects_unknown_protocol_without_persisting(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "protocol version"):
             await self.call({
@@ -1541,6 +1705,23 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             (decision["decision_id"],),
         ).fetchone()
         self.assertIsNone(row)
+
+    async def test_prune_preserves_active_route_reservations(self) -> None:
+        self.supervisor.routing_mode = "codex_canary"
+        decision = await self.call(self.codex_native_route("session-active-prune"))
+        self.supervisor.store.db.execute(
+            "UPDATE route_decisions SET created_at = 1 WHERE decision_id = ?",
+            (decision["decision_id"],),
+        )
+        self.supervisor.store.db.commit()
+
+        self.supervisor.store.prune(2)
+
+        row = self.supervisor.store.db.execute(
+            "SELECT reservation_status FROM route_decisions WHERE decision_id = ?",
+            (decision["decision_id"],),
+        ).fetchone()
+        self.assertEqual("active", row["reservation_status"])
 
     async def test_cao_backend_fails_closed_for_unenforceable_contracts(self) -> None:
         with patch.dict(os.environ, {"AGENT_JOB_EXECUTION_BACKEND": "cao"}):

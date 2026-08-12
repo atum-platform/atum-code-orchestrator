@@ -11,7 +11,10 @@ import subprocess
 import time
 from typing import Any
 
-from agent_job_client import cancel, inbox, list_jobs, read, route_decide, submit
+from agent_job_client import (
+    cancel, inbox, list_jobs, read, route_decide, route_feedback,
+    route_reconcile, route_status, submit,
+)
 from agent_job_policy import configured_allowed_roots, SENSITIVE_PATH_PARTS
 
 
@@ -307,6 +310,18 @@ def job_submit(
 
 def routing_decide(**intent: Any) -> dict[str, Any]:
     return route_decide(**intent)
+
+
+def routing_feedback(decision_id: str, session_id: str, outcome: str) -> dict[str, Any]:
+    return route_feedback(decision_id, session_id, outcome)
+
+
+def routing_reconcile(session_id: str, active_decision_ids: list[str]) -> dict[str, Any]:
+    return route_reconcile(session_id, active_decision_ids)
+
+
+def routing_status() -> dict[str, Any]:
+    return route_status()
 
 
 def job_read(

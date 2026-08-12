@@ -89,12 +89,26 @@ workspace roots are defined once in `tools/agent_job_policy.py` and used by the
 installer, supervisor, review core, and profile migrator. Override them
 consistently with `AGENT_JOB_ALLOWED_ROOTS` when deploying elsewhere.
 
-The same socket also accepts versioned `route_decide` requests. Protocol version
-1 is shadow-only: it validates structured task intent, evaluates the centralized
-copy of today's static routing policy, and persists the recommendation in
-`route_decisions`. It never claims a provider slot, launches a process, or
-changes `submit`. Both jobs and route decisions use the configured retention
-window.
+The same socket accepts protocol-v1 `route_decide`, `route_feedback`,
+`route_reconcile`, and `route_status` requests. Shadow mode validates and records
+centralized recommendations without changing caller behavior. Set
+`AGENT_JOB_ROUTING_MODE=codex_canary` to make only Codex-on-Codex responses
+authoritative. Eligible focused work atomically claims an expiring cooperative
+native reservation; the supervisor does not spawn or terminate the subagent and
+does not change durable `submit` behavior.
+Unknown routing modes fail during supervisor startup.
+
+`AGENT_JOB_CODEX_NATIVE_RESERVATIONS` controls the machine-wide cooperative
+reservation limit (default 3), and `AGENT_JOB_ROUTE_RESERVATION_SECONDS` controls
+TTL (default 900, bounded to 30-86400). The client installer also declares a
+`spark-worker` Codex role backed by `clients/codex/spark-worker.toml` and sets the
+stable `agents.max_threads` machine ceiling to three when the user has not already
+chosen one. Feedback is idempotent, reconciliation is session-scoped, and status reports
+reservation counts plus the terminal decision-to-feedback return rate. Expired
+or reconciled decisions without feedback intentionally lower that rate because
+it measures whether callers returned, not transport delivery reliability. Both
+jobs and inactive route decisions use the configured retention window; active
+reservations are retained until feedback, reconciliation, or TTL expiry.
 
 CAO migration is provider-scoped. Keep `AGENT_JOB_EXECUTION_BACKEND=native`,
 then set both `AGENT_JOB_CAO_CANARY_PROVIDERS` and

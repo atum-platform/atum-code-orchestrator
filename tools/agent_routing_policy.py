@@ -1,4 +1,4 @@
-"""Versioned shadow routing policy for cross-agent work."""
+"""Versioned routing policy for cross-agent and native-worker work."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from typing import Any
 
 
 PROTOCOL_VERSION = 1
-POLICY_VERSION = "2026-08-12.1"
-ROUTING_MODE = "shadow"
+POLICY_VERSION = "2026-08-12.2"
+ROUTING_MODES = {"shadow", "codex_canary"}
 
 PROVIDERS = {"codex", "claude", "kimi", "hermes"}
 SURFACES = {"codex", "claude-code", "claude-desktop", "kimi-code", "hermes"}
@@ -28,6 +28,8 @@ MODEL_ALIASES = {
     "claude": "claude_deep",
     "kimi": "kimi_standard",
 }
+
+NATIVE_CODEX_CAPABILITIES = {"implementation", "exploration", "tests"}
 
 
 def _required_enum(intent: dict[str, Any], key: str, allowed: set[str]) -> str:
@@ -83,10 +85,13 @@ def normalize_intent(intent: dict[str, Any]) -> dict[str, Any]:
 
     explicit_provider = str(intent.get("explicit_provider") or "").strip().lower()
     explicit_model = str(intent.get("explicit_model") or "").strip()
+    session_id = str(intent.get("session_id") or "").strip()
     if explicit_provider and explicit_provider not in TARGET_PROVIDERS:
         raise ValueError(f"Unsupported explicit_provider: {explicit_provider}")
     if len(explicit_model) > 200:
         raise ValueError("explicit_model is too long")
+    if len(session_id) > 200:
+        raise ValueError("session_id is too long")
 
     return {
         "protocol_version": version,
@@ -102,19 +107,29 @@ def normalize_intent(intent: dict[str, Any]) -> dict[str, Any]:
         "surface_capabilities": dict(sorted(capabilities.items())),
         "explicit_provider": explicit_provider,
         "explicit_model": explicit_model,
+        "session_id": session_id,
     }
 
 
-def decide(intent: dict[str, Any]) -> dict[str, Any]:
-    """Return the current centralized routing decision without enforcing it."""
+def decide(intent: dict[str, Any], routing_mode: str = "shadow") -> dict[str, Any]:
+    """Return a centralized decision; persistence performs stateful admission."""
     intent = normalize_intent(intent)
+    if routing_mode not in ROUTING_MODES:
+        raise ValueError(f"Unsupported routing mode: {routing_mode}")
     caller = intent["caller_provider"]
     surface = intent["surface"]
     capability = intent["capability"]
     explicit_provider = intent["explicit_provider"]
     explicit_model = intent["explicit_model"]
 
-    reasons = ["shadow decision only; existing caller behavior remains authoritative"]
+    canary = routing_mode == "codex_canary" and caller == "codex" and surface == "codex"
+    mode = "codex_canary" if canary else "shadow"
+    enforced = canary
+    reasons = (
+        ["Codex canary decision is authoritative for this cooperating caller"]
+        if canary else
+        ["shadow decision only; existing caller behavior remains authoritative"]
+    )
     if explicit_provider:
         if explicit_provider == caller:
             lane = "direct"
@@ -126,6 +141,21 @@ def decide(intent: dict[str, Any]) -> dict[str, Any]:
             provider = explicit_provider
             fallback_provider = ""
             reasons.append("explicit provider request overrides default routing")
+    elif (
+        canary
+        and capability in NATIVE_CODEX_CAPABILITIES
+        and intent["complexity"] in {"trivial", "focused"}
+        and intent["risk"] in {"low", "medium"}
+        and intent["scope"] in {"local", "single_module"}
+        and intent["duration"] in {"short", "medium"}
+        and intent["durability"] == "session"
+        and intent["surface_capabilities"].get("native_subagents", False)
+        and intent["session_id"]
+    ):
+        lane = "native_subagent"
+        provider = "codex"
+        fallback_provider = ""
+        reasons.append("focused session-scoped work fits a Codex native worker")
     elif capability in {
         "code_review", "planning", "architecture", "design", "product",
         "copywriting", "research",
@@ -142,14 +172,20 @@ def decide(intent: dict[str, Any]) -> dict[str, Any]:
     return {
         "protocol_version": PROTOCOL_VERSION,
         "policy_version": POLICY_VERSION,
-        "mode": ROUTING_MODE,
-        "enforced": False,
+        "mode": mode,
+        "enforced": enforced,
         "surface": surface,
         "lane": lane,
         "provider": provider,
-        "model_alias": "" if lane == "direct" else explicit_model or MODEL_ALIASES.get(provider, ""),
+        "model_alias": (
+            "" if lane == "direct" else
+            "codex_fast" if lane == "native_subagent" else
+            explicit_model or MODEL_ALIASES.get(provider, "")
+        ),
+        "worker_profile": "spark-worker" if lane == "native_subagent" else "",
         "fallback_provider": fallback_provider,
         "fallback_model_alias": MODEL_ALIASES.get(fallback_provider, ""),
         "reasons": reasons,
         "expires_at": None,
+        "reservation_status": "none",
     }
