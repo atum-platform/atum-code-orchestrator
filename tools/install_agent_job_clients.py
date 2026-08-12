@@ -198,8 +198,17 @@ def merge_codex_config(path: Path, suffix: str, apply: bool, home: Path | None =
         table.add("env", env)
     servers["agent-jobs"] = table
     agents = document.setdefault("agents", tomlkit.table())
-    if "max_concurrent_threads_per_session" not in agents and "max_threads" not in agents:
-        agents["max_concurrent_threads_per_session"] = 3
+    misplaced_limit = agents.pop("max_concurrent_threads_per_session", None)
+    features = document.get("features")
+    multi_agent_v2 = None if features is None else features.get("multi_agent_v2")
+    if multi_agent_v2 is not None:
+        misplaced_limit = multi_agent_v2.pop(
+            "max_concurrent_threads_per_session", misplaced_limit
+        )
+        if not multi_agent_v2:
+            features.pop("multi_agent_v2")
+    if "max_threads" not in agents:
+        agents["max_threads"] = misplaced_limit if misplaced_limit is not None else 3
     role = agents.get("spark-worker") or tomlkit.table()
     role["description"] = (
         "Fast Codex worker for one focused implementation, exploration, or test scope."

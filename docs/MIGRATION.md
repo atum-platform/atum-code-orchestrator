@@ -14,7 +14,7 @@ machine-specific overrides may intentionally differ.
 
 Codex routing instructions use a separate installer-owned marked block. This
 block may be updated without replacing customized provider guidance. The
-installer also adds the `spark-worker` role and a three-thread native ceiling
+installer also adds the `spark-worker` role and a three-thread native machine ceiling
 only when no ceiling is already configured.
 
 Before replacing an existing supervisor, let all `running` and `launching` jobs

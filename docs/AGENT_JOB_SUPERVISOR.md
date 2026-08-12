@@ -102,8 +102,8 @@ Unknown routing modes fail during supervisor startup.
 reservation limit (default 3), and `AGENT_JOB_ROUTE_RESERVATION_SECONDS` controls
 TTL (default 900, bounded to 30-86400). The client installer also declares a
 `spark-worker` Codex role backed by `clients/codex/spark-worker.toml` and sets the
-native per-session thread ceiling to three when the user has not already chosen
-one. Feedback is idempotent, reconciliation is session-scoped, and status reports
+stable `agents.max_threads` machine ceiling to three when the user has not already
+chosen one. Feedback is idempotent, reconciliation is session-scoped, and status reports
 reservation counts plus the terminal decision-to-feedback return rate. Expired
 or reconciled decisions without feedback intentionally lower that rate because
 it measures whether callers returned, not transport delivery reliability. Both

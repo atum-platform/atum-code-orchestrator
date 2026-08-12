@@ -70,7 +70,7 @@ Native admission and persistence occur in one SQLite `BEGIN IMMEDIATE`
 transaction. The default machine-wide cooperative limit is three active Codex
 native reservations, each expiring after 900 seconds. Capacity exhaustion
 returns `direct`. The reservation is advisory outside cooperating clients: Codex
-itself enforces the installed three-thread per-session ceiling and owns spawn,
+itself enforces the installed three-thread machine ceiling and owns spawn,
 termination, integration, and verification.
 
 ```bash

@@ -1,5 +1,3 @@
-name = "spark-worker"
-description = "Fast Codex worker for one focused implementation, exploration, or test scope."
 model = "gpt-5.3-codex-spark"
 model_reasoning_effort = "medium"
 
