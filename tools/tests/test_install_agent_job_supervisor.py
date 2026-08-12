@@ -65,10 +65,19 @@ class SupervisorInstallerTest(unittest.TestCase):
     def test_install_rejects_dynamic_concurrency_without_quota_before_service_swap(self) -> None:
         with patch.dict(
             os.environ,
-            {"AGENT_JOB_DYNAMIC_CONCURRENCY": "1", "AGENT_JOB_QUOTA_ROUTING": "0"},
+            {"AGENT_JOB_DYNAMIC_CONCURRENCY": "true", "AGENT_JOB_QUOTA_ROUTING": "off"},
         ), patch.object(installer, "_socket_request") as socket_request, \
              patch.object(installer, "_run") as run:
             with self.assertRaisesRegex(RuntimeError, "requires AGENT_JOB_QUOTA_ROUTING"):
+                installer.install()
+        socket_request.assert_not_called()
+        run.assert_not_called()
+
+    def test_install_rejects_invalid_boolean_before_service_swap(self) -> None:
+        with patch.dict(os.environ, {"AGENT_JOB_DYNAMIC_CONCURRENCY": "sometimes"}), \
+             patch.object(installer, "_socket_request") as socket_request, \
+             patch.object(installer, "_run") as run:
+            with self.assertRaisesRegex(RuntimeError, "must be a boolean"):
                 installer.install()
         socket_request.assert_not_called()
         run.assert_not_called()

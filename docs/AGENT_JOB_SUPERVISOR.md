@@ -81,8 +81,8 @@ python3 tools/install_agent_job_supervisor.py status
 ```
 
 Durable provider concurrency defaults to a ceiling of three jobs per provider.
-Override with `AGENT_JOB_<PROVIDER>_CONCURRENCY`; values are clamped to the
-one-to-three supported range. Set `AGENT_JOB_DYNAMIC_CONCURRENCY=1` alongside
+Override with `AGENT_JOB_<PROVIDER>_CONCURRENCY`; integer values are clamped to
+the one-to-three supported range. Set `AGENT_JOB_DYNAMIC_CONCURRENCY=1` alongside
 quota routing to reduce a pressured provider by one slot and pause new launches
 while that provider is in a canonical rate-limit cooldown. Running jobs are
 never cancelled when capacity falls, and missing or stale quota telemetry keeps

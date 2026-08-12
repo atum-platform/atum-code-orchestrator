@@ -127,11 +127,22 @@ def _service_environment() -> dict[str, str]:
     return environment
 
 
+def _boolean_setting(environment: dict[str, str], name: str, default: bool = False) -> bool:
+    raw = environment.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name} must be a boolean, got {raw!r}")
+
+
 def install() -> None:
     environment = _service_environment()
-    if (
-        environment.get("AGENT_JOB_DYNAMIC_CONCURRENCY") == "1"
-        and environment.get("AGENT_JOB_QUOTA_ROUTING") != "1"
+    if _boolean_setting(environment, "AGENT_JOB_DYNAMIC_CONCURRENCY") and not _boolean_setting(
+        environment, "AGENT_JOB_QUOTA_ROUTING"
     ):
         raise RuntimeError(
             "AGENT_JOB_DYNAMIC_CONCURRENCY=1 requires AGENT_JOB_QUOTA_ROUTING=1"

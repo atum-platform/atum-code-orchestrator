@@ -21,6 +21,9 @@
   and native-gate tests.
 - Post-review verification passes all 233 unit/integration tests, Python compile
   checks, and diff whitespace validation.
+- Kimi K3's targeted follow-up returned SHIP with no blockers. The installer now
+  also normalizes every supported boolean spelling during preflight, closing its
+  non-blocking parity note before release.
 
 ## 2026-08-12 - Local quota broker P2
 
