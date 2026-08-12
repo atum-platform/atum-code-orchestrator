@@ -1,5 +1,17 @@
 # Session Log
 
+## 2026-08-13 - One-hop routing escalation P5
+
+- Added protocol-v2 escalation intents with a parent decision ID, typed reason,
+  bounded evidence, and stable caller/session identity.
+- Escalation requires the parent to record `route_feedback=escalated`, excludes
+  its provider after quota/cooldown routing, clears further fallbacks, and allows
+  at most one child. Native-worker failure degrades to direct primary execution.
+- Added atomic parent validation and a unique parent-child index. Identical
+  retries return the retained child response; conflicting retries fail closed.
+- Reused the guarded review redactor before persisting escalation evidence.
+- Exposed escalation fields in MCP, CLI, and shared skill guidance.
+
 ## 2026-08-13 - Capability-aware mixed-version routing P4
 
 - Added routing protocol v2 while retaining full protocol-v1 acceptance and

@@ -38,6 +38,16 @@ An explicit user model/provider request overrides these defaults. A fallback is
 for provider failure, quota exhaustion, or unusable output, not disagreement.
 Do not routinely call both providers.
 
+For an enforced protocol-v2 route that genuinely cannot complete, first report
+`route_feedback=escalated`. Then call `route_decide` once more with the same
+caller, surface, and `session_id`, plus the retained decision ID as
+`previous_decision_id`, a typed `escalation_reason`, and brief non-secret
+`escalation_evidence`. Follow the returned terminal route exactly. The supervisor
+atomically permits one child, excludes the parent provider after applying current
+quota/cooldown evidence, and rejects a second hop. Retry the identical escalation
+request to recover its retained decision; do not invent a new chain or call both
+providers speculatively.
+
 When the supervisor returns an enforced `agent_jobs` route, use its provider and
 model alias exactly. It may have rebalanced the static table using fresh local
 quota evidence and canonical rate-limit cooldowns. Do not duplicate pressure

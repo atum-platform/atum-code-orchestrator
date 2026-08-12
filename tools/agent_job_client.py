@@ -207,6 +207,13 @@ def _parser() -> argparse.ArgumentParser:
     route.add_argument("--explicit-provider", default="")
     route.add_argument("--explicit-model", default="")
     route.add_argument("--session-id", default="")
+    route.add_argument("--previous-decision-id", default="")
+    route.add_argument(
+        "--escalation-reason",
+        choices=("provider_failure", "rate_limit", "unusable_output", "scope_growth", "capability_mismatch"),
+        default="",
+    )
+    route.add_argument("--escalation-evidence", default="")
     route.add_argument("--owner", default="")
     feedback = sub.add_parser("route-feedback")
     feedback.add_argument("decision_id")

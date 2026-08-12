@@ -152,6 +152,8 @@ class ReviewCoreTest(unittest.IsolatedAsyncioTestCase):
             "scope": "repo", "duration": "long", "durability": "durable",
             "parallelizable": False, "surface_capabilities": {},
             "explicit_provider": "", "explicit_model": "", "session_id": "task-1",
+            "previous_decision_id": "", "escalation_reason": "",
+            "escalation_evidence": "",
             "owner": "test",
         }
         with patch.object(review_core, "routing_decide", side_effect=fake_route):
