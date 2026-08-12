@@ -1,5 +1,22 @@
 # Session Log
 
+## 2026-08-12 - Quote-safe provider process identity
+
+- Traced four Kimi launch failures across the Mac mini and MacBook to process
+  identity bookkeeping, not Kimi itself: the supervisor read the full macOS
+  `ps command` value and passed it to `shlex.split`, so unmatched quotes in an
+  ordinary prompt raised `No closing quotation` after the provider spawned.
+- Replaced full-command parsing with the executable-only macOS `ps comm` field
+  for launch bookkeeping and restart cleanup. Existing PID group, process start
+  time, and resolved executable checks remain in place.
+- Added regressions for both launch and restart cleanup using process arguments
+  with an unmatched apostrophe. These tests fail against the prior parser and
+  verify that quote-bearing prompts no longer block launch or orphan a process
+  during supervisor restart.
+- Local verification passes the full 178-test suite and compile checks. Opus 5
+  independently confirmed the production fix and required strengthening both
+  regression paths before shipping.
+
 ## 2026-08-11 - Kimi model normalization
 
 - Moved Kimi model selection from advisory caller behavior into the supervisor
