@@ -78,6 +78,17 @@ class JobStoreMigrationTest(unittest.TestCase):
                         db_path=root / "state/jobs.sqlite3", log_dir=root / "state/logs",
                     )
 
+    def test_invalid_quota_routing_flag_fails_at_startup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(
+            os.environ, {"AGENT_JOB_QUOTA_ROUTING": "sometimes"}
+        ):
+            root = Path(temporary)
+            with self.assertRaisesRegex(ValueError, "AGENT_JOB_QUOTA_ROUTING"):
+                Supervisor(
+                    state_dir=root / "state", socket_path=root / "state/socket",
+                    db_path=root / "state/jobs.sqlite3", log_dir=root / "state/logs",
+                )
+
 
 def fake_command(job: dict[str, object]) -> tuple[list[str], str | None, dict[str, str]]:
     prompt = str(job["prompt"])
@@ -234,12 +245,14 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.old_roots = os.environ.get("AGENT_JOB_ALLOWED_ROOTS")
         self.old_allow_implement = os.environ.get("AGENT_JOB_ALLOW_IMPLEMENT")
         self.old_kimi_semantic = os.environ.get("AGENT_JOB_KIMI_SEMANTIC")
+        self.old_quota_history = os.environ.get("AGENT_JOB_QUOTA_HISTORY_DIR")
         self.old_token_path = supervisor_module.IMPLEMENT_TOKEN_PATH
         os.environ["AGENT_JOB_ALLOWED_ROOTS"] = str(root)
         self.implement_token = root / "implement.token"
         self.implement_token.write_text("test-capability\n", encoding="utf-8")
         os.environ["AGENT_JOB_ALLOW_IMPLEMENT"] = "1"
         os.environ["AGENT_JOB_KIMI_SEMANTIC"] = "0"
+        os.environ["AGENT_JOB_QUOTA_HISTORY_DIR"] = str(root / "quota-history")
         supervisor_module.IMPLEMENT_TOKEN_PATH = self.implement_token
         self.launch_counts: dict[str, int] = {}
 
@@ -280,6 +293,10 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             os.environ.pop("AGENT_JOB_KIMI_SEMANTIC", None)
         else:
             os.environ["AGENT_JOB_KIMI_SEMANTIC"] = self.old_kimi_semantic
+        if self.old_quota_history is None:
+            os.environ.pop("AGENT_JOB_QUOTA_HISTORY_DIR", None)
+        else:
+            os.environ["AGENT_JOB_QUOTA_HISTORY_DIR"] = self.old_quota_history
         supervisor_module.IMPLEMENT_TOKEN_PATH = self.old_token_path
         self.temp.cleanup()
 
@@ -667,8 +684,11 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         submitted = await self.call(spec)
         result = await self.wait_for(str(submitted["job_id"]), {"failed"})
         self.assertEqual("none", result["partial_result_state"])
+        self.assertEqual("rate_limit", result["job"]["failure_kind"])
         self.assertEqual("", result["stdout"])
         self.assertIn("usage limit reached", result["stderr"])
+        status = await self.call({"action": "route_status"})
+        self.assertEqual("rate_limited", status["provider_health"]["kimi"]["state"])
 
     async def test_kimi_stderr_keeps_byte_based_liveness_active(self) -> None:
         os.environ["AGENT_JOB_KIMI_SEMANTIC"] = "1"
@@ -1546,6 +1566,35 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         ).fetchone()
         self.assertIsNotNone(row)
         self.assertEqual("test:shadow", row["owner"])
+
+    async def test_quota_broker_rebalances_default_but_not_explicit_route(self) -> None:
+        now = time.time()
+        quota_dir = Path(os.environ["AGENT_JOB_QUOTA_HISTORY_DIR"])
+        quota_dir.mkdir(parents=True)
+        iso = lambda value: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(value))
+        (quota_dir / "claude.json").write_text(json.dumps({
+            "preferredAccountKey": "test",
+            "accounts": {"test": [{
+                "name": "session", "windowMinutes": 300,
+                "entries": [{
+                    "capturedAt": iso(now), "resetsAt": iso(now + 9000),
+                    "usedPercent": 50,
+                }],
+            }]},
+        }), encoding="utf-8")
+        self.supervisor.quota_routing_enabled = True
+        payload = {
+            "action": "route_decide", "protocol_version": 1,
+            "caller_provider": "codex", "surface": "codex",
+            "capability": "planning",
+        }
+
+        balanced = await self.call(payload)
+        explicit = await self.call({**payload, "explicit_provider": "claude"})
+
+        self.assertEqual("kimi", balanced["provider"])
+        self.assertEqual("claude", balanced["fallback_provider"])
+        self.assertEqual("claude", explicit["provider"])
 
     def codex_native_route(self, session_id: str) -> dict[str, object]:
         return {

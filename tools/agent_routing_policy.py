@@ -6,7 +6,7 @@ from typing import Any
 
 
 PROTOCOL_VERSION = 1
-POLICY_VERSION = "2026-08-12.2"
+POLICY_VERSION = "2026-08-12.3"
 ROUTING_MODES = {"shadow", "codex_canary"}
 
 PROVIDERS = {"codex", "claude", "kimi", "hermes"}

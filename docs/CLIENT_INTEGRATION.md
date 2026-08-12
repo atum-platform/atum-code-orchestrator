@@ -89,6 +89,13 @@ join rate. Session IDs prevent accidental
 cross-session updates but are not an authentication boundary against other
 processes running as the same macOS user.
 
+When quota routing is enabled, the returned provider/model pair already includes
+the supervisor's health decision. Clients must execute that pair when
+`enforced=true`; they must not independently reinterpret CodexBar percentages.
+`reasons` records any pressure-driven swap. Explicit targets are preserved, and
+stale or absent telemetry leaves the static table unchanged. `route_status`
+provides provider health and `quota_alerts` for operator visibility.
+
 `job_read(wait_seconds=N)` waits inside the supervisor and wakes on output,
 liveness, or terminal state; it does not spin up repeated client connections.
 Terminal jobs with an owner produce an at-least-once `job_inbox` delivery that
