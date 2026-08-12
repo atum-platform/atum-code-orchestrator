@@ -734,6 +734,8 @@ class Supervisor:
             "codex": int(os.environ.get("AGENT_JOB_CODEX_CONCURRENCY", "2")),
         }
         self.routing_mode = os.environ.get("AGENT_JOB_ROUTING_MODE", "shadow").strip().lower()
+        if self.routing_mode not in {"shadow", "codex_canary"}:
+            raise ValueError(f"Unsupported AGENT_JOB_ROUTING_MODE: {self.routing_mode}")
         self.native_reservation_limit = max(
             1, min(int(os.environ.get("AGENT_JOB_CODEX_NATIVE_RESERVATIONS", "3")), 32)
         )

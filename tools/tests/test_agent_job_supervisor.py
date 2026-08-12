@@ -52,6 +52,17 @@ class JobStoreMigrationTest(unittest.TestCase):
                 "session_id", "reservation_status", "feedback_outcome", "feedback_at",
             }.issubset(columns))
 
+    def test_invalid_routing_mode_fails_at_supervisor_startup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(
+            os.environ, {"AGENT_JOB_ROUTING_MODE": "invalid"}
+        ):
+            root = Path(temporary)
+            with self.assertRaisesRegex(ValueError, "AGENT_JOB_ROUTING_MODE"):
+                Supervisor(
+                    state_dir=root / "state", socket_path=root / "state/socket",
+                    db_path=root / "state/jobs.sqlite3", log_dir=root / "state/logs",
+                )
+
 
 def fake_command(job: dict[str, object]) -> tuple[list[str], str | None, dict[str, str]]:
     prompt = str(job["prompt"])

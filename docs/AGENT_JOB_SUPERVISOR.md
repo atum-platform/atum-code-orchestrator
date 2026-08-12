@@ -96,6 +96,7 @@ centralized recommendations without changing caller behavior. Set
 authoritative. Eligible focused work atomically claims an expiring cooperative
 native reservation; the supervisor does not spawn or terminate the subagent and
 does not change durable `submit` behavior.
+Unknown routing modes fail during supervisor startup.
 
 `AGENT_JOB_CODEX_NATIVE_RESERVATIONS` controls the machine-wide cooperative
 reservation limit (default 3), and `AGENT_JOB_ROUTE_RESERVATION_SECONDS` controls
