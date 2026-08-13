@@ -22,7 +22,7 @@ not own its runtime, protocol, or repository.
 Clone to the stable path on each Mac, then bootstrap locally:
 
 ```bash
-git clone https://github.com/minhnkn22/atum-agent-jobs.git \
+git clone https://github.com/anka-ventures-labs/atum-code-orchestrator.git \
   ~/.local/share/atum-agent-jobs
 cd ~/.local/share/atum-agent-jobs
 python3 bootstrap.py --with-hermes
