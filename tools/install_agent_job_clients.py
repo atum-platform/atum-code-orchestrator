@@ -61,19 +61,31 @@ and leave `max_turns=0` by default. Verify all returned work locally.
 """,
 }
 
-CODEX_ROUTING_GUIDANCE = """## Codex Routing Canary
+CODEX_ROUTING_GUIDANCE = """## Codex Routing Protocol
 
-For focused implementation, exploration, or test work that is separable from the
-primary task, call the agent-jobs `route_decide` tool before spawning a native
-subagent. Pass protocol v2, a stable task/session ID, and both
-`durable_agent_jobs=true` and `native_subagents=true`. Follow the
-returned lane only when `enforced=true`; shadow responses are telemetry. A
-`native_subagent` lane means spawn one worker using the returned worker profile
-and model alias, retain the decision ID, and send `route_feedback` exactly once
-when it completes, fails, is abandoned, or is escalated. On a resumed task, call
-`route_reconcile` with that session's still-active decision IDs. The routing tool
-does not spawn or terminate native agents; Codex remains responsible for their
-lifecycle, integration, verification, and the final result.
+Before every cross-agent review, consultation, planning, architecture, design,
+product, copywriting, research, or delegated implementation call, use the
+agent-jobs `route_decide` tool. Also call it before spawning a separable native
+worker for implementation, exploration, or tests. Pass protocol v2, a stable
+task/session ID, and `durable_agent_jobs=true`; report `native_subagents=true`
+only when native workers are available. Pass an explicit provider/model request
+through the route intent instead of bypassing routing.
+
+When `enforced=true`, the returned lane, provider, and model supersede static
+provider-preference text elsewhere in the guidance. For `agent_jobs`, submit
+exactly the returned provider/model with `job_submit`. For `native_subagent`,
+spawn one worker using the returned worker profile/model. For `direct`, continue
+in the primary session. Never submit Opus, Kimi, or Codex directly from the
+static fallback table when an enforced route exists. Shadow decisions remain
+telemetry; on supervisor outage or shadow-only routing, use the skill's table.
+
+Retain every enforced decision ID and send `route_feedback` exactly once when
+the routed work completes, fails, is abandoned, is not started, or is escalated.
+Use the documented one-hop escalation flow after genuine provider failure,
+quota exhaustion, or unusable output. On a resumed task, call `route_reconcile`
+with that session's still-active native decision IDs. Routing does not launch or
+terminate workers; Codex owns lifecycle, integration, verification, and the
+final result.
 """
 
 

@@ -62,6 +62,15 @@ send v2 with `durable_agent_jobs=true` and only claim `native_subagents=true`
 when that tool is actually present. If an older server rejects v2, retry once
 with v1; old clients remain valid against a new server.
 
+Cooperating clients call `route_decide` before every cross-agent `job_submit`,
+including design, planning, architecture, product, copywriting, research, review,
+and delegated implementation. An enforced `agent_jobs` response is the authority
+for the submitted provider/model and supersedes static preference text in client
+guidance. `direct` means the primary continues locally. Static routing tables are
+used only for supervisor outage or shadow decisions. Every enforced decision
+receives terminal `route_feedback`; direct durable submissions without a prior
+decision are non-cooperating legacy behavior and bypass quota balancing.
+
 The response includes a durable decision ID, policy version, lane, provider,
 model alias, worker profile, fallback, effective surface capabilities, reasons,
 expiry, and reservation

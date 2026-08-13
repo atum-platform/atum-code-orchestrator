@@ -247,6 +247,18 @@ class ClientInstallerTest(unittest.TestCase):
         self.assertIn(installer.GUIDANCE_START, result)
         self.assertFalse(installer.merge_guidance(path, "Codex guidance", "second", True))
 
+    def test_codex_routing_block_requires_route_before_cross_agent_submit(self) -> None:
+        path = self.root / "AGENTS.md"
+        self.assertTrue(installer.merge_guidance(path, "Codex guidance", "test", True))
+        result = path.read_text(encoding="utf-8")
+        routing = result.split(installer.CODEX_ROUTING_START, 1)[1].split(
+            installer.CODEX_ROUTING_END, 1
+        )[0]
+        self.assertIn("Before every cross-agent", routing)
+        self.assertIn("supersede static", routing)
+        self.assertIn("job_submit", routing)
+        self.assertIn("route_feedback", routing)
+
 
 if __name__ == "__main__":
     unittest.main()

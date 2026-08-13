@@ -26,6 +26,16 @@ when `enforced=true`; `mode=shadow` is telemetry and creates no reservation.
 During the first canary, only Codex-on-Codex decisions can be enforced. The table
 below remains the fail-open policy for shadow responses or supervisor outage.
 
+Call `route_decide` before every cross-agent `job_submit`, not only before native
+Codex work. Pass protocol v2, a stable task/session ID, the actual capability,
+and `surface_capabilities.durable_agent_jobs=true`. Pass an explicit user target
+through `explicit_provider`/`explicit_model`. When the response is enforced,
+submit only the returned provider and model for an `agent_jobs` lane, or continue
+locally for `direct`; the decision supersedes the static table below. Retain the
+decision ID and report terminal feedback exactly once. A durable submission with
+no preceding enforced route is a protocol violation unless the supervisor was
+unavailable or returned a shadow decision.
+
 Default routing by caller:
 
 | Caller | Code review | Planning, design, product, copy, research |
@@ -77,14 +87,17 @@ returns `direct`, so the primary continues the work itself.
 
 1. Inspect the exact project and define one checkpoint, risk, and expected output.
 2. Load only the relevant rubric and incorporate it into `instructions`.
-3. Submit asynchronously with the exact absolute `workdir`. Set
+3. Call `route_decide` and follow an enforced lane/provider/model. Submit
+   asynchronously with the exact absolute `workdir`. Set
    `context_git_diff=true` for code review and select the correct base ref.
 4. Save the job ID, cursor, and exact owner. Use
    `job_read(wait_seconds=30)` for a server-side wait until progress or terminal
    state; the caller does not need to generate repeated socket polls.
 5. Treat `possibly_stalled` as alive but quiet. Cancel only after inspecting status,
    elapsed time, and the hard deadline.
-6. On primary provider failure, submit the fallback as a new job. Record both IDs.
+6. On primary provider failure, report `escalated`, request the one-hop route,
+   then submit its returned provider/model as a new job. Record both job IDs and
+   both decision IDs.
 7. Verify every finding against repository evidence and run checks yourself.
 
 For work that outlives the calling task, query `job_inbox` with the exact owner
