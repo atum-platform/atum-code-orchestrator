@@ -23,6 +23,19 @@ from agent_job_supervisor import JobStore, Supervisor  # noqa: E402
 
 
 class JobStoreMigrationTest(unittest.TestCase):
+    def test_existing_jobs_gain_nullable_separate_timeout_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = JobStore(Path(temporary) / "jobs.sqlite3")
+            columns = {
+                str(row["name"]): row
+                for row in store.db.execute("PRAGMA table_info(jobs)")
+            }
+            self.assertIn("queue_timeout_seconds", columns)
+            self.assertIn("run_timeout_seconds", columns)
+            self.assertEqual(0, columns["queue_timeout_seconds"]["notnull"])
+            self.assertEqual(0, columns["run_timeout_seconds"]["notnull"])
+            store.db.close()
+
     def test_existing_shadow_route_table_gains_canary_lifecycle_columns(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "jobs.sqlite3"
@@ -394,6 +407,9 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             spec = self.spec("complete")
             spec["provider"] = "kimi"
             submitted = await self.call(spec)
+            self.assertEqual(900, submitted["queue_timeout_seconds"])
+            self.assertEqual(30, submitted["run_timeout_seconds"])
+            self.assertEqual("separate", submitted["timeout_semantics"])
             result = await self.wait_for(str(submitted["job_id"]), {"completed"})
             self.assertIn("first", result["output"])
             self.assertEqual("first\nsecond\n", result["stdout"])
@@ -402,6 +418,19 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             again = await self.call({"action": "read", "job_id": submitted["job_id"], "cursor": cursor})
             self.assertEqual("", again["output"])
             self.assertNotIn("prompt", result["job"])
+
+    async def test_legacy_timeout_input_aliases_run_budget(self) -> None:
+        spec = self.spec("complete")
+        spec.update({
+            "queue_timeout_seconds": 300,
+            "run_timeout_seconds": 600,
+            "timeout_seconds": 45,
+        })
+        submitted = await self.call(spec)
+        self.assertEqual(300, submitted["queue_timeout_seconds"])
+        self.assertEqual(45, submitted["run_timeout_seconds"])
+        self.assertEqual(45, submitted["timeout_seconds"])
+        await self.wait_for(str(submitted["job_id"]), {"completed"})
 
     async def test_owner_inbox_redelivers_until_exact_owner_acknowledges(self) -> None:
         spec = self.spec("complete")
@@ -1339,17 +1368,46 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         result = await self.wait_for(str(submitted["job_id"]), {"completed"}, timeout=5)
         self.assertEqual("completed", result["job"]["status"])
 
-    async def test_submit_relative_deadline_expires_in_queue(self) -> None:
+    async def test_queue_timeout_expires_without_waiting_for_a_provider_slot(self) -> None:
         first = await self.call(self.spec("slow"))
         second = await self.call(self.spec("complete"))
         await self.wait_for(str(first["job_id"]), {"running"})
         self.supervisor.store.update(
-            str(second["job_id"]), created_at=time.time() - 31, timeout_seconds=30
+            str(second["job_id"]), created_at=time.time() - 31,
+            queue_timeout_seconds=30, run_timeout_seconds=30,
+        )
+        result = await self.wait_for(str(second["job_id"]), {"failed"})
+        self.assertEqual("queue_timeout", result["job"]["failure_kind"])
+        await self.call({"action": "cancel", "job_id": first["job_id"]})
+        await self.wait_for(str(first["job_id"]), {"cancelled"})
+
+    async def test_run_timeout_starts_when_provider_launches(self) -> None:
+        first = await self.call(self.spec("slow"))
+        second = await self.call(self.spec("slow"))
+        await self.wait_for(str(first["job_id"]), {"running"})
+        self.supervisor.store.update(
+            str(second["job_id"]), created_at=time.time() - 20,
+            queue_timeout_seconds=60, run_timeout_seconds=1, timeout_seconds=1,
         )
         await self.call({"action": "cancel", "job_id": first["job_id"]})
         await self.wait_for(str(first["job_id"]), {"cancelled"})
+        started = await self.wait_for(str(second["job_id"]), {"running", "failed"})
+        self.assertIsNotNone(started["job"]["started_at"])
         result = await self.wait_for(str(second["job_id"]), {"failed"})
+        self.assertEqual("timeout", result["job"]["failure_kind"])
+        self.assertGreaterEqual(
+            result["job"]["finished_at"] - result["job"]["started_at"], .9
+        )
+
+    async def test_legacy_job_keeps_submit_relative_shared_deadline(self) -> None:
+        spec = self.spec("complete")
+        spec.update({"idempotency_key": "legacy-deadline", "request_hash": "legacy"})
+        job_id = "legacy-deadline-job"
+        self.supervisor.store.create(spec, job_id, self.supervisor.log_dir / f"{job_id}.log")
+        self.supervisor.store.update(job_id, created_at=time.time() - 31, timeout_seconds=30)
+        result = await self.wait_for(job_id, {"failed"})
         self.assertEqual("queue_timeout", result["job"]["failure_kind"])
+        self.assertEqual("legacy_shared", result["job"]["timeout_semantics"])
 
     async def test_cancelled_queued_job_never_launches(self) -> None:
         first = await self.call(self.spec("slow"))
@@ -1647,6 +1705,8 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         spec = self.spec("slow")
         spec.update({
             "timeout_seconds": 1,
+            "queue_timeout_seconds": 30,
+            "run_timeout_seconds": 1,
             "soft_stall_seconds": 1,
             "idempotency_key": "running-timeout",
             "request_hash": "hash",

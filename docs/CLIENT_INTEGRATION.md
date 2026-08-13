@@ -50,6 +50,14 @@ Review prompts may contain up to 4 MiB of UTF-8 data. The supervisor's Unix
 socket reader is sized for that complete JSON request, so prompts larger than the
 former 400 KB ceiling are accepted end to end rather than only by one layer.
 
+`job_submit` accepts independent `queue_timeout_seconds` and
+`run_timeout_seconds`, defaulting to 900 and 2700 seconds. Queue time starts at
+durable submission; run time starts only after the provider process launches.
+The deprecated `timeout_seconds` parameter remains an alias for the run budget
+for mixed-version callers. Status exposes both budgets, their deadlines, and
+`timeout_semantics`; clients should distinguish `queue_timeout` capacity failure
+from `timeout` execution failure when deciding whether to retry or reroute.
+
 ## Routing Protocol
 
 `route_decide` supports protocol versions 1 and 2. Both accept a bounded structured intent containing
@@ -202,7 +210,7 @@ authentication.
 Optional settings are `AGENT_JOB_CAO_TOKEN` and
 `AGENT_JOB_CAO_LAUNCH_TIMEOUT`; launch requests are capped at eight seconds so a
 cancelled bridge retains time for cleanup before forced termination.
-The supervisor's existing hard deadline, soft-stall state, owner binding,
+The supervisor's queue/run deadlines, soft-stall state, owner binding,
 idempotency, durable logs, cursor reads, cancellation, and retention continue to
 apply outside CAO. The selected backend is persisted per job, so queued work
 does not change transport when configuration changes.
@@ -211,15 +219,15 @@ CAO read-only execution is enabled only for Claude and Kimi, whose adapters
 enforce native tool denial. Read-only Codex fails before launch because this CAO
 fork currently launches Codex without an enforceable sandbox. A positive
 `max_turns` also fails closed because CAO has no equivalent limit; the normal
-unlimited value remains supported and bounded by the wall-clock deadline.
+unlimited value remains supported and bounded by the run deadline.
 
 During the pilot, CAO emits status transitions and a retained final result, not
 the provider's incremental token stream. A long quiet processing state can
-therefore become `possibly_stalled` even while CAO is alive. The hard deadline
+therefore become `possibly_stalled` even while CAO is alive. The run deadline
 still bounds it. Keep the backend opt-in until the observation window confirms
 provider status quality and lease cleanup under real workloads.
 
-Compatibility sessions carry the supervisor hard deadline as a CAO metadata
+Compatibility sessions carry the supervisor run deadline as a CAO metadata
 lease plus `AGENT_JOB_DEPTH`, provider, and job identity in the provider
 environment. Same-session child CAO terminals inherit and persist the same
 validated lease while the CAO process remains live.

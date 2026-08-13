@@ -57,7 +57,7 @@ budget even though raw output capture may have continued.
 Detailed semantic activity is available for native Codex, Claude, and Kimi jobs.
 Claude provider waits and concurrent open tools are explicit. A provider wait
 that exceeds the soft threshold becomes `idle_unknown`; it never hides a hung
-request until the hard deadline. Kimi still uses output-byte liveness because
+request until the run deadline. Kimi still uses output-byte liveness because
 its JSON stream has no tool-start boundary; public stderr tool progress provides
 that transport signal but is not promoted into semantic event content. CAO
 compatibility jobs also use output-byte liveness, so their

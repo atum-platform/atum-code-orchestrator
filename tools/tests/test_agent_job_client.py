@@ -13,6 +13,15 @@ from agent_job_client import _parser, route_decide  # noqa: E402
 
 
 class AgentJobClientParserTest(unittest.TestCase):
+    def test_submit_has_separate_queue_and_run_timeout_defaults(self) -> None:
+        args = vars(_parser().parse_args([
+            "submit", "--provider", "kimi", "--mode", "readonly",
+            "--workdir", "/tmp", "--prompt", "review",
+        ]))
+        self.assertEqual(900, args["queue_timeout_seconds"])
+        self.assertEqual(2700, args["run_timeout_seconds"])
+        self.assertIsNone(args["timeout_seconds"])
+
     def test_event_cursor_is_omitted_for_legacy_reads(self) -> None:
         args = vars(_parser().parse_args(["read", "job-id"]))
         self.assertNotIn("event_cursor", args)

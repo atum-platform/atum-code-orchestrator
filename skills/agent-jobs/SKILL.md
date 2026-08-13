@@ -99,7 +99,7 @@ returns `direct`, so the primary continues the work itself.
    `job_read(wait_seconds=30)` for a server-side wait until progress or terminal
    state; the caller does not need to generate repeated socket polls.
 5. Treat `possibly_stalled` as alive but quiet. Cancel only after inspecting status,
-   elapsed time, and the hard deadline.
+   elapsed time, and the run deadline.
 6. On failure of an enforced v2 route, report `escalated`, request the one-hop
    route, then submit its returned provider/model as a new job. Record both job
    IDs and both decision IDs. For a shadow route or supervisor outage, submit the
@@ -118,7 +118,10 @@ submit secrets, credentials, private keys, `.env` contents, or unrelated private
 material. Context files must be inside `workdir`; the guarded interface redacts
 common secret shapes as defense in depth.
 
-Use the wall-clock `timeout_seconds` as the hard execution backstop. Leave
+Use `queue_timeout_seconds` for capacity waiting and `run_timeout_seconds` as
+the execution backstop. Defaults are 900 and 2700 seconds; queue waiting does
+not consume execution time. `timeout_seconds` is a deprecated run-time alias.
+Leave
 `max_turns` at its default `0`, which omits the provider turn ceiling. Set a
 positive turn ceiling only when the user explicitly requests one or the task has
 a known bounded interaction protocol; an arbitrary turn cap can discard an
