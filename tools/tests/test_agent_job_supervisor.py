@@ -1210,7 +1210,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, self.supervisor._effective_provider_limits({
             "claude": {"state": "pressured"},
         })["claude"])
-        self.assertEqual(0, self.supervisor._effective_provider_limits({
+        self.assertEqual(3, self.supervisor._effective_provider_limits({
             "claude": {"state": "exhausted"},
         })["claude"])
 
@@ -1276,7 +1276,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             "claude": {"state": "stale"},
         })["claude"])
 
-    async def test_exhaustion_holds_queued_job_without_dynamic_concurrency(self) -> None:
+    async def test_exhaustion_does_not_hold_submitted_job_without_dynamic_concurrency(self) -> None:
         self.supervisor.quota_routing_enabled = True
         self.supervisor.dynamic_concurrency_enabled = False
         self.supervisor.provider_limits["claude"] = 1
@@ -1302,8 +1302,8 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             "semantic_stream": 0, "idempotency_key": "", "request_hash": "queued",
         }, "pre-exhaustion-job", Path(self.temp.name) / "queued.log")
         await asyncio.sleep(.4)
-        held = await self.call({"action": "read", "job_id": "pre-exhaustion-job"})
-        self.assertEqual("queued", held["job"]["status"])
+        result = await self.wait_for("pre-exhaustion-job", {"completed"})
+        self.assertEqual("completed", result["job"]["status"])
 
     async def test_route_status_reports_dynamic_slots_and_native_feedback_gate(self) -> None:
         self.supervisor.quota_routing_enabled = True
@@ -1934,7 +1934,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("claude", balanced["fallback_provider"])
         self.assertEqual("claude", explicit["provider"])
 
-    async def test_exhausted_provider_blocks_explicit_route_and_direct_submit(self) -> None:
+    async def test_exhausted_provider_preserves_explicit_route_and_submit(self) -> None:
         now = time.time()
         quota_dir = Path(os.environ["AGENT_JOB_QUOTA_HISTORY_DIR"])
         quota_dir.mkdir(parents=True)
@@ -1959,10 +1959,11 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             "explicit_model": "opus", "session_id": "exhausted-explicit",
             "surface_capabilities": {"durable_agent_jobs": True},
         })
-        self.assertEqual("direct", decision["lane"])
-        self.assertEqual("", decision["provider"])
-        with self.assertRaisesRegex(RuntimeError, "claude is unavailable from quota exhausted"):
-            await self.call(self.spec("complete"))
+        self.assertEqual("agent_jobs", decision["lane"])
+        self.assertEqual("claude", decision["provider"])
+        submitted = await self.call(self.spec("complete"))
+        result = await self.wait_for(str(submitted["job_id"]), {"completed"})
+        self.assertEqual("completed", result["job"]["status"])
 
     def codex_native_route(self, session_id: str) -> dict[str, object]:
         return {

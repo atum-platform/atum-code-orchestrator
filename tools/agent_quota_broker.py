@@ -290,7 +290,7 @@ def rebalance_default_route(
 def enforce_provider_availability(
     decision: dict[str, Any], health: dict[str, dict[str, Any]]
 ) -> dict[str, Any]:
-    """Prevent explicit or escalated routes from selecting unavailable providers."""
+    """Prevent automatic escalated or native routes from selecting unavailable providers."""
     result = dict(decision)
     if result.get("lane") not in {"agent_jobs", "native_subagent"}:
         return result

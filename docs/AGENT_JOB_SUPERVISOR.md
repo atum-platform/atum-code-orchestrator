@@ -155,10 +155,10 @@ rate-limited primary may use a pressured fallback because it cannot serve the
 request itself.
 
 Actual utilization at or above 98% is a separate `exhausted` state, with
-hysteretic recovery at 95% or below. Exhaustion is a hard admission boundary: routing
-does not select the provider for default, explicit, or escalation work, its
-effective concurrency is zero even when dynamic concurrency is disabled, and
-direct durable submissions are rejected.
+hysteretic recovery at 95% or below. Exhaustion excludes the provider from
+automatic default, fallback, escalation, and native-worker routing. An explicit
+provider request is an operator override and remains executable; status still
+reports the exhaustion so the caller can warn accurately.
 Projected pressure alone remains a balancing signal and does not trigger this
 hard boundary. Temporary rate-limit cooldowns continue to queue already chosen
 work for automatic recovery.
