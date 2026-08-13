@@ -16,6 +16,8 @@
   managed-block upgrade regression test.
 - Verified the corrected route-first contract with 256 repository tests, Python
   bytecode compilation, and `git diff --check`.
+- Kimi K3's targeted follow-up verified all four corrections and returned SHIP
+  with no remaining actionable defect in the Codex route-first path.
 
 ## 2026-08-13 - One-hop routing escalation P5
 
