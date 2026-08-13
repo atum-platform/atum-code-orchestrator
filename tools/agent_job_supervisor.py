@@ -970,9 +970,7 @@ class Supervisor:
             snapshot = health
         for provider, value in snapshot.items():
             state = value.get("state")
-            if state == "exhausted":
-                effective[provider] = 0
-            elif self.dynamic_concurrency_enabled and state == "rate_limited":
+            if self.dynamic_concurrency_enabled and state == "rate_limited":
                 effective[provider] = 0
             elif self.dynamic_concurrency_enabled and state == "pressured":
                 effective[provider] = max(1, effective[provider] - 1)
@@ -1656,14 +1654,6 @@ class Supervisor:
         owner = str(payload.get("owner") or "")[:200]
         if provider not in self.provider_limits:
             raise ValueError(f"Unsupported provider: {provider}")
-        if self.quota_routing_enabled:
-            health = self.store.refresh_provider_health(
-                stale_seconds=self.quota_stale_seconds
-            ).get(provider, {})
-            if health.get("state") == "exhausted":
-                raise RuntimeError(
-                    f"Provider {provider} is unavailable from quota {health['state']}"
-                )
         execution_backend = _execution_backend(provider, owner)
         if execution_backend != "cao":
             self.binary_finder(provider)
@@ -1762,7 +1752,7 @@ class Supervisor:
                 decision, json.loads(str(parent["response_json"])), health
             )
             decision["parent_decision_id"] = parent_id
-        if self.quota_routing_enabled:
+        if self.quota_routing_enabled and not canonical_intent["explicit_provider"]:
             decision = enforce_provider_availability(decision, health)
         return self.store.create_route_decision(
             canonical_intent, decision, owner,

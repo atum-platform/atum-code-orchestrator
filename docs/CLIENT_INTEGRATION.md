@@ -136,12 +136,11 @@ python3 tools/review_cli.py route-decide \
 When quota routing is enabled, the returned provider/model pair already includes
 the supervisor's health decision. Clients must execute that pair when
 `enforced=true`; they must not independently reinterpret CodexBar percentages.
-`reasons` records any pressure-driven swap. Explicit targets are preserved while
-the provider is available, but actual near-total quota use is enforced as
-`exhausted`; an unavailable explicit target degrades to `direct` rather than
-launching a likely doomed job. The submit boundary independently rejects
-exhausted providers, including callers that bypass routing. Temporary
-rate-limit cooldowns retain queued automatic recovery. Stale or absent
+`reasons` records any pressure-driven swap. Explicit targets are operator
+overrides and remain preserved even when the provider is `exhausted`; the
+health state is still visible in `route_status`. Automatic default, fallback,
+escalation, and native-worker routes do not select an exhausted provider.
+Temporary rate-limit cooldowns retain queued automatic recovery. Stale or absent
 telemetry for the primary leaves the static table unchanged. `route_status`
 provides provider health and `quota_alerts` for operator visibility.
 

@@ -1,5 +1,14 @@
 # Session Log
 
+## 2026-08-13 - Preserve explicit provider overrides
+
+- Corrected terminal quota handling so exhaustion blocks only automatic
+  selection, fallback, escalation, and native-worker routing.
+- Explicit provider/model requests now remain executable operator overrides;
+  durable submission and scheduler capacity no longer reject those jobs.
+- Kept `exhausted` visible in route status so callers can report the quota risk
+  while honoring deliberate model selection.
+
 ## 2026-08-13 - Enforce terminal quota exhaustion
 
 - Traced live Opus calls despite Claude's 99% weekly usage. Default calls were
