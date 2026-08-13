@@ -1,5 +1,24 @@
 # Session Log
 
+## 2026-08-13 - Require routing before cross-agent submission
+
+- Diagnosed live Codex design jobs that submitted Opus directly despite the
+  quota broker routing Claude's 100% projected pressure to Kimi K3. Those jobs
+  had no corresponding `route_decisions` rows.
+- Expanded the managed Codex protocol from native-worker routing to every
+  cross-agent submission. Enforced route decisions now explicitly supersede
+  static Opus/Kimi preference text.
+- Updated the shared skill and client contract to require route-first durable
+  submissions, terminal feedback, and one-hop rerouting after provider failure.
+- Kimi K3's primary review held the change for two wording gaps. Restored the
+  static fallback path for shadow/outage failures, clarified canary enforcement
+  by caller surface, documented shell routing commands, and added an in-place
+  managed-block upgrade regression test.
+- Verified the corrected route-first contract with 256 repository tests, Python
+  bytecode compilation, and `git diff --check`.
+- Kimi K3's targeted follow-up verified all four corrections and returned SHIP
+  with no remaining actionable defect in the Codex route-first path.
+
 ## 2026-08-13 - One-hop routing escalation P5
 
 - Added protocol-v2 escalation intents with a parent decision ID, typed reason,

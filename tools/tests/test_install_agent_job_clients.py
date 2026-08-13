@@ -247,6 +247,34 @@ class ClientInstallerTest(unittest.TestCase):
         self.assertIn(installer.GUIDANCE_START, result)
         self.assertFalse(installer.merge_guidance(path, "Codex guidance", "second", True))
 
+    def test_codex_routing_block_requires_route_before_cross_agent_submit(self) -> None:
+        path = self.root / "AGENTS.md"
+        self.assertTrue(installer.merge_guidance(path, "Codex guidance", "test", True))
+        result = path.read_text(encoding="utf-8")
+        routing = result.split(installer.CODEX_ROUTING_START, 1)[1].split(
+            installer.CODEX_ROUTING_END, 1
+        )[0]
+        self.assertIn("Before every cross-agent", routing)
+        self.assertIn("supersede static", routing)
+        self.assertIn("job_submit", routing)
+        self.assertIn("route_feedback", routing)
+
+    def test_existing_codex_routing_block_is_replaced_without_touching_policy(self) -> None:
+        path = self.root / "AGENTS.md"
+        path.write_text(
+            f"{installer.GUIDANCE_START}\nCustom local policy.\n{installer.GUIDANCE_END}\n\n"
+            f"{installer.CODEX_ROUTING_START}\nOld native-only routing.\n"
+            f"{installer.CODEX_ROUTING_END}\n",
+            encoding="utf-8",
+        )
+        self.assertTrue(installer.merge_guidance(path, "Codex guidance", "test", True))
+        result = path.read_text(encoding="utf-8")
+        self.assertIn("Custom local policy.", result)
+        self.assertNotIn("Old native-only routing.", result)
+        self.assertIn("Before every cross-agent", result)
+        self.assertEqual(1, result.count(installer.GUIDANCE_START))
+        self.assertEqual(1, result.count(installer.CODEX_ROUTING_START))
+
 
 if __name__ == "__main__":
     unittest.main()
