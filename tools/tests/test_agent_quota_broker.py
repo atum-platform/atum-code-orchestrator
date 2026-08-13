@@ -14,6 +14,7 @@ TOOLS_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS_DIR))
 
 from agent_quota_broker import (  # noqa: E402
+    enforce_provider_availability,
     evaluate_health,
     rate_limit_cooldown,
     rebalance_default_route,
@@ -82,6 +83,25 @@ class AgentQuotaBrokerTest(unittest.TestCase):
         self.assertEqual("rate_limited", health["state"])
         self.assertEqual(200, health["cooldown_until"])
 
+    def test_actual_near_total_usage_is_exhausted_with_hysteresis(self) -> None:
+        now = 15_000.0
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(
+            os.environ, {"AGENT_JOB_QUOTA_HISTORY_DIR": temporary}
+        ):
+            root = Path(temporary)
+            self.write_history(root, "claude", 99, now - 30, now + 9000)
+            exhausted = evaluate_health("claude", now)
+            self.assertEqual("exhausted", exhausted["state"])
+            self.assertEqual(99, exhausted["used_percent"])
+
+            self.write_history(root, "claude", 96, now - 30, now + 9000)
+            held = evaluate_health("claude", now, previous_state="exhausted")
+            self.assertEqual("exhausted", held["state"])
+
+            self.write_history(root, "claude", 94, now - 30, now + 9000)
+            recovered = evaluate_health("claude", now, previous_state="exhausted")
+            self.assertEqual("pressured", recovered["state"])
+
     def test_rate_limit_detection_uses_reset_evidence_or_default(self) -> None:
         limited, cooldown, evidence = rate_limit_cooldown(
             "kimi", "429 rate limit; try again in 2 hours", 100
@@ -129,6 +149,58 @@ class AgentQuotaBrokerTest(unittest.TestCase):
             "kimi": {"state": "pressured", "pressure": 95},
         })
         self.assertEqual("claude", result["provider"])
+
+    def test_unavailable_explicit_route_degrades_to_direct(self) -> None:
+        decision = {
+            "lane": "agent_jobs", "provider": "claude", "model_alias": "opus",
+            "fallback_provider": "", "fallback_model_alias": "",
+            "worker_profile": "", "reasons": ["explicit"],
+        }
+        result = enforce_provider_availability(decision, {
+            "claude": {"state": "exhausted", "used_percent": 99},
+        })
+        self.assertEqual("direct", result["lane"])
+        self.assertEqual("", result["provider"])
+        self.assertIn("exhausted", result["reasons"][-1])
+
+    def test_both_exhausted_default_routes_degrade_to_direct(self) -> None:
+        decision = {
+            "lane": "agent_jobs", "provider": "claude", "model_alias": "opus",
+            "fallback_provider": "kimi", "fallback_model_alias": "kimi-code/k3",
+            "reasons": ["static"],
+        }
+        result = rebalance_default_route(decision, {
+            "claude": {"state": "exhausted"},
+            "kimi": {"state": "rate_limited"},
+        })
+        self.assertEqual("direct", result["lane"])
+        self.assertEqual("", result["provider"])
+
+    def test_two_temporary_cooldowns_preserve_queued_recovery_route(self) -> None:
+        decision = {
+            "lane": "agent_jobs", "provider": "claude", "model_alias": "opus",
+            "fallback_provider": "kimi", "fallback_model_alias": "kimi-code/k3",
+            "reasons": ["static"],
+        }
+        result = rebalance_default_route(decision, {
+            "claude": {"state": "rate_limited"},
+            "kimi": {"state": "rate_limited"},
+        })
+        self.assertEqual("agent_jobs", result["lane"])
+        self.assertEqual("claude", result["provider"])
+
+    def test_exhausted_native_worker_degrades_to_direct(self) -> None:
+        decision = {
+            "lane": "native_subagent", "provider": "codex",
+            "model_alias": "gpt-5.3-codex-spark", "worker_profile": "spark-worker",
+            "fallback_provider": "", "fallback_model_alias": "",
+            "reasons": ["native"],
+        }
+        result = enforce_provider_availability(decision, {
+            "codex": {"state": "exhausted"},
+        })
+        self.assertEqual("direct", result["lane"])
+        self.assertEqual("", result["provider"])
 
     def test_expired_window_is_not_used_as_current_pressure(self) -> None:
         now = 30_000.0

@@ -16,6 +16,8 @@ DEFAULT_HISTORY_DIR = Path(
 ).expanduser()
 PRESSURE_ENTER = 85.0
 PRESSURE_EXIT = 70.0
+EXHAUSTED_ENTER = 98.0
+EXHAUSTED_EXIT = 95.0
 DEFAULT_STALE_SECONDS = 2 * 3600
 DEFAULT_COOLDOWN_SECONDS = 15 * 60
 RATE_LIMIT_PATTERNS = {
@@ -125,6 +127,7 @@ def read_codexbar_history(provider: str, now: float) -> dict[str, Any] | None:
         max(sample["used_percent"], sample["projected_percent"])
         for sample in considered
     )
+    used_percent = max(sample["used_percent"] for sample in considered)
     resets = [sample["resets_at"] for sample in active if sample["resets_at"] is not None]
     return {
         "provider": provider,
@@ -132,6 +135,7 @@ def read_codexbar_history(provider: str, now: float) -> dict[str, Any] | None:
         "captured_at": freshest,
         "resets_at": min(resets) if resets else None,
         "pressure": pressure,
+        "used_percent": used_percent,
         "windows": considered,
     }
 
@@ -182,12 +186,17 @@ def evaluate_health(
             "alert": f"quota telemetry is stale by {int(age)} seconds; static routing remains in effect",
         }
     pressure = float(telemetry["pressure"])
+    used_percent = float(telemetry["used_percent"])
+    exhausted = used_percent >= EXHAUSTED_ENTER or (
+        previous_state == "exhausted" and used_percent > EXHAUSTED_EXIT
+    )
     pressured = pressure >= PRESSURE_ENTER or (
-        previous_state in {"pressured", "rate_limited"} and pressure > PRESSURE_EXIT
+        previous_state in {"pressured", "rate_limited", "exhausted"}
+        and pressure > PRESSURE_EXIT
     )
     return {
         **telemetry,
-        "state": "pressured" if pressured else "available",
+        "state": "exhausted" if exhausted else "pressured" if pressured else "available",
         "cooldown_until": None,
         "alert": "",
     }
@@ -226,14 +235,24 @@ def rebalance_default_route(
     fallback = health.get(str(result["fallback_provider"]), {})
     primary_state = primary.get("state", "unknown")
     fallback_state = fallback.get("state", "unknown")
-    if primary_state not in {"pressured", "rate_limited"}:
+    if primary_state not in {"pressured", "rate_limited", "exhausted"}:
         if primary_state in {"stale", "unknown"} and primary.get("alert"):
             result["reasons"] = [*result["reasons"], str(primary["alert"])]
         return result
-    if fallback_state == "rate_limited":
+    if fallback_state in {"rate_limited", "exhausted"}:
+        if primary_state == "exhausted":
+            result.update(
+                lane="direct", provider="", model_alias="",
+                fallback_provider="", fallback_model_alias="",
+            )
+            result["reasons"] = [
+                *result["reasons"],
+                "both default providers are unavailable from quota exhaustion or cooldown; continuing directly",
+            ]
+            return result
         result["reasons"] = [
             *result["reasons"],
-            f"{result['provider']} is {primary_state}, but fallback {result['fallback_provider']} is rate limited",
+            f"{result['provider']} is {primary_state}, but fallback {result['fallback_provider']} is {fallback_state}",
         ]
         return result
     if fallback_state == "pressured" and primary_state == "pressured":
@@ -265,4 +284,26 @@ def rebalance_default_route(
         result["reasons"].append(
             f"{result['provider']} has {fallback_state} quota telemetry; provider failures still trigger cooldown"
         )
+    return result
+
+
+def enforce_provider_availability(
+    decision: dict[str, Any], health: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """Prevent explicit or escalated routes from selecting unavailable providers."""
+    result = dict(decision)
+    if result.get("lane") not in {"agent_jobs", "native_subagent"}:
+        return result
+    provider = str(result.get("provider") or "")
+    state = health.get(provider, {}).get("state", "unknown")
+    if state not in {"rate_limited", "exhausted"}:
+        return result
+    result.update(
+        lane="direct", provider="", model_alias="", worker_profile="",
+        fallback_provider="", fallback_model_alias="",
+    )
+    result["reasons"] = [
+        *result["reasons"],
+        f"quota enforcement rejected unavailable {provider} ({state}); continuing directly",
+    ]
     return result
