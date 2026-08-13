@@ -283,3 +283,13 @@
 - This fixes rejected jobs when macOS resolves both spellings to the same
   directory but Python path containment compares the submitted spelling.
 - Added a focused regression test and regenerated supervisor/client settings.
+## 2026-08-13 - Private organization migration
+
+- Transferred the repository from `minhnkn22/atum-agent-jobs` to the private
+  `anka-ventures-labs/atum-code-orchestrator` repository.
+- Kept the stable local install path, `agent-jobs` skill name, MCP interface,
+  supervisor state paths, and runtime identifiers unchanged so existing coding
+  surfaces continue to work after only their Git remote is updated.
+- Established `anka-ventures-labs/atum-code` as the private catalog and
+  integration umbrella. The orchestrator remains an independently versioned
+  component rather than being folded into a source monorepo.
