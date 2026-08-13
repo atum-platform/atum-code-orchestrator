@@ -1,5 +1,14 @@
 # Session Log
 
+## 2026-08-13 - Use the organization Actions runner
+
+- Moved repository tests from GitHub-hosted macOS to the private organization
+  ARM64 Mac Mini runner.
+- Added same-repository pull-request admission and cancellation of superseded
+  workflow runs.
+- Verification: validate the workflow with `actionlint`, run the 268-test local
+  suite, and confirm the migration PR reports runner `mac-mini-anka-labs`.
+
 ## 2026-08-13 - Separate queue and run timeouts
 
 - Added independent persisted `queue_timeout_seconds` and
