@@ -1,5 +1,14 @@
 # Session Log
 
+## 2026-08-13 - Use the organization Actions runner
+
+- Moved repository tests from GitHub-hosted macOS to the private organization
+  ARM64 Mac Mini runner.
+- Added same-repository pull-request admission and cancellation of superseded
+  workflow runs.
+- Verification: validate the workflow with `actionlint`, run the 268-test local
+  suite, and confirm the migration PR reports runner `mac-mini-anka-labs`.
+
 ## 2026-08-13 - Separate queue and run timeouts
 
 - Added independent persisted `queue_timeout_seconds` and
@@ -342,3 +351,11 @@
 - Established `anka-ventures-labs/atum-code` as the private catalog and
   integration umbrella. The orchestrator remains an independently versioned
   component rather than being folded into a source monorepo.
+# 2026-08-13: Use the self-hosted Python toolchain
+
+- Replaced `actions/setup-python` with the runner's managed `python3.11`.
+- The macOS setup action hard-codes the GitHub-hosted `/Users/runner` tool cache
+  and requires passwordless `sudo` when a version is not already cached, which
+  is incompatible with the least-privilege Mac Mini runner service.
+- Verified the runner has Homebrew Python 3.11 available; CI now checks that
+  prerequisite explicitly before creating its isolated virtual environment.

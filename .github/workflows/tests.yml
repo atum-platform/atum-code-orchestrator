@@ -8,17 +8,20 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    runs-on: macos-15
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64, mac-mini, local-ci]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - run: python -m venv .venv
+      - name: Verify runner Python
+        run: python3.11 --version
+      - run: python3.11 -m venv .venv
       - run: .venv/bin/python -m pip install -r requirements.txt
       - run: .venv/bin/python -m py_compile bootstrap.py tools/*.py
       - run: .venv/bin/python -m unittest discover -s tools/tests -v
