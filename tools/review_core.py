@@ -288,7 +288,9 @@ def job_submit(
     context_files: list[str] | None = None,
     context_text: str = "",
     expected_output: str = "",
-    timeout_seconds: int = 1800,
+    queue_timeout_seconds: int = 900,
+    run_timeout_seconds: int = 2700,
+    timeout_seconds: int | None = None,
     max_turns: int = 0,
     idempotency_key: str = "",
     label: str = "",
@@ -303,7 +305,9 @@ def job_submit(
     effective_owner = ":".join(part for part in (owner.strip(), label.strip()) if part)[:200]
     return submit(
         provider=provider, model=model, mode="readonly", workdir=str(cwd), prompt=prompt,
-        timeout_seconds=timeout_seconds, max_turns=max_turns, owner=effective_owner,
+        queue_timeout_seconds=queue_timeout_seconds,
+        run_timeout_seconds=(timeout_seconds if timeout_seconds is not None else run_timeout_seconds),
+        max_turns=max_turns, owner=effective_owner,
         idempotency_key=idempotency_key,
     )
 

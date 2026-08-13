@@ -31,7 +31,12 @@ def main() -> int:
     parser.add_argument("--mode", choices=("implement", "readonly"), required=True)
     parser.add_argument("--workdir", required=True)
     parser.add_argument("--prompt", required=True)
-    parser.add_argument("--timeout-seconds", type=int, default=900)
+    parser.add_argument("--queue-timeout-seconds", type=int, default=900)
+    parser.add_argument("--run-timeout-seconds", type=int, default=2700)
+    parser.add_argument(
+        "--timeout-seconds", type=int,
+        help="deprecated alias for --run-timeout-seconds",
+    )
     parser.add_argument(
         "--max-turns",
         type=int,
@@ -52,7 +57,12 @@ def main() -> int:
         job = submit(
             provider=args.provider, model=args.model, mode=args.mode,
             workdir=str(workdir), prompt=args.prompt,
-            timeout_seconds=args.timeout_seconds, max_turns=args.max_turns,
+            queue_timeout_seconds=args.queue_timeout_seconds,
+            run_timeout_seconds=(
+                args.timeout_seconds if args.timeout_seconds is not None
+                else args.run_timeout_seconds
+            ),
+            max_turns=args.max_turns,
             owner="agent-jobs:delegate",
         )
         job_id = str(job["job_id"])

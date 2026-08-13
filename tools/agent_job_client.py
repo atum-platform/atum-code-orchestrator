@@ -167,7 +167,12 @@ def _parser() -> argparse.ArgumentParser:
     submit_parser.add_argument("--mode", choices=("readonly", "implement"), required=True)
     submit_parser.add_argument("--workdir", required=True)
     submit_parser.add_argument("--prompt", required=True)
-    submit_parser.add_argument("--timeout-seconds", type=int, default=2700)
+    submit_parser.add_argument("--queue-timeout-seconds", type=int, default=900)
+    submit_parser.add_argument("--run-timeout-seconds", type=int, default=2700)
+    submit_parser.add_argument(
+        "--timeout-seconds", type=int,
+        help="deprecated alias for --run-timeout-seconds",
+    )
     submit_parser.add_argument(
         "--max-turns",
         type=int,

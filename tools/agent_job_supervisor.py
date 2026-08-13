@@ -47,6 +47,8 @@ MAX_PARTIAL_RESPONSE_BYTES = int(
 JOB_RETENTION_SECONDS = int(os.environ.get("AGENT_JOB_RETENTION_SECONDS", str(14 * 24 * 3600)))
 MIN_TIMEOUT_SECONDS = 30
 MAX_TIMEOUT_SECONDS = 7200
+DEFAULT_QUEUE_TIMEOUT_SECONDS = 15 * 60
+DEFAULT_RUN_TIMEOUT_SECONDS = 45 * 60
 DEFAULT_SOFT_STALL_SECONDS = int(os.environ.get("AGENT_JOB_SOFT_STALL_SECONDS", "300"))
 IMPLEMENT_TOKEN_PATH = Path(
     os.environ.get("AGENT_JOB_IMPLEMENT_TOKEN_FILE", str(STATE_DIR / "implement.token"))
@@ -98,6 +100,23 @@ class AlreadyRunning(RuntimeError):
 
 def _now() -> float:
     return time.time()
+
+
+def _queue_deadline(job: dict[str, Any]) -> float:
+    queue_timeout = job.get("queue_timeout_seconds")
+    if queue_timeout is None:
+        return float(job["created_at"]) + int(job["timeout_seconds"])
+    return float(job["created_at"]) + int(queue_timeout)
+
+
+def _run_deadline(job: dict[str, Any], started_at: float | None = None) -> float:
+    run_timeout = job.get("run_timeout_seconds")
+    if run_timeout is None:
+        return float(job["created_at"]) + int(job["timeout_seconds"])
+    anchor = started_at if started_at is not None else job.get("started_at")
+    if anchor is None:
+        anchor = _now()
+    return float(anchor) + int(run_timeout)
 
 
 def _json(value: Any) -> str:
@@ -272,6 +291,8 @@ class JobStore:
                 last_output_at REAL,
                 finished_at REAL,
                 timeout_seconds INTEGER NOT NULL,
+                queue_timeout_seconds INTEGER,
+                run_timeout_seconds INTEGER,
                 soft_stall_seconds INTEGER NOT NULL,
                 max_turns INTEGER NOT NULL,
                 pid INTEGER,
@@ -356,6 +377,8 @@ class JobStore:
                    WHERE provider IN ('claude', 'codex') AND execution_backend = 'native'"""
             )
         migrations = {
+            "queue_timeout_seconds": "INTEGER",
+            "run_timeout_seconds": "INTEGER",
             "requested_model": "TEXT NOT NULL DEFAULT ''",
             "last_event_at": "REAL",
             "last_event_kind": "TEXT NOT NULL DEFAULT ''",
@@ -422,7 +445,10 @@ class JobStore:
             existing = self.db.execute("SELECT * FROM jobs WHERE idempotency_key = ?", (key,)).fetchone()
             if existing:
                 job = dict(existing)
-                if job.get("request_hash") != spec["request_hash"]:
+                accepted_hashes = {
+                    str(spec["request_hash"]), str(spec.get("legacy_request_hash") or ""),
+                }
+                if str(job.get("request_hash") or "") not in accepted_hashes:
                     raise ValueError("Idempotency key was already used for a different job specification")
                 return job
         now = _now()
@@ -430,15 +456,17 @@ class JobStore:
             """INSERT INTO jobs (
                 job_id, provider, model, requested_model, mode, workdir, prompt, owner,
                 status, message,
-                created_at, updated_at, timeout_seconds, soft_stall_seconds,
+                created_at, updated_at, timeout_seconds, queue_timeout_seconds,
+                run_timeout_seconds, soft_stall_seconds,
                 max_turns, log_path, idempotency_key, request_hash, execution_backend,
                 semantic_stream
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 job_id, spec["provider"], spec["model"], spec.get("requested_model", ""),
                 spec["mode"], spec["workdir"],
                 spec["prompt"], spec.get("owner", ""), spec.get("message", ""), now, now,
                 spec["timeout_seconds"],
+                spec.get("queue_timeout_seconds"), spec.get("run_timeout_seconds"),
                 spec["soft_stall_seconds"], spec["max_turns"], str(log_path), key,
                 spec["request_hash"], spec.get("execution_backend", "native"),
                 int(spec.get("semantic_stream") or 0),
@@ -1002,9 +1030,7 @@ class Supervisor:
                 job["job_id"],
             ]
             env = _cao_bridge_env(provider)
-            env["AGENT_JOB_DEADLINE_EPOCH"] = str(
-                float(job["created_at"]) + int(job["timeout_seconds"])
-            )
+            env["AGENT_JOB_DEADLINE_EPOCH"] = str(_run_deadline(job))
             return argv, job["prompt"], env
         binary = self.binary_finder(provider)
         model = job["model"]
@@ -1048,6 +1074,12 @@ class Supervisor:
 
     def _public(self, job: dict[str, Any]) -> dict[str, Any]:
         result = {key: value for key, value in job.items() if key != "prompt"}
+        separate_timeouts = result.get("run_timeout_seconds") is not None
+        result["timeout_semantics"] = "separate" if separate_timeouts else "legacy_shared"
+        result["queue_deadline_at"] = _queue_deadline(result)
+        result["run_deadline_at"] = (
+            _run_deadline(result) if result.get("started_at") is not None else None
+        )
         summary = self.event_summaries.get(str(job["job_id"]))
         if summary:
             result.update(summary)
@@ -1453,10 +1485,10 @@ class Supervisor:
                     job_id, "cancelled", "cancelled", "Cancelled before provider launch",
                 )
                 return
-            if _now() >= float(job["created_at"]) + int(job["timeout_seconds"]):
+            if _now() >= _queue_deadline(job):
                 self._finish_job(
                     job_id, "failed", "queue_timeout",
-                    "Hard deadline reached before a provider slot became available",
+                    "Queue timeout reached before a provider slot became available",
                 )
                 return
             argv, stdin_text, env = self.command_builder(job)
@@ -1504,7 +1536,7 @@ class Supervisor:
                 asyncio.create_task(self._stream(job_id, "stdout", proc.stdout)),
                 asyncio.create_task(self._stream(job_id, "stderr", proc.stderr)),
             ]
-            deadline = float(job["created_at"]) + int(job["timeout_seconds"])
+            deadline = _run_deadline(job, started)
             outcome = "completed"
             failure_kind = ""
             message = ""
@@ -1517,7 +1549,11 @@ class Supervisor:
                     break
                 if _now() >= deadline:
                     outcome, failure_kind = "failed", "timeout"
-                    message = f"Hard deadline reached after {job['timeout_seconds']} seconds"
+                    run_timeout = job.get("run_timeout_seconds")
+                    if run_timeout is None:
+                        message = f"Legacy shared deadline reached after {job['timeout_seconds']} seconds"
+                    else:
+                        message = f"Run timeout reached after {run_timeout} seconds"
                     await self._terminate(proc)
                     break
                 if _now() >= next_heartbeat:
@@ -1589,6 +1625,12 @@ class Supervisor:
                 for job in self.store.queued():
                     job_id = job["job_id"]
                     provider = job["provider"]
+                    if _now() >= _queue_deadline(job):
+                        self._finish_job(
+                            job_id, "failed", "queue_timeout",
+                            "Queue timeout reached before a provider slot became available",
+                        )
+                        continue
                     if job_id in self.tasks or active[provider] >= effective_limits[provider]:
                         continue
                     if not self.store.claim(job_id):
@@ -1679,19 +1721,36 @@ class Supervisor:
         if not prompt.strip() or len(prompt.encode("utf-8")) > MAX_PROMPT_BYTES:
             raise ValueError(f"Prompt must contain 1 to {MAX_PROMPT_BYTES} UTF-8 bytes")
         workdir = _safe_workdir(str(payload.get("workdir") or ""))
-        timeout = max(MIN_TIMEOUT_SECONDS, min(int(payload.get("timeout_seconds") or 2700), MAX_TIMEOUT_SECONDS))
+        legacy_timeout = payload.get("timeout_seconds")
+        requested_run_timeout = payload.get("run_timeout_seconds")
+        run_timeout = max(MIN_TIMEOUT_SECONDS, min(
+            int(legacy_timeout if legacy_timeout is not None else
+                requested_run_timeout if requested_run_timeout is not None else DEFAULT_RUN_TIMEOUT_SECONDS),
+            MAX_TIMEOUT_SECONDS,
+        ))
+        queue_timeout = max(MIN_TIMEOUT_SECONDS, min(
+            int(payload.get("queue_timeout_seconds") or DEFAULT_QUEUE_TIMEOUT_SECONDS),
+            MAX_TIMEOUT_SECONDS,
+        ))
         requested_max_turns = int(payload.get("max_turns") or 0)
         max_turns = 0 if requested_max_turns <= 0 else min(requested_max_turns, 10_000)
         if execution_backend == "cao" and mode == "readonly" and provider == "codex":
             raise ValueError("CAO cannot enforce read-only Codex execution; use the native backend")
         if execution_backend == "cao" and max_turns > 0:
             raise ValueError("CAO does not support an explicit provider turn ceiling")
-        soft_stall = max(30, min(int(payload.get("soft_stall_seconds") or DEFAULT_SOFT_STALL_SECONDS), timeout))
+        soft_stall = max(30, min(
+            int(payload.get("soft_stall_seconds") or DEFAULT_SOFT_STALL_SECONDS),
+            run_timeout,
+        ))
         spec = {
             "provider": provider, "model": model, "requested_model": requested_model,
             "mode": mode, "workdir": str(workdir),
             "prompt": prompt, "owner": owner, "message": model_message,
-            "timeout_seconds": timeout, "soft_stall_seconds": soft_stall, "max_turns": max_turns,
+            # timeout_seconds remains the public compatibility alias for the run budget.
+            "timeout_seconds": run_timeout,
+            "queue_timeout_seconds": queue_timeout,
+            "run_timeout_seconds": run_timeout,
+            "soft_stall_seconds": soft_stall, "max_turns": max_turns,
             "execution_backend": execution_backend,
             "semantic_stream": int(
                 execution_backend == "native"
@@ -1702,11 +1761,18 @@ class Supervisor:
         }
         hash_fields = {key: spec[key] for key in (
             "provider", "model", "requested_model", "mode", "workdir", "prompt",
-            "timeout_seconds", "max_turns",
+            "queue_timeout_seconds", "run_timeout_seconds", "max_turns",
             "execution_backend",
             "semantic_stream",
         )}
         spec["request_hash"] = hashlib.sha256(_json(hash_fields).encode("utf-8")).hexdigest()
+        legacy_hash_fields = {key: spec[key] for key in (
+            "provider", "model", "requested_model", "mode", "workdir", "prompt",
+            "timeout_seconds", "max_turns", "execution_backend", "semantic_stream",
+        )}
+        spec["legacy_request_hash"] = hashlib.sha256(
+            _json(legacy_hash_fields).encode("utf-8")
+        ).hexdigest()
         job_id = str(uuid.uuid4())
         log_path = self.log_dir / f"{job_id}.log"
         job = self.store.create(spec, job_id, log_path)

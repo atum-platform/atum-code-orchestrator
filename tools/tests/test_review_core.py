@@ -80,6 +80,8 @@ class ReviewCoreTest(unittest.IsolatedAsyncioTestCase):
         kwargs = mocked.call_args.kwargs
         self.assertEqual("readonly", kwargs["mode"])
         self.assertEqual("checkpoint-kimi", kwargs["idempotency_key"])
+        self.assertEqual(900, kwargs["queue_timeout_seconds"])
+        self.assertEqual(2700, kwargs["run_timeout_seconds"])
         self.assertNotIn("implement_capability", kwargs)
 
     async def test_mcp_surface_has_only_guarded_generic_tools(self) -> None:
@@ -106,7 +108,8 @@ class ReviewCoreTest(unittest.IsolatedAsyncioTestCase):
             "instructions": "review", "workdir": str(self.workdir),
             "context_git_diff": True, "context_git_base": "HEAD",
             "context_files": None, "context_text": "", "expected_output": "findings",
-            "timeout_seconds": 600, "max_turns": 10, "idempotency_key": "same",
+            "queue_timeout_seconds": 300, "run_timeout_seconds": 600,
+            "timeout_seconds": None, "max_turns": 10, "idempotency_key": "same",
             "label": "checkpoint", "owner": "test",
         }
         with patch.object(review_core, "job_submit", side_effect=fake_submit):

@@ -25,9 +25,9 @@ only. This standalone repository does not ship those mode-heavy MCP servers.
 
 ## Lifecycle
 
-1. A caller submits `provider`, optional Kimi `model`, `mode`, `workdir`, `prompt`, an
-   idempotency key, and a submit-relative hard deadline over the user-only Unix
-   socket.
+1. A caller submits `provider`, optional Kimi `model`, `mode`, `workdir`, `prompt`,
+   an idempotency key, and independent queue and run timeouts over the user-only
+   Unix socket.
 2. The daemon validates the workdir, model, prompt size, recursion depth, and
    provider, then persists a queued job in SQLite before returning its ID. A
    blank Kimi model defaults to `kimi-code/k3`; supported aliases are
@@ -51,6 +51,14 @@ only. This standalone repository does not ship those mode-heavy MCP servers.
 8. Every terminal transition with a non-empty owner creates one durable inbox
    delivery. Reads redeliver until that exact owner acknowledges it.
 
+New jobs default to a 15-minute `queue_timeout_seconds` budget measured from
+submission and a 45-minute `run_timeout_seconds` budget measured from provider
+launch. Both accept 30 seconds through two hours. The deprecated
+`timeout_seconds` input remains an alias for the run budget. Existing rows that
+predate the split retain their original submit-relative shared deadline and
+report `timeout_semantics=legacy_shared`; new rows report `separate` plus
+`queue_deadline_at` and, after launch, `run_deadline_at`.
+
 Silence does not automatically kill a job. `lifecycle_status` is the persisted
 authority; `activity` reports `starting`, `streaming`, `reasoning`,
 `tool_running:<name>`, `waiting_on_provider`, `idle_unknown`, or `terminal`.
@@ -58,8 +66,9 @@ authority; `activity` reports `starting`, `streaming`, `reasoning`,
 the oldest tool name. Provider-declared waiting is bounded by the same soft
 silence threshold and becomes `idle_unknown` if no further progress arrives.
 For compatibility, `status` can still report `possibly_stalled` while the
-persisted lifecycle remains `running`. Only cancellation or the submit-relative
-hard deadline terminates work. Time spent queued counts against that deadline.
+persisted lifecycle remains `running`. Only cancellation or the applicable
+queue/run deadline terminates work. Queue time never consumes a new job's run
+budget.
 
 ## Installation
 
@@ -262,7 +271,7 @@ means the selected provider/backend does not have a semantic response adapter.
   past the threshold and no tool is open. This is diagnostic, not terminal;
   inspect `lifecycle_status`, `activity`, and `seconds_without_progress`.
 - `completed`: provider exited zero.
-- `failed`: launch error, provider non-zero exit, or hard deadline.
+- `failed`: queue timeout, launch error, provider non-zero exit, or run timeout.
 - `cancelled`: caller requested cancellation.
 - `interrupted`: the supervisor stopped or restarted during execution.
 

@@ -1,5 +1,25 @@
 # Session Log
 
+## 2026-08-13 - Separate queue and run timeouts
+
+- Added independent persisted `queue_timeout_seconds` and
+  `run_timeout_seconds` budgets. Queue time begins at submission; run time begins
+  only after provider launch.
+- Set new defaults to 15 minutes queued and 45 minutes running, each bounded to
+  30 seconds through two hours. Retained `timeout_seconds` as a deprecated alias
+  for the run budget.
+- Preserved legacy persisted jobs with their original submit-relative shared
+  deadline instead of rewriting live semantics during migration.
+- Added proactive queue expiry, explicit deadline/status fields, idempotency
+  compatibility with pre-migration jobs, client/CLI parameters, and regressions
+  covering independent clocks and legacy behavior.
+- Verification: Python compilation and all 268 repository tests pass; `git
+  diff --check` is clean.
+- Review: the routed Kimi K3 assembly review produced no review output after 18
+  minutes and was cancelled after process-level inspection. The enforced
+  one-hop route returned `direct`; the local assembly review found no merge
+  blocker.
+
 ## 2026-08-13 - Preserve explicit provider overrides
 
 - Corrected terminal quota handling so exhaustion blocks only automatic

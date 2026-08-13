@@ -23,7 +23,12 @@ def _parser() -> argparse.ArgumentParser:
     submit.add_argument("--context-file", action="append", dest="context_files")
     submit.add_argument("--context-text", default="")
     submit.add_argument("--expected-output", default="")
-    submit.add_argument("--timeout-seconds", type=int, default=1800)
+    submit.add_argument("--queue-timeout-seconds", type=int, default=900)
+    submit.add_argument("--run-timeout-seconds", type=int, default=2700)
+    submit.add_argument(
+        "--timeout-seconds", type=int,
+        help="deprecated alias for --run-timeout-seconds",
+    )
     submit.add_argument(
         "--max-turns",
         type=int,
