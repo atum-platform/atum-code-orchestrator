@@ -23,8 +23,10 @@ unverified authority.
 
 The supervisor exposes a versioned `route_decide` protocol. Follow its lane only
 when `enforced=true`; `mode=shadow` is telemetry and creates no reservation.
-During the first canary, only Codex-on-Codex decisions can be enforced. The table
-below remains the fail-open policy for shadow responses or supervisor outage.
+In `codex_canary`, decisions are enforced for Codex callers on the Codex surface,
+including Codex routes to Claude or Kimi. `surface_canary` extends v2 enforcement
+to supported Claude and Kimi coding surfaces. The table below remains the
+fail-open policy for shadow responses or supervisor outage.
 
 Call `route_decide` before every cross-agent `job_submit`, not only before native
 Codex work. Pass protocol v2, a stable task/session ID, the actual capability,
@@ -95,9 +97,10 @@ returns `direct`, so the primary continues the work itself.
    state; the caller does not need to generate repeated socket polls.
 5. Treat `possibly_stalled` as alive but quiet. Cancel only after inspecting status,
    elapsed time, and the hard deadline.
-6. On primary provider failure, report `escalated`, request the one-hop route,
-   then submit its returned provider/model as a new job. Record both job IDs and
-   both decision IDs.
+6. On failure of an enforced v2 route, report `escalated`, request the one-hop
+   route, then submit its returned provider/model as a new job. Record both job
+   IDs and both decision IDs. For a shadow route or supervisor outage, submit the
+   static-table fallback as a new job instead; no enforceable parent exists.
 7. Verify every finding against repository evidence and run checks yourself.
 
 For work that outlives the calling task, query `job_inbox` with the exact owner
@@ -124,7 +127,8 @@ otherwise healthy run after its tokens have already been spent.
   `route_reconcile`, `route_status`, `job_submit`, `job_read`, `job_list`,
   `job_cancel`, and `job_inbox` from the `agent-jobs` server.
 - **Claude or a shell-only session:** run `scripts/review.py` with the equivalent
-  `submit`, `read`, `list`, `cancel`, or `inbox` arguments.
+  `route-decide`, `route-feedback`, `route-reconcile`, `route-status`, `submit`,
+  `read`, `list`, `cancel`, or `inbox` arguments.
 
 Both review bindings use the same safety core. Explicit implementation goes
 directly to the supervisor's capability-gated write path. Read

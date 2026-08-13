@@ -10,6 +10,12 @@
   static Opus/Kimi preference text.
 - Updated the shared skill and client contract to require route-first durable
   submissions, terminal feedback, and one-hop rerouting after provider failure.
+- Kimi K3's primary review held the change for two wording gaps. Restored the
+  static fallback path for shadow/outage failures, clarified canary enforcement
+  by caller surface, documented shell routing commands, and added an in-place
+  managed-block upgrade regression test.
+- Verified the corrected route-first contract with 256 repository tests, Python
+  bytecode compilation, and `git diff --check`.
 
 ## 2026-08-13 - One-hop routing escalation P5
 
