@@ -7,7 +7,7 @@ from typing import Any
 
 PROTOCOL_VERSION = 2
 SUPPORTED_PROTOCOL_VERSIONS = {1, 2}
-POLICY_VERSION = "2026-08-13.2"
+POLICY_VERSION = "2026-08-13.3"
 CAPABILITY_MATRIX_VERSION = "2026-08-13.1"
 ROUTING_MODES = {"shadow", "codex_canary", "surface_canary"}
 
@@ -201,7 +201,7 @@ def apply_one_hop_escalation(
         escalated.update(lane="direct", provider="", model_alias="", worker_profile="")
     elif escalated["lane"] == "agent_jobs" and escalated["provider"] == previous_provider:
         fallback = str(escalated.get("fallback_provider") or "")
-        if fallback and health.get(fallback, {}).get("state") != "rate_limited":
+        if fallback and health.get(fallback, {}).get("state") not in {"rate_limited", "exhausted"}:
             escalated.update(
                 provider=fallback,
                 model_alias=str(escalated.get("fallback_model_alias") or ""),

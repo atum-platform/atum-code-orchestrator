@@ -1210,6 +1210,9 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, self.supervisor._effective_provider_limits({
             "claude": {"state": "pressured"},
         })["claude"])
+        self.assertEqual(0, self.supervisor._effective_provider_limits({
+            "claude": {"state": "exhausted"},
+        })["claude"])
 
         self.supervisor._capacity_health = {"claude": {"state": "rate_limited"}}
         self.supervisor._capacity_health_refresh_at = time.time() + 60
@@ -1272,6 +1275,35 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(3, self.supervisor._effective_provider_limits({
             "claude": {"state": "stale"},
         })["claude"])
+
+    async def test_exhaustion_holds_queued_job_without_dynamic_concurrency(self) -> None:
+        self.supervisor.quota_routing_enabled = True
+        self.supervisor.dynamic_concurrency_enabled = False
+        self.supervisor.provider_limits["claude"] = 1
+        now = time.time()
+        quota_dir = Path(os.environ["AGENT_JOB_QUOTA_HISTORY_DIR"])
+        quota_dir.mkdir(parents=True)
+        iso = lambda value: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(value))
+        (quota_dir / "claude.json").write_text(json.dumps({
+            "preferredAccountKey": "test",
+            "accounts": {"test": [{
+                "name": "weekly", "windowMinutes": 10080,
+                "entries": [{
+                    "capturedAt": iso(now), "resetsAt": iso(now + 3600),
+                    "usedPercent": 99,
+                }],
+            }]},
+        }), encoding="utf-8")
+        self.supervisor.store.create({
+            "provider": "claude", "model": "opus", "requested_model": "opus",
+            "mode": "readonly", "workdir": str(self.workdir), "prompt": "complete",
+            "owner": "", "message": "", "timeout_seconds": 60,
+            "soft_stall_seconds": 30, "max_turns": 0, "execution_backend": "native",
+            "semantic_stream": 0, "idempotency_key": "", "request_hash": "queued",
+        }, "pre-exhaustion-job", Path(self.temp.name) / "queued.log")
+        await asyncio.sleep(.4)
+        held = await self.call({"action": "read", "job_id": "pre-exhaustion-job"})
+        self.assertEqual("queued", held["job"]["status"])
 
     async def test_route_status_reports_dynamic_slots_and_native_feedback_gate(self) -> None:
         self.supervisor.quota_routing_enabled = True
@@ -1901,6 +1933,36 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("kimi", balanced["provider"])
         self.assertEqual("claude", balanced["fallback_provider"])
         self.assertEqual("claude", explicit["provider"])
+
+    async def test_exhausted_provider_blocks_explicit_route_and_direct_submit(self) -> None:
+        now = time.time()
+        quota_dir = Path(os.environ["AGENT_JOB_QUOTA_HISTORY_DIR"])
+        quota_dir.mkdir(parents=True)
+        iso = lambda value: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(value))
+        (quota_dir / "claude.json").write_text(json.dumps({
+            "preferredAccountKey": "test",
+            "accounts": {"test": [{
+                "name": "weekly", "windowMinutes": 10080,
+                "entries": [{
+                    "capturedAt": iso(now), "resetsAt": iso(now + 9000),
+                    "usedPercent": 99,
+                }],
+            }]},
+        }), encoding="utf-8")
+        self.supervisor.quota_routing_enabled = True
+        self.supervisor.routing_mode = "surface_canary"
+
+        decision = await self.call({
+            "action": "route_decide", "protocol_version": 2,
+            "caller_provider": "codex", "surface": "codex",
+            "capability": "planning", "explicit_provider": "claude",
+            "explicit_model": "opus", "session_id": "exhausted-explicit",
+            "surface_capabilities": {"durable_agent_jobs": True},
+        })
+        self.assertEqual("direct", decision["lane"])
+        self.assertEqual("", decision["provider"])
+        with self.assertRaisesRegex(RuntimeError, "claude is unavailable from quota exhausted"):
+            await self.call(self.spec("complete"))
 
     def codex_native_route(self, session_id: str) -> dict[str, object]:
         return {

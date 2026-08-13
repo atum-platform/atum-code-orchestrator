@@ -67,6 +67,9 @@ model alias exactly. It may have rebalanced the static table using fresh local
 quota evidence and canonical rate-limit cooldowns. Do not duplicate pressure
 math in the skill or override an explicit user target. Stale or missing quota
 telemetry is fail-open to the static table and appears in `route_status` alerts.
+Fresh actual utilization at or above the supervisor's exhaustion threshold is
+fail-closed for that provider, including explicit targets and one-hop fallbacks;
+continue directly or use the enforced alternate instead of bypassing admission.
 
 ## Route focused Codex work
 

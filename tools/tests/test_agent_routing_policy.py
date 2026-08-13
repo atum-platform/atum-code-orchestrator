@@ -133,6 +133,12 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         self.assertEqual("direct", unavailable["lane"])
         self.assertEqual("", unavailable["provider"])
 
+        exhausted = apply_one_hop_escalation(
+            decision, {"provider": "claude"}, {"kimi": {"state": "exhausted"}},
+        )
+        self.assertEqual("direct", exhausted["lane"])
+        self.assertEqual("", exhausted["provider"])
+
     def test_explicit_escalation_target_still_excludes_parent_provider(self) -> None:
         intent = self.intent("codex", "planning")
         intent.update(

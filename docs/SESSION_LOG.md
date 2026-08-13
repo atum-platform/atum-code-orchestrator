@@ -1,5 +1,25 @@
 # Session Log
 
+## 2026-08-13 - Enforce terminal quota exhaustion
+
+- Traced live Opus calls despite Claude's 99% weekly usage. Default calls were
+  routing correctly to Kimi, but Codex sessions marked their own reviewer
+  preference as `explicit_provider=claude`, which intentionally bypassed the
+  pressure balancer; one-hop fallback also allowed pressured providers.
+- Added a distinct `exhausted` provider state based on actual utilization at
+  98% or above, with recovery below 95%. Projected pressure remains advisory.
+- Made exhaustion a hard boundary across default routing, explicit targets,
+  one-hop escalation, dynamic concurrency, and direct job submission.
+- Cancelled the sole active Opus job after confirming it had no partial result.
+- Verification: all 260 repository tests pass under the supported project
+  virtual environment, along with Python bytecode compilation and
+  `git diff --check`. Kimi K3's assembly review found two pre-ship issues:
+  queued jobs were only held under dynamic concurrency, and two temporary
+  cooldowns degraded to direct instead of retaining automatic recovery. Both
+  were corrected, with additional native-worker and scheduler regressions.
+  The corrected focused suite passes 147 tests. Live supervisor restart and
+  admission probes remain.
+
 ## 2026-08-13 - Require routing before cross-agent submission
 
 - Diagnosed live Codex design jobs that submitted Opus directly despite the
