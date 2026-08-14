@@ -15,7 +15,7 @@ concurrency:
 jobs:
   test:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, macOS, ARM64, mac-mini, local-ci]
+    runs-on: [self-hosted, portable-ci, local-ci]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
