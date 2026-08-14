@@ -359,3 +359,13 @@
   is incompatible with the least-privilege Mac Mini runner service.
 - Verified the runner has Homebrew Python 3.11 available; CI now checks that
   prerequisite explicitly before creating its isolated virtual environment.
+
+## 2026-08-14 - Portable runner priority
+
+- Replaced the Mac Mini hardware and macOS constraints with `portable-ci`.
+- The capability prefers the dedicated ASUS Linux runner, then dynamically
+  exposes the MacBook and Mac Mini while earlier runners are busy or offline.
+- Preserved the managed `python3.11` contract. ASUS provides Python 3.11 through
+  the same stable command name and runs the workflow under the non-sudo
+  `gha-runner` account.
+- Fork-origin pull requests remain rejected before self-hosted assignment.
