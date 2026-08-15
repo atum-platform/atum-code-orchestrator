@@ -14,6 +14,8 @@ later default code-review routes tried Kimi again.
 - Use a 24-hour cooldown when Kimi supplies no reset timestamp. This limits the
   system to one recovery probe per day while still allowing automatic recovery.
 - Cover both broker parsing and supervisor persistence with regression tests.
+- Read CodexBar's `unscoped` history bucket when no account-scoped history is
+  present. Kimi history currently uses this shape.
 
 ## Verification
 
@@ -24,5 +26,5 @@ Python 3.14 SQLite `ResourceWarning` messages but no test failures.
 ## Follow-up
 
 CodexBar currently writes quota history for Claude and Codex only on this
-machine. Once Kimi history is available, ACO will use its reset timestamps and
-pressure instead of daily failure probes.
+machine unless plan-history tracking is enabled. It is now enabled on both Macs;
+ACO reads Kimi's unscoped history and uses its pressure and reset timestamp.

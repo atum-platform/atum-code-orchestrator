@@ -24,24 +24,24 @@ from agent_quota_broker import (  # noqa: E402
 class AgentQuotaBrokerTest(unittest.TestCase):
     def write_history(
         self, root: Path, provider: str, used: float, captured: float,
-        reset: float, window_minutes: int = 300,
+        reset: float, window_minutes: int = 300, unscoped: bool = False,
     ) -> None:
         root.mkdir(parents=True, exist_ok=True)
         iso = lambda value: datetime.fromtimestamp(value, timezone.utc).isoformat()
+        windows = [{
+            "name": "session",
+            "windowMinutes": window_minutes,
+            "entries": [{
+                "capturedAt": iso(captured),
+                "resetsAt": iso(reset),
+                "usedPercent": used,
+            }],
+        }]
         payload = {
             "version": 1,
             "preferredAccountKey": "account",
-            "accounts": {
-                "account": [{
-                    "name": "session",
-                    "windowMinutes": window_minutes,
-                    "entries": [{
-                        "capturedAt": iso(captured),
-                        "resetsAt": iso(reset),
-                        "usedPercent": used,
-                    }],
-                }],
-            },
+            "accounts": {} if unscoped else {"account": windows},
+            "unscoped": windows if unscoped else [],
         }
         (root / f"{provider}.json").write_text(json.dumps(payload), encoding="utf-8")
 
@@ -77,6 +77,19 @@ class AgentQuotaBrokerTest(unittest.TestCase):
                 "stale", evaluate_health("codex", now, stale_seconds=300)["state"]
             )
             self.assertEqual("unknown", evaluate_health("kimi", now)["state"])
+
+    def test_unscoped_provider_history_is_consumed(self) -> None:
+        now = 25_000.0
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(
+            os.environ, {"AGENT_JOB_QUOTA_HISTORY_DIR": temporary}
+        ):
+            self.write_history(
+                Path(temporary), "kimi", 100, now - 30, now + 3600,
+                unscoped=True,
+            )
+            health = evaluate_health("kimi", now)
+        self.assertEqual("exhausted", health["state"])
+        self.assertEqual("codexbar", health["source"])
 
     def test_active_failure_cooldown_overrides_cache(self) -> None:
         health = evaluate_health("kimi", 100, cooldown_until=200)

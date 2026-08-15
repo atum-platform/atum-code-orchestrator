@@ -300,6 +300,11 @@ print(json.dumps({"role": "meta", "type": "system.version", "version": "0.34.0"}
 print("usage limit reached", file=sys.stderr, flush=True)
 raise SystemExit(1)
 """
+    elif prompt == "kimi-billing-cycle-fail":
+        script = """import sys
+print("403 You've reached your usage limit for this billing cycle. Your quota will be refreshed in the next cycle.", file=sys.stderr, flush=True)
+raise SystemExit(1)
+"""
     elif prompt == "quota-subject-fail":
         script = """import sys
 print("reviewing quota and 429 handling", flush=True)
@@ -785,17 +790,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("rate_limited", status["provider_health"]["kimi"]["state"])
 
     async def test_current_kimi_billing_cycle_error_records_rate_limit(self) -> None:
-        fixture = self.bin_dir / "kimi-billing-cycle-fail"
-        fixture.write_text(
-            "#!/bin/sh\n"
-            "echo \"403 You've reached your usage limit for this billing cycle. "
-            "Your quota will be refreshed in the next cycle.\" >&2\n"
-            "exit 1\n",
-            encoding="utf-8",
-        )
-        fixture.chmod(0o755)
         self.supervisor.quota_routing_enabled = True
-        self.supervisor.binary_finder = lambda _provider: str(fixture)
         spec = self.spec("kimi-billing-cycle-fail")
         spec["provider"] = "kimi"
         submitted = await self.call(spec)
