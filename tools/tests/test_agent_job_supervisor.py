@@ -784,6 +784,26 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         status = await self.call({"action": "route_status"})
         self.assertEqual("rate_limited", status["provider_health"]["kimi"]["state"])
 
+    async def test_current_kimi_billing_cycle_error_records_rate_limit(self) -> None:
+        fixture = self.bin_dir / "kimi-billing-cycle-fail"
+        fixture.write_text(
+            "#!/bin/sh\n"
+            "echo \"403 You've reached your usage limit for this billing cycle. "
+            "Your quota will be refreshed in the next cycle.\" >&2\n"
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        fixture.chmod(0o755)
+        self.supervisor.quota_routing_enabled = True
+        self.supervisor.binary_finder = lambda _provider: str(fixture)
+        spec = self.spec("kimi-billing-cycle-fail")
+        spec["provider"] = "kimi"
+        submitted = await self.call(spec)
+        result = await self.wait_for(str(submitted["job_id"]), {"failed"})
+        self.assertEqual("rate_limit", result["job"]["failure_kind"])
+        status = await self.call({"action": "route_status"})
+        self.assertEqual("rate_limited", status["provider_health"]["kimi"]["state"])
+
     async def test_quota_feature_off_preserves_legacy_failure_kind(self) -> None:
         spec = self.spec("kimi-quota-fail")
         spec["provider"] = "kimi"
