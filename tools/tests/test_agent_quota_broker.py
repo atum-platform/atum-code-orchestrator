@@ -113,6 +113,17 @@ class AgentQuotaBrokerTest(unittest.TestCase):
             (False, None, ""), rate_limit_cooldown("kimi", "syntax error", 100)
         )
 
+    def test_kimi_billing_cycle_exhaustion_uses_daily_probe_cooldown(self) -> None:
+        limited, cooldown, evidence = rate_limit_cooldown(
+            "kimi",
+            "403 You've reached your usage limit for this billing cycle. "
+            "Your quota will be refreshed in the next cycle.",
+            100,
+        )
+        self.assertTrue(limited)
+        self.assertEqual(86_500, cooldown)
+        self.assertIn("billing cycle", evidence)
+
     def test_retry_interval_must_be_near_provider_signature(self) -> None:
         text = "rate limit reached\n" + ("x" * 600) + "try again in 2 hours"
         limited, cooldown, _ = rate_limit_cooldown(
