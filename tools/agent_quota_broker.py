@@ -67,11 +67,13 @@ def _latest_windows(path: Path) -> list[dict[str, Any]]:
         return []
     accounts = payload.get("accounts")
     if not isinstance(accounts, dict):
-        return []
+        accounts = {}
     preferred = str(payload.get("preferredAccountKey") or "")
     windows = accounts.get(preferred)
     if not isinstance(windows, list) and accounts:
         windows = next(iter(accounts.values()))
+    if not isinstance(windows, list):
+        windows = payload.get("unscoped")
     return windows if isinstance(windows, list) else []
 
 
