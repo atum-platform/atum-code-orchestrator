@@ -46,6 +46,7 @@ PROVIDER_CAPABILITY_MATRIX = {
     "claude": {
         "deep_model": "opus",
         "standard_model": "sonnet",
+        "fast_model": "sonnet",
         "explicit_only_models": ["fable"],
         "strengths": ["planning", "architecture", "design", "product", "copywriting", "research", "code_review"],
     },
@@ -74,12 +75,6 @@ CALLER_SURFACES = {
 ENGINEERING_CAPABILITIES = {"implementation", "exploration", "tests"}
 THINKING_CAPABILITIES = {
     "planning", "architecture", "design", "product", "copywriting", "research",
-}
-PRIMARY_CAPABILITIES = {
-    "codex": ENGINEERING_CAPABILITIES,
-    "claude": THINKING_CAPABILITIES,
-    "kimi": ENGINEERING_CAPABILITIES,
-    "hermes": set(),
 }
 NATIVE_CAPABILITIES = {
     "codex": ENGINEERING_CAPABILITIES,
@@ -130,10 +125,8 @@ def _default_targets(caller: str, capability: str) -> tuple[str, str]:
 
 def _native_model_alias(caller: str, intent: dict[str, Any]) -> str:
     if intent["protocol_version"] == 1:
-        return "codex_fast" if caller == "codex" else LEGACY_MODEL_ALIASES[caller]
-    if caller == "codex":
-        return PROVIDER_CAPABILITY_MATRIX[caller]["fast_model"]
-    return _model_alias(caller, intent)
+        return "codex_fast"
+    return PROVIDER_CAPABILITY_MATRIX[caller]["fast_model"]
 
 
 def normalize_intent(intent: dict[str, Any]) -> dict[str, Any]:

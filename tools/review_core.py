@@ -291,10 +291,13 @@ def job_submit(
     queue_timeout_seconds: int = 900,
     run_timeout_seconds: int = 2700,
     timeout_seconds: int | None = None,
+    max_turns: int = 0,
     idempotency_key: str = "",
     label: str = "",
     owner: str = "",
 ) -> dict[str, Any]:
+    # Accepted for one compatibility window; run deadlines are the only ceiling.
+    del max_turns
     cwd = safe_workdir(workdir)
     prompt = build_review_prompt(
         provider, instructions, workdir=cwd, context_git_diff=context_git_diff,

@@ -242,7 +242,7 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         self.assertTrue(decision["effective_surface_capabilities"]["native_subagents"])
         self.assertEqual("native_subagent", decision["lane"])
         self.assertEqual("claude", decision["provider"])
-        self.assertEqual("opus", decision["model_alias"])
+        self.assertEqual("sonnet", decision["model_alias"])
         self.assertEqual("general-purpose", decision["worker_profile"])
 
     def test_claude_desktop_rejects_unsupported_native_claim(self) -> None:
@@ -272,7 +272,7 @@ class AgentRoutingPolicyTest(unittest.TestCase):
 
         self.assertEqual("native_subagent", decision["lane"])
         self.assertEqual("kimi", decision["provider"])
-        self.assertEqual("kimi-code/kimi-for-coding", decision["model_alias"])
+        self.assertEqual("kimi-code/kimi-for-coding-highspeed", decision["model_alias"])
         self.assertEqual("general-purpose", decision["worker_profile"])
 
     def test_surface_must_belong_to_caller(self) -> None:
@@ -300,6 +300,27 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         decision = decide(intent, "surface_canary")
         self.assertEqual("codex", decision["provider"])
         self.assertEqual("gpt-5.6-sol", decision["model_alias"])
+
+    def test_code_review_remains_cross_family_for_every_coding_surface(self) -> None:
+        for caller, expected_provider in (
+            ("codex", "kimi"), ("claude", "codex"), ("kimi", "codex")
+        ):
+            with self.subTest(caller=caller):
+                intent = self.intent(caller, "code_review")
+                intent.update(
+                    protocol_version=2,
+                    complexity="focused",
+                    risk="low",
+                    duration="short",
+                    durability="session",
+                    session_id=f"{caller}-review",
+                    surface_capabilities={
+                        "durable_agent_jobs": True, "native_subagents": True,
+                    },
+                )
+                decision = decide(intent, "surface_canary")
+                self.assertEqual("agent_jobs", decision["lane"])
+                self.assertEqual(expected_provider, decision["provider"])
 
     def test_recursive_direct_route_has_no_model_alias(self) -> None:
         intent = self.intent("codex", "planning")

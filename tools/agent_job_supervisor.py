@@ -123,13 +123,16 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-def _bounded_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
-    raw = os.environ.get(name, str(default))
+def _bounded_int_value(name: str, raw: str, minimum: int, maximum: int) -> int:
     try:
         value = int(raw)
     except ValueError:
         raise ValueError(f"{name} must be an integer, got {raw!r}") from None
     return max(minimum, min(value, maximum))
+
+
+def _bounded_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
+    return _bounded_int_value(name, os.environ.get(name, str(default)), minimum, maximum)
 
 
 def _boolean_env(name: str, default: bool = False) -> bool:
@@ -949,8 +952,14 @@ class Supervisor:
         self.routing_mode = os.environ.get("AGENT_JOB_ROUTING_MODE", "shadow").strip().lower()
         if self.routing_mode not in {"shadow", "codex_canary", "surface_canary"}:
             raise ValueError(f"Unsupported AGENT_JOB_ROUTING_MODE: {self.routing_mode}")
-        self.native_reservation_limit = _bounded_int_env(
-            "AGENT_JOB_CODEX_NATIVE_RESERVATIONS", 3, 1, 32
+        native_limit_name = (
+            "AGENT_JOB_NATIVE_RESERVATIONS"
+            if "AGENT_JOB_NATIVE_RESERVATIONS" in os.environ
+            else "AGENT_JOB_CODEX_NATIVE_RESERVATIONS"
+        )
+        native_limit_raw = os.environ.get(native_limit_name, "3")
+        self.native_reservation_limit = _bounded_int_value(
+            native_limit_name, native_limit_raw, 1, 32
         )
         self.native_reservation_ttl = _bounded_int_env(
             "AGENT_JOB_ROUTE_RESERVATION_SECONDS", 900, 30, 86_400

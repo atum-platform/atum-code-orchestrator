@@ -69,14 +69,18 @@ class ClientInstallerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Duplicate"):
             installer.merge_kimi_guidance(path, "test", False)
 
-    def test_locally_owned_non_codex_guidance_is_byte_preserved(self) -> None:
+    def test_locally_owned_non_codex_policy_is_preserved_and_routing_added(self) -> None:
         path = self.root / "AGENTS.md"
         original = f"{installer.GUIDANCE_START}\nCustom policy.\n{installer.GUIDANCE_END}"
         path.write_text(original, encoding="utf-8")
 
-        self.assertFalse(installer.merge_guidance(path, "Kimi guidance", "test", True))
-        self.assertEqual(original, path.read_text(encoding="utf-8"))
-        self.assertFalse(path.with_name("AGENTS.md.bak.agent-jobs-test").exists())
+        self.assertTrue(installer.merge_guidance(path, "Kimi guidance", "test", True))
+        result = path.read_text(encoding="utf-8")
+        self.assertIn(original, result)
+        self.assertIn(installer.ROUTING_START, result)
+        self.assertIn("route_decide", result)
+        self.assertTrue(path.with_name("AGENTS.md.bak.agent-jobs-test").exists())
+        self.assertFalse(installer.merge_guidance(path, "Kimi guidance", "second", True))
 
     def test_invalid_json_has_actionable_error(self) -> None:
         path = self.root / "mcp.json"
@@ -258,6 +262,19 @@ class ClientInstallerTest(unittest.TestCase):
         self.assertIn("supersede static", routing)
         self.assertIn("job_submit", routing)
         self.assertIn("route_feedback", routing)
+
+    def test_claude_and_kimi_receive_generic_routing_protocol(self) -> None:
+        for name in ("Claude guidance", "Kimi guidance"):
+            with self.subTest(name=name):
+                path = self.root / name.replace(" ", "-")
+                self.assertTrue(installer.merge_guidance(path, name, "test", True))
+                result = path.read_text(encoding="utf-8")
+                routing = result.split(installer.ROUTING_START, 1)[1].split(
+                    installer.ROUTING_END, 1
+                )[0]
+                self.assertIn("route_decide", routing)
+                self.assertIn("native_subagents=true", routing)
+                self.assertIn("route_feedback", routing)
 
     def test_existing_codex_routing_block_is_replaced_without_touching_policy(self) -> None:
         path = self.root / "AGENTS.md"

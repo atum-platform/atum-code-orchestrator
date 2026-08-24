@@ -70,6 +70,10 @@ send v2 with `durable_agent_jobs=true` and only claim `native_subagents=true`
 when that tool is actually present. If an older server rejects v2, retry once
 with v1; old clients remain valid against a new server.
 
+The installer adds this routing protocol to Codex, Claude Code, and Kimi Code
+guidance. Each surface retains the decision ID and returns exactly one
+`route_feedback` outcome for every enforced decision.
+
 Cooperating clients call `route_decide` before every cross-agent job or native
 worker, including design, planning, architecture, product, copywriting, research,
 review, implementation, exploration, and tests. An enforced `agent_jobs` response is the authority
@@ -93,14 +97,15 @@ outside the caller family's primary domain routes cross-family, and code review
 always routes cross-family. V2 selects Opus
 for Claude's deep/review/thinking work and K3 for Kimi review or standard/deep
 work. Codex targets use concrete GPT-5.6 Sol, with Spark reserved for focused
-native work; Fable remains explicit-only.
+native work. Focused Claude native work uses Sonnet and focused Kimi native work
+uses high-speed K2.7; Fable remains explicit-only.
 
 Native admission and persistence occur in one SQLite `BEGIN IMMEDIATE`
-transaction. The default machine-wide cooperative limit is three active Codex
-native reservations, each expiring after 900 seconds. Capacity exhaustion
-returns `direct`. The reservation is advisory outside cooperating clients: Codex
-itself enforces the installed three-thread machine ceiling and owns spawn,
-termination, integration, and verification.
+transaction. The default machine-wide cooperative limit is three active native
+reservations shared across coding surfaces, each expiring after 900 seconds.
+Capacity exhaustion returns `direct`. The reservation is advisory outside
+cooperating clients; the originating surface owns spawn, termination,
+integration, and verification.
 
 ```bash
 python3 tools/review_cli.py route-decide \
@@ -110,7 +115,7 @@ python3 tools/review_cli.py route-decide \
   --surface-capabilities '{"durable_agent_jobs":true,"native_subagents":true}'
 ```
 
-Codex sends `route_feedback` after every enforced native decision. Identical
+Every coding surface sends `route_feedback` after every enforced native decision. Identical
 outcome retries are idempotent; conflicting outcomes fail. `route_reconcile`
 releases one session's omitted active decisions after resume, while TTL expiry
 recovers callers that never return. `route_status` reports the live mode, policy
@@ -221,9 +226,10 @@ does not change transport when configuration changes.
 
 CAO read-only execution is enabled only for Claude and Kimi, whose adapters
 enforce native tool denial. Read-only Codex fails before launch because this CAO
-fork currently launches Codex without an enforceable sandbox. A positive
-`max_turns` also fails closed because CAO has no equivalent limit; the normal
-unlimited value remains supported and bounded by the run deadline.
+fork currently launches Codex without an enforceable sandbox. Legacy callers
+may still send `max_turns`; it is accepted and normalized to unlimited during
+the compatibility window because CAO has no equivalent limit. New callers omit
+it. The run deadline remains the effective ceiling.
 
 During the pilot, CAO emits status transitions and a retained final result, not
 the provider's incremental token stream. A long quiet processing state can

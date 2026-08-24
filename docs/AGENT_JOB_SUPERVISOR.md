@@ -122,21 +122,27 @@ centralized recommendations without changing caller behavior. Set
 `AGENT_JOB_ROUTING_MODE=codex_canary` to make only Codex-on-Codex responses
 authoritative. `surface_canary` also makes v2 decisions authoritative for Codex,
 Claude Code/Desktop, and Kimi Code while keeping every v1 caller in shadow.
-Eligible focused Codex work atomically claims an expiring cooperative
-native reservation; the supervisor does not spawn or terminate the subagent and
-does not change durable `submit` behavior.
+Eligible focused same-family work from Codex, Claude Code, or Kimi Code
+atomically claims an expiring cooperative native reservation; the supervisor
+does not spawn or terminate the subagent and does not change durable `submit`
+behavior.
 Unknown routing modes fail during supervisor startup.
 
 Routing identity and capabilities are self-asserted by clients on a trusted
 per-user Unix socket; they coordinate cooperating processes and are not an
 authentication boundary against another process running as the same user.
 
-`AGENT_JOB_CODEX_NATIVE_RESERVATIONS` controls the machine-wide cooperative
-reservation limit (default 3), and `AGENT_JOB_ROUTE_RESERVATION_SECONDS` controls
-TTL (default 900, bounded to 30-86400). The client installer also declares a
-`spark-worker` Codex role backed by `clients/codex/spark-worker.toml` and sets the
-stable `agents.max_threads` machine ceiling to three when the user has not already
-chosen one. Feedback is idempotent, reconciliation is session-scoped, and status reports
+`AGENT_JOB_NATIVE_RESERVATIONS` controls the machine-wide cooperative reservation
+limit shared by all coding surfaces (default 3). The legacy
+`AGENT_JOB_CODEX_NATIVE_RESERVATIONS` name remains an accepted fallback during
+the compatibility window. `AGENT_JOB_ROUTE_RESERVATION_SECONDS` controls TTL
+(default 900, bounded to 30-86400). The client installer declares a `spark-worker`
+Codex role backed by `clients/codex/spark-worker.toml`; Claude Code and Kimi Code
+use their native general-purpose worker interfaces. Focused native routing uses
+Spark for Codex, Sonnet for Claude, and high-speed K2.7 for Kimi. The installer
+sets the stable Codex `agents.max_threads` machine ceiling to three when the user
+has not already chosen one. Feedback is idempotent, reconciliation is
+session-scoped, and status reports
 reservation counts plus the terminal decision-to-feedback return rate. Expired
 or reconciled decisions without feedback intentionally lower that rate because
 it measures whether callers returned, not transport delivery reliability. Both

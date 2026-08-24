@@ -114,6 +114,8 @@ def _service_environment() -> dict[str, str]:
         "AGENT_JOB_MAX_PARTIAL_RESPONSE_BYTES",
         "AGENT_JOB_RETENTION_SECONDS",
         "AGENT_JOB_ROUTING_MODE",
+        "AGENT_JOB_NATIVE_RESERVATIONS",
+        # Compatibility input for installations not yet migrated.
         "AGENT_JOB_CODEX_NATIVE_RESERVATIONS",
         "AGENT_JOB_ROUTE_RESERVATION_SECONDS",
         "AGENT_JOB_QUOTA_ROUTING",

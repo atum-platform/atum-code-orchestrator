@@ -1,5 +1,19 @@
 # Session Log
 
+## 2026-08-24 - Close cross-surface routing and compatibility gaps
+
+- Installed the enforced routing protocol into Codex, Claude Code, and Kimi Code
+  guidance while preserving locally owned provider policy sections.
+- Made the cooperative native reservation pool explicitly provider-neutral via
+  `AGENT_JOB_NATIVE_RESERVATIONS`, retaining the previous Codex-prefixed name as
+  a compatibility fallback and proving capacity is shared across surfaces.
+- Routed focused same-family Claude work to Sonnet and focused Kimi work to
+  high-speed K2.7, while preserving cross-family code review for every caller.
+- Restored `max_turns` as an accepted but ignored compatibility input at MCP and
+  CLI boundaries; run deadlines remain the sole effective execution ceiling.
+- Verification: 69 focused routing, client, and guarded-interface tests pass;
+  the full 279-test suite passes; `git diff --check` is clean.
+
 ## 2026-08-24 - Recover deployed routing changes into source control
 
 - Recovered the tracked delta from the active

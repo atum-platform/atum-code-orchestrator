@@ -98,6 +98,7 @@ class JobStoreMigrationTest(unittest.TestCase):
 
     def test_invalid_native_routing_numbers_name_the_environment_variable(self) -> None:
         for name in (
+            "AGENT_JOB_NATIVE_RESERVATIONS",
             "AGENT_JOB_CODEX_NATIVE_RESERVATIONS",
             "AGENT_JOB_ROUTE_RESERVATION_SECONDS",
             "AGENT_JOB_QUOTA_STALE_SECONDS",
@@ -123,6 +124,22 @@ class JobStoreMigrationTest(unittest.TestCase):
                     state_dir=root / "state", socket_path=root / "state/socket",
                     db_path=root / "state/jobs.sqlite3", log_dir=root / "state/logs",
                 )
+
+    def test_native_reservation_limit_prefers_new_name_and_accepts_legacy_alias(self) -> None:
+        for values, expected in (
+            ({"AGENT_JOB_CODEX_NATIVE_RESERVATIONS": "4"}, 4),
+            ({"AGENT_JOB_NATIVE_RESERVATIONS": "5", "AGENT_JOB_CODEX_NATIVE_RESERVATIONS": "4"}, 5),
+        ):
+            with self.subTest(values=values), tempfile.TemporaryDirectory() as temporary, patch.dict(
+                os.environ, values, clear=True
+            ):
+                root = Path(temporary)
+                instance = Supervisor(
+                    state_dir=root / "state", socket_path=root / "state/socket",
+                    db_path=root / "state/jobs.sqlite3", log_dir=root / "state/logs",
+                )
+                self.assertEqual(expected, instance.native_reservation_limit)
+                instance.store.db.close()
 
     def test_dynamic_concurrency_requires_quota_routing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary, patch.dict(
@@ -2080,6 +2097,24 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("direct", second["lane"])
         self.assertEqual("none", second["reservation_status"])
+
+    async def test_native_reservation_capacity_is_shared_across_coding_surfaces(self) -> None:
+        self.supervisor.routing_mode = "surface_canary"
+        self.supervisor.native_reservation_limit = 1
+        first = await self.call({
+            **self.codex_native_route("codex-session"), "protocol_version": 2,
+            "surface_capabilities": {"native_subagents": True, "durable_agent_jobs": True},
+        })
+        second = await self.call({
+            "action": "route_decide", "protocol_version": 2,
+            "caller_provider": "claude", "surface": "claude-code",
+            "capability": "design", "complexity": "focused", "risk": "low",
+            "scope": "single_module", "duration": "short", "durability": "session",
+            "parallelizable": True, "session_id": "claude-session",
+            "surface_capabilities": {"native_subagents": True, "durable_agent_jobs": True},
+        })
+        self.assertEqual("native_subagent", first["lane"])
+        self.assertEqual("direct", second["lane"])
 
     async def test_route_feedback_is_idempotent_and_releases_reservation(self) -> None:
         self.supervisor.routing_mode = "codex_canary"

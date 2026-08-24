@@ -90,6 +90,7 @@ async def job_submit(
     queue_timeout_seconds: int = 900,
     run_timeout_seconds: int = 2700,
     timeout_seconds: int | None = None,
+    max_turns: int = 0,
     idempotency_key: str = "",
     label: str = "",
     owner: str = "",
@@ -102,6 +103,7 @@ async def job_submit(
         context_files=context_files, context_text=context_text,
         expected_output=expected_output, queue_timeout_seconds=queue_timeout_seconds,
         run_timeout_seconds=run_timeout_seconds, timeout_seconds=timeout_seconds,
+        max_turns=max_turns,
         idempotency_key=idempotency_key, label=label, owner=owner,
     )
     return json.dumps(result, ensure_ascii=False, indent=2)

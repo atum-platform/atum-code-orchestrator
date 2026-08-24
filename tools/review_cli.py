@@ -29,6 +29,10 @@ def _parser() -> argparse.ArgumentParser:
         "--timeout-seconds", type=int,
         help="deprecated alias for --run-timeout-seconds",
     )
+    submit.add_argument(
+        "--max-turns", type=int, default=0,
+        help="deprecated compatibility option; accepted but ignored",
+    )
     submit.add_argument("--idempotency-key", default="")
     submit.add_argument("--label", default="")
     submit.add_argument("--owner", default="")
