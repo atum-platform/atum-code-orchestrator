@@ -30,13 +30,18 @@ class SupervisorUnavailable(RuntimeError):
     pass
 
 
+def _request_timeout_seconds(payload: dict[str, Any]) -> int:
+    wait_seconds = max(0, min(int(payload.get("wait_seconds") or 0), 60))
+    return 30 + wait_seconds
+
+
 def request(payload: dict[str, Any], socket_path: Path | str = DEFAULT_SOCKET_PATH) -> dict[str, Any]:
     path = Path(socket_path).expanduser()
     data = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
     chunks: list[bytes] = []
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.settimeout(15 + max(0, min(int(payload.get("wait_seconds") or 0), 60)))
+            client.settimeout(_request_timeout_seconds(payload))
             client.connect(str(path))
             client.sendall(data)
             client.shutdown(socket.SHUT_WR)

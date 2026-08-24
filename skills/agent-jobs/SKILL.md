@@ -97,9 +97,11 @@ exhaustion returns `direct`, so the primary continues the work itself.
 3. Call `route_decide` and follow an enforced lane/provider/model. Submit
    asynchronously with the exact absolute `workdir`. Set
    `context_git_diff=true` for code review and select the correct base ref.
-4. Save the job ID, cursor, and exact owner. Use
-   `job_read(wait_seconds=30)` for a server-side wait until progress or terminal
-   state; the caller does not need to generate repeated socket polls.
+4. Save the job ID, cursor, and exact owner. For MCP, use
+   `job_read(wait_seconds=10)` for a short server-side wait until progress or
+   terminal state; repeat only after the tool returns. The MCP adapter clamps
+   longer requests so a quiet provider cannot outlive a coding surface's socket
+   budget. The guarded CLI may use waits up to 60 seconds.
 5. Treat `possibly_stalled` as alive but quiet. Cancel only after inspecting status,
    elapsed time, and the run deadline.
 6. On failure of an enforced v2 route, report `escalated`, request the one-hop

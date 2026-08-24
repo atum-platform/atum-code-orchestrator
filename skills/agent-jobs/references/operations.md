@@ -33,8 +33,11 @@ IDs with `list` and filter by the owner prefix used at submission.
 Terminal jobs with a non-empty owner create an at-least-once inbox delivery.
 Inbox reads are non-destructive and exact-owner scoped. Inspect the retained job
 result before acknowledging the returned delivery ID; do not assume it is the
-same identifier as the job. A server-side `read --wait-seconds`
-holds one bounded socket request and wakes on output, liveness, or terminal state.
+same identifier as the job. A server-side `read --wait-seconds` holds one bounded
+socket request and wakes on output, liveness, or terminal state. The CLI accepts
+up to 60 seconds. MCP reads are capped at 10 seconds to remain below coding-surface
+transport ceilings; a timeout or disconnected reader never cancels the durable
+provider job.
 
 Treat `job.lifecycle_status` as authoritative and `job.activity` as the current
 semantic observation. `tool_running:<name>` means a quiet provider still has an

@@ -9,10 +9,15 @@ from unittest.mock import patch
 TOOLS_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS_DIR))
 
-from agent_job_client import _parser, route_decide  # noqa: E402
+from agent_job_client import _parser, _request_timeout_seconds, route_decide  # noqa: E402
 
 
 class AgentJobClientParserTest(unittest.TestCase):
+    def test_socket_timeout_keeps_transport_margin_above_wait(self) -> None:
+        self.assertEqual(30, _request_timeout_seconds({}))
+        self.assertEqual(40, _request_timeout_seconds({"wait_seconds": 10}))
+        self.assertEqual(90, _request_timeout_seconds({"wait_seconds": 600}))
+
     def test_submit_has_separate_queue_and_run_timeout_defaults(self) -> None:
         args = vars(_parser().parse_args([
             "submit", "--provider", "kimi", "--mode", "readonly",

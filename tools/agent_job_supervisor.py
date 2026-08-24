@@ -2458,10 +2458,19 @@ class Supervisor:
             response = {"ok": True, "result": result}
         except Exception as exc:
             response = {"ok": False, "error": str(exc)}
-        writer.write((_json(response) + "\n").encode("utf-8"))
-        await writer.drain()
-        writer.close()
-        await writer.wait_closed()
+        try:
+            writer.write((_json(response) + "\n").encode("utf-8"))
+            await writer.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            # MCP and shell callers may abandon a bounded long-poll. The durable
+            # job and retained result remain available to the next request.
+            pass
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
     async def serve(self) -> None:
         lock_path = self.state_dir / "supervisor.lock"

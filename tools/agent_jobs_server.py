@@ -12,6 +12,7 @@ import review_core
 
 
 mcp = FastMCP("agent-jobs")
+MCP_MAX_WAIT_SECONDS = 10
 
 
 @mcp.tool()
@@ -117,9 +118,10 @@ async def job_read(
     wait_seconds: int = 0,
     event_cursor: int | None = None,
 ) -> str:
-    """Read incremental output, normalized events, and status; optionally wait 60 seconds."""
+    """Read incremental output, normalized events, and status; briefly wait for progress."""
+    bounded_wait = max(0, min(int(wait_seconds), MCP_MAX_WAIT_SECONDS))
     result = await asyncio.to_thread(
-        review_core.job_read, job_id, cursor, max_bytes, wait_seconds, event_cursor
+        review_core.job_read, job_id, cursor, max_bytes, bounded_wait, event_cursor
     )
     return json.dumps(result, ensure_ascii=False, indent=2)
 

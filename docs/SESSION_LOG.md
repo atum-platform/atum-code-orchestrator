@@ -1,5 +1,17 @@
 # Session Log
 
+## 2026-08-24 - Keep MCP polling below transport ceilings
+
+- Capped MCP `job_read` waits at 10 seconds while preserving the guarded CLI's
+  60-second long-poll option, so coding-surface socket ceilings cannot be
+  mistaken for Opus or supervisor failure.
+- Increased the local Unix client response margin and treated reader disconnects
+  as an expected abandoned poll instead of emitting unhandled supervisor errors.
+- Durable jobs continue independently of MCP requests; callers recover progress
+  and terminal results with the retained job ID, cursors, and owner inbox.
+- Verification: 152 focused client, MCP, and supervisor tests pass; the full
+  291-test suite passes; `git diff --check` is clean.
+
 ## 2026-08-24 - Harden mediated verification after Opus review
 
 - Kept the named-check broker available only to Claude implementation jobs;

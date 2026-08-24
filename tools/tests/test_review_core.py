@@ -117,6 +117,13 @@ class ReviewCoreTest(unittest.IsolatedAsyncioTestCase):
             await agent_jobs_server.job_submit(**{key: value for key, value in values.items() if key != "action"})
         self.assertEqual(calls[0], calls[1])
 
+    async def test_mcp_read_clamps_wait_below_surface_transport_ceiling(self) -> None:
+        with patch.object(review_core, "job_read", return_value={"job": {}}) as mocked:
+            await agent_jobs_server.job_read("job", wait_seconds=60)
+        mocked.assert_called_once_with(
+            "job", 0, 64_000, agent_jobs_server.MCP_MAX_WAIT_SECONDS, None
+        )
+
     async def test_legacy_max_turns_is_accepted_but_not_forwarded(self) -> None:
         with patch.object(review_core, "submit", return_value={"job_id": "job"}) as mocked:
             review_core.job_submit(
