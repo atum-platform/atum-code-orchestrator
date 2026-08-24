@@ -1997,9 +1997,17 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
                 job_id="00000000-0000-0000-0000-000000000004",
                 checks_json="[]",
             )
+            modern_user_home = Path(self.temp.name) / "modern-kimi-user"
+            modern_config = modern_user_home / ".kimi-code" / "config.toml"
+            modern_config.parent.mkdir(parents=True)
+            modern_config.write_text(
+                'default_model = "kimi-code/k3"\n[models."kimi-code/k3"]\n'
+                'provider = "managed:kimi-code"\nmodel = "kimi-k3"\n',
+                encoding="utf-8",
+            )
             with patch.object(
                 supervisor_module, "_kimi_cli_generation", return_value="modern"
-            ):
+            ), patch.object(supervisor_module.Path, "home", return_value=modern_user_home):
                 modern_argv, modern_stdin, modern_env = self.supervisor._build_command(modern)
             self.assertNotIn("--print", modern_argv)
             self.assertNotIn("--mcp-config-file", modern_argv)
@@ -2009,6 +2017,11 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(modern_stdin)
             modern_home = Path(modern_env["KIMI_CODE_HOME"])
             self.assertTrue(modern_home.is_dir())
+            self.assertEqual(
+                modern_config.read_text(encoding="utf-8"),
+                (modern_home / "config.toml").read_text(encoding="utf-8"),
+            )
+            self.assertEqual(0o600, stat.S_IMODE((modern_home / "config.toml").stat().st_mode))
             self.assertEqual(
                 {"mcpServers": {}},
                 json.loads((modern_home / "mcp.json").read_text(encoding="utf-8")),

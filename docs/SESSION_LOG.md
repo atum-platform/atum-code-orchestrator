@@ -1,5 +1,16 @@
 # Session Log
 
+## 2026-08-24 - Preserve modern Kimi model configuration
+
+- A live MacBook smoke reached Kimi Code 0.31.1 but proved the isolated runtime
+  lacked its configured `kimi-code/k3` model declaration.
+- Modern Kimi jobs now copy the authenticated `config.toml` into the private
+  per-job home with mode `0600`, while continuing to replace MCP state and use
+  an empty Skills directory. Missing configuration fails before provider launch.
+- Verification: 3 focused modern-Kimi tests pass; the full 291-test suite
+  passes; `git diff --check` is clean. The replacement smoke is recorded after
+  deployment below.
+
 ## 2026-08-24 - Keep MCP polling below transport ceilings
 
 - Capped MCP `job_read` waits at 10 seconds while preserving the guarded CLI's

@@ -7,8 +7,10 @@ them. It replaces caller-bound subprocess waits with durable job IDs.
 Kimi execution negotiates the installed CLI contract at launch. The legacy
 Python CLI uses YAML agents, print-mode JSON streaming, and an explicit empty
 MCP file. The current Node CLI uses Markdown agents, prompt-mode JSON streaming,
-an isolated per-job `KIMI_CODE_HOME`, and an empty Skills directory. This keeps
-automatic Kimi upgrades from silently leaving the supervisor on retired flags.
+an isolated per-job `KIMI_CODE_HOME`, a private copy of the authenticated model
+configuration, and an empty Skills directory. MCP configuration is replaced with
+the job-scoped declaration. This keeps automatic Kimi upgrades from silently
+leaving the supervisor on retired flags without inheriting user MCPs or skills.
 
 ## Architecture
 

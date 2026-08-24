@@ -1291,6 +1291,12 @@ class Supervisor:
         home = runtime / "kimi-code-home"
         home.mkdir(mode=0o700, exist_ok=True)
         source = Path.home() / ".kimi-code"
+        config_source = source / "config.toml"
+        if not config_source.is_file():
+            raise RuntimeError(f"Modern Kimi configuration is missing: {config_source}")
+        config_target = home / "config.toml"
+        shutil.copyfile(config_source, config_target)
+        os.chmod(config_target, 0o600)
         for name in ("credentials", "oauth", "device_id"):
             target = source / name
             link = home / name
