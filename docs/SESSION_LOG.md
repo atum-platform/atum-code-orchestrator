@@ -432,3 +432,17 @@
 - A final isolated implement probe created the expected temporary file under
   `acceptEdits` plus safe mode, then removed all probe artifacts. Opus's targeted
   follow-up found no new blockers and returned a `SHIP` verdict.
+# 2026-08-24 - ACO and Hermes runtime boundary
+
+- Confirmed the live Mac mini deployments remain separate: ACO uses
+  `~/.local/share/atum-agent-jobs`, `com.atum.agent-job-supervisor`, and
+  `~/.local/state/agent-job-supervisor`; Hermes uses its own checkout, service
+  label, state directory, and profile configuration.
+- Removed ACO's legacy `bootstrap.py --with-hermes` path and the Hermes profile
+  migration utility so an ACO install cannot repoint `~/.hermes/profiles`.
+- Kept Hermes caller and wire-protocol compatibility for the independently
+  deployed Hermes supervisor. No live Hermes profile, process, service, or state
+  was changed.
+- Added regression coverage proving ACO bootstrap and client targets do not
+  manage Hermes profiles. Updated current installation and rollback docs to make
+  the ownership boundary explicit.

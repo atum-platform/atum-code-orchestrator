@@ -28,6 +28,8 @@ CODEX_ROUTING_END = "<!-- AGENT_JOBS_CODEX_ROUTING_END -->"
 ROUTING_START = "<!-- AGENT_JOBS_ROUTING_START -->"
 ROUTING_END = "<!-- AGENT_JOBS_ROUTING_END -->"
 LEGACY_SKILL_ROOTS = (
+    # Accepted only as the old target of the shared coding-agent skill symlink.
+    # This installer never reads or writes Hermes profile configuration.
     Path.home() / ".local/share/hermes-agent-review-sidecars/skills/agent-jobs",
 )
 

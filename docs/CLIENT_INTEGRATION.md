@@ -40,7 +40,10 @@ the corresponding `*.bak.agent-jobs-<suffix>` file, and restart the client.
 | Claude Code, including Desktop code sessions | Review CLI | Claude skill link and `CLAUDE.md` | Claude CLI |
 | Claude Desktop chat | Local MCP | Tool schema; coding policy applies in Claude Code sessions | Claude CLI |
 | Kimi Code | MCP | `~/.agents/skills` and Kimi `AGENTS.md` | Kimi CLI |
-| Hermes profiles | MCP | Per-profile skill copies | Not a provider |
+| Hermes profiles | Compatible protocol, separate runtime | Managed by Hermes | Not an ACO provider |
+
+ACO's installer does not inspect or modify `~/.hermes/profiles`. Hermes profile
+bindings belong to the independent Hermes cluster deployment.
 
 MCP intentionally exposes route decision, feedback, reconciliation, status,
 submit, read, list, cancel, and owner-inbox operations for read-only jobs.

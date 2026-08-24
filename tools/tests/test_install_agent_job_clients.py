@@ -25,6 +25,10 @@ class ClientInstallerTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
+    def test_installer_has_no_hermes_profile_targets(self) -> None:
+        targets = installer._paths(self.root)
+        self.assertFalse(any(".hermes/profiles" in str(path) for path in targets.values()))
+
     def test_mcp_merge_preserves_unrelated_configuration(self) -> None:
         path = self.root / "config.json"
         path.write_text(

@@ -73,12 +73,14 @@ budget.
 ## Installation
 
 ```bash
-python3 bootstrap.py --with-hermes
+python3 bootstrap.py
 .venv/bin/python tools/agent_job_client.py ping
 ```
 
 The LaunchAgent label is `com.atum.agent-job-supervisor`. Runtime state is kept
 under `~/.local/state/agent-job-supervisor` with user-only permissions.
+The Hermes cluster uses a different checkout, LaunchAgent label, and state
+directory; ACO installation does not manage it.
 
 ## Operations
 

@@ -7,10 +7,10 @@ installed checkout: client configs and launchd intentionally store absolute
 paths. Runtime state remains under `~/.local/state/agent-job-supervisor` and is
 reused across upgrades.
 
-`bootstrap.py --with-hermes` refuses to run outside that stable checkout. Global
-guidance already present on a machine is adopted verbatim to preserve local and
-temporary routing policy; a fresh machine receives the repository default, so
-machine-specific overrides may intentionally differ.
+ACO bootstrap never reads or writes `~/.hermes/profiles`. Global guidance already
+present on a machine is adopted verbatim to preserve local and temporary routing
+policy; a fresh machine receives the repository default, so machine-specific
+overrides may intentionally differ.
 
 All coding surfaces receive a separate installer-owned routing block. This block
 may be updated without replacing customized provider guidance. The installer
@@ -31,22 +31,19 @@ backups; symlinked config files fail closed.
 ```bash
 .venv/bin/python tools/agent_job_client.py list --status running
 .venv/bin/python tools/install_agent_job_clients.py
-.venv/bin/python tools/install_hermes_profiles.py
 ```
 
-The first command must show no active work. The other two are dry runs.
+The first command must show no active work. The second command is a dry run.
 
 ## Apply
 
 ```bash
 python3 bootstrap.py
-.venv/bin/python tools/install_hermes_profiles.py --apply  # only on a Hermes host
 ```
 
-The client installer is transactional across its eight targets. Hermes profile
-migration is transactional across every applicable profile and preserves each
-profile's enabled and timeout settings. The supervisor verifies that launchd's
-reported PID and program path match the new process before reporting success.
+The client installer is transactional across its targets. The supervisor verifies
+that launchd's reported PID and program path match the new process before
+reporting success.
 
 Restart client applications after installation. Verify:
 
@@ -74,16 +71,15 @@ additive evidence and may remain in SQLite; default route selection immediately
 returns to the static policy. The CodexBar history files are read-only inputs and
 are never modified by this service.
 
-Keep the previous checkout until all coding clients and optional Hermes profiles
-have completed a smoke run through the standalone service. After that, the old
-Hermes copy is historical source only and can be removed once its Git state is
-confirmed pushed.
+Keep the previous ACO checkout until all coding clients have completed a smoke
+run through the standalone service. This does not govern the independent Hermes
+checkout or its rollback lifecycle.
 
 ## Current Deployment
 
-As of 2026-08-10, the Mac mini and MacBook each run one local supervisor from
-`~/.local/share/atum-agent-jobs`. Codex, Claude, and Kimi bindings are installed
-on both. Hermes profiles are consumers only: twelve Mac mini profiles were
-migrated, while the MacBook had no applicable profile registration. End-to-end
-Codex smoke jobs completed on both hosts. The legacy checkout is retained only
-for short-term rollback and is not referenced by live configuration.
+The Mac mini and MacBook each run an ACO supervisor from
+`~/.local/share/atum-agent-jobs`, with Codex, Claude, and Kimi bindings. The Mac
+mini Hermes cluster runs separately from `~/.local/share/hermes-agent-jobs`, uses
+`com.hermes.agent-job-supervisor`, and stores state under
+`~/.local/state/hermes-agent-job-supervisor`. ACO deployment and rollback must
+not modify those Hermes paths.
