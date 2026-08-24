@@ -11,7 +11,11 @@
   commit latency. Provider processes remain identity-reconciled after restart.
 - Verification: 2 focused persistence/control-plane tests pass; the full
   292-test suite passes; `git diff --check` is clean. Post-deployment latency is
-  checked on both supervisors below.
+  checked on both supervisors. The MacBook sustained 160 route-decision and
+  feedback writes with 18.14 ms p95 and 52.03 ms maximum interleaved ping
+  latency, versus the reproduced 40-second timeout. Fifty deliberately reset
+  clients added zero bytes to supervisor stderr. Both machines run the canonical
+  supervisor SHA-256 `79682cdf1db14030262e6f60d5b1c689ef86c23c3066755410a982d52213655a`.
 
 ## 2026-08-24 - Preserve modern Kimi model configuration
 
