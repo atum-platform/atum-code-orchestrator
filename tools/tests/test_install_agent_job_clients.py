@@ -29,6 +29,13 @@ class ClientInstallerTest(unittest.TestCase):
         targets = installer._paths(self.root)
         self.assertFalse(any(".hermes/profiles" in str(path) for path in targets.values()))
 
+    def test_claude_code_uses_stable_settings_config(self) -> None:
+        targets = installer._paths(self.root)
+        self.assertEqual(
+            self.root / ".claude/settings.json",
+            targets["Claude Code MCP"],
+        )
+
     def test_mcp_merge_preserves_unrelated_configuration(self) -> None:
         path = self.root / "config.json"
         path.write_text(
@@ -130,7 +137,7 @@ class ClientInstallerTest(unittest.TestCase):
     def test_apply_rolls_back_all_prior_targets_on_failure(self) -> None:
         home = self.root / "home"
         paths = installer._paths(home)
-        for name in ("Claude Desktop MCP", "Kimi MCP", "Kimi guidance"):
+        for name in ("Claude Code MCP", "Claude Desktop MCP", "Kimi MCP", "Kimi guidance"):
             path = paths[name]
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("{}\n" if "MCP" in name else "# Existing\n", encoding="utf-8")
@@ -187,6 +194,7 @@ class ClientInstallerTest(unittest.TestCase):
         self.assertEqual(2, code)
         self.assertIn("shared skill: error:", output.getvalue())
         self.assertIn("Claude Desktop MCP: would update", output.getvalue())
+        self.assertIn("Claude Code MCP: would update", output.getvalue())
 
     def test_check_returns_one_when_changes_are_pending(self) -> None:
         home = self.root / "home"
@@ -291,6 +299,7 @@ class ClientInstallerTest(unittest.TestCase):
                 self.assertIn("route_decide", routing)
                 self.assertIn("native_subagents=true", routing)
                 self.assertIn("route_feedback", routing)
+                self.assertIn("parallel MECE workstreams", routing)
 
     def test_existing_codex_routing_block_is_replaced_without_touching_policy(self) -> None:
         path = self.root / "AGENTS.md"

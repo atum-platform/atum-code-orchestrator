@@ -1,5 +1,18 @@
 # Session Log
 
+## 2026-08-24 - Cross-surface client parity
+
+- Added Claude Code's stable `~/.claude/settings.json` to the transactional
+  client installer so Claude Code receives the same read-only `agent-jobs` MCP
+  binding as Codex, Claude Desktop, and Kimi Code without rewriting Claude's
+  large mutable state file.
+- Made the plan-of-parallels protocol part of the replaceable routing guidance
+  block, eliminating cross-machine drift while preserving locally owned
+  provider policy.
+- Updated installer coverage and client documentation. Installation remains
+  native per machine; configuration files containing local credentials are
+  never copied between Macs.
+
 ## 2026-08-24 - Prevent WAL fsync from starving control requests
 
 - Reproduced a 40-second direct supervisor-socket timeout during a live Kimi K3

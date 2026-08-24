@@ -81,6 +81,14 @@ Verify returned advice and changes locally before accepting them.
 
 ROUTING_GUIDANCE = """## Agent Jobs Routing Protocol
 
+For substantive multi-scope work, first produce a plan with an explicit
+`parallel MECE workstreams` section. Parallelize only mutually exclusive scopes
+with no data dependency, preserve real dependency edges, and use one
+plan-execute-assemble cycle. Use native workers for bounded work in the calling
+provider's primary domain and cross-family agent jobs for complementary review
+or judgment. Assemble, verify, and request one final cross-family review in the
+originating session.
+
 Before every cross-agent review, consultation, planning, architecture, design,
 product, copywriting, research, or delegated implementation call, use
 agent-jobs `route_decide` through MCP or the guarded CLI. Also call it before
@@ -356,6 +364,7 @@ def _paths(home: Path) -> dict[str, Path]:
         "Claude skill": home / ".claude/skills/agent-jobs",
         "Codex MCP": home / ".codex/config.toml",
         "Codex guidance": home / ".codex/AGENTS.md",
+        "Claude Code MCP": home / ".claude/settings.json",
         "Claude guidance": home / ".claude/CLAUDE.md",
         "Claude Desktop MCP": home / "Library/Application Support/Claude/claude_desktop_config.json",
         "Kimi MCP": home / ".kimi-code/mcp.json",

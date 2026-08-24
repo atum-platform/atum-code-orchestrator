@@ -19,11 +19,13 @@ settings. Before changing an existing file it creates a sibling
 `*.bak.agent-jobs-<suffix>` backup. It manages:
 
 - the shared `~/.agents/skills/agent-jobs` link;
+- Claude Code's stable `~/.claude/settings.json` MCP registration;
 - Claude Desktop's `mcpServers.agent-jobs` registration;
 - Kimi Code's user-level `~/.kimi-code/mcp.json` registration; and
 - a marked agent-jobs guidance section in `~/.kimi-code/AGENTS.md`.
 
-Restart Claude Desktop and start a new Kimi Code session after applying changes.
+Restart Claude Desktop and start new Claude Code and Kimi Code sessions after
+applying changes.
 Existing sessions retain the tools and instructions loaded when they started.
 The installer validates every target and backup slot before writing, and restores
 all prior targets if an unexpected later write fails. `--check` exits nonzero
@@ -37,7 +39,7 @@ the corresponding `*.bak.agent-jobs-<suffix>` file, and restart the client.
 | Client | Caller binding | Shared policy | Target adapter |
 |---|---|---|---|
 | Codex Desktop and CLI | MCP | `~/.agents/skills` plus global guidance | Codex CLI |
-| Claude Code, including Desktop code sessions | Review CLI | Claude skill link and `CLAUDE.md` | Claude CLI |
+| Claude Code, including Desktop code sessions | MCP or review CLI | Claude skill link and `CLAUDE.md` | Claude CLI |
 | Claude Desktop chat | Local MCP | Tool schema; coding policy applies in Claude Code sessions | Claude CLI |
 | Kimi Code | MCP | `~/.agents/skills` and Kimi `AGENTS.md` | Kimi CLI |
 | Hermes profiles | Compatible protocol, separate runtime | Managed by Hermes | Not an ACO provider |
