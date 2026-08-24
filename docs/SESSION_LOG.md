@@ -408,7 +408,7 @@
   the same stable command name and runs the workflow under the non-sudo
   `gha-runner` account.
 - Fork-origin pull requests remain rejected before self-hosted assignment.
-# 2026-08-24: Enforce the Claude native tool surface
+## 2026-08-24: Enforce the Claude native tool surface
 
 - Replaced permission-only Claude tool configuration with an explicit
   `--tools` availability list plus a deny list for shell, nested-agent, network,
@@ -416,8 +416,8 @@
 - Read-only jobs now expose only repository inspection tools; implementation
   jobs additionally expose file editing tools but still cannot execute commands
   or recursively delegate.
-- Kept strict empty MCP configuration, disabled session persistence, and retained
-  safe mode for both read-only and implementation runs so hooks and other
+- Kept strict empty MCP configuration, disabled session persistence, and applied
+  safe mode to both read-only and implementation runs so hooks and other
   customizations cannot create a separate command-execution path.
 - Verified all 120 supervisor tests pass. A live Sonnet CLI probe initialized
   with only `Glob`, `Grep`, and `Read`, exposed no MCP servers, and returned
@@ -429,3 +429,6 @@
   write paths. The optional CAO backend remains a separate policy contract.
 - After the review fixes, all 280 tests pass. A live implement-mode probe exposed
   exactly `Edit`, `Glob`, `Grep`, `Read`, and `Write`, with no MCP servers.
+- A final isolated implement probe created the expected temporary file under
+  `acceptEdits` plus safe mode, then removed all probe artifacts. Opus's targeted
+  follow-up found no new blockers and returned a `SHIP` verdict.
