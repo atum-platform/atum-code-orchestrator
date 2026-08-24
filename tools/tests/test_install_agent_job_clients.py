@@ -29,10 +29,10 @@ class ClientInstallerTest(unittest.TestCase):
         targets = installer._paths(self.root)
         self.assertFalse(any(".hermes/profiles" in str(path) for path in targets.values()))
 
-    def test_claude_code_uses_stable_settings_config(self) -> None:
+    def test_claude_code_uses_official_user_scope_config(self) -> None:
         targets = installer._paths(self.root)
         self.assertEqual(
-            self.root / ".claude/settings.json",
+            self.root / ".claude.json",
             targets["Claude Code MCP"],
         )
 

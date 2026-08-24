@@ -19,7 +19,7 @@ settings. Before changing an existing file it creates a sibling
 `*.bak.agent-jobs-<suffix>` backup. It manages:
 
 - the shared `~/.agents/skills/agent-jobs` link;
-- Claude Code's stable `~/.claude/settings.json` MCP registration;
+- Claude Code's user-scope `~/.claude.json` MCP registration;
 - Claude Desktop's `mcpServers.agent-jobs` registration;
 - Kimi Code's user-level `~/.kimi-code/mcp.json` registration; and
 - a marked agent-jobs guidance section in `~/.kimi-code/AGENTS.md`.
@@ -27,6 +27,8 @@ settings. Before changing an existing file it creates a sibling
 Restart Claude Desktop and start new Claude Code and Kimi Code sessions after
 applying changes.
 Existing sessions retain the tools and instructions loaded when they started.
+Quit active Claude Code sessions before installation because Claude Code also
+updates its user-scope state file while running.
 The installer validates every target and backup slot before writing, and restores
 all prior targets if an unexpected later write fails. `--check` exits nonzero
 when configuration drift is pending.

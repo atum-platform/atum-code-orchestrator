@@ -364,7 +364,7 @@ def _paths(home: Path) -> dict[str, Path]:
         "Claude skill": home / ".claude/skills/agent-jobs",
         "Codex MCP": home / ".codex/config.toml",
         "Codex guidance": home / ".codex/AGENTS.md",
-        "Claude Code MCP": home / ".claude/settings.json",
+        "Claude Code MCP": home / ".claude.json",
         "Claude guidance": home / ".claude/CLAUDE.md",
         "Claude Desktop MCP": home / "Library/Application Support/Claude/claude_desktop_config.json",
         "Kimi MCP": home / ".kimi-code/mcp.json",

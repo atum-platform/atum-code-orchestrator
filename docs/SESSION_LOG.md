@@ -2,10 +2,12 @@
 
 ## 2026-08-24 - Cross-surface client parity
 
-- Added Claude Code's stable `~/.claude/settings.json` to the transactional
+- Added Claude Code's official user-scope `~/.claude.json` to the transactional
   client installer so Claude Code receives the same read-only `agent-jobs` MCP
-  binding as Codex, Claude Desktop, and Kimi Code without rewriting Claude's
-  large mutable state file.
+  binding as Codex, Claude Desktop, and Kimi Code. Live `claude mcp list`
+  verification proved that this installed Claude version ignores MCP entries in
+  `~/.claude/settings.json`; installation therefore requires inactive Claude
+  Code sessions and preserves the full user-scope document atomically.
 - Made the plan-of-parallels protocol part of the replaceable routing guidance
   block, eliminating cross-machine drift while preserving locally owned
   provider policy.
