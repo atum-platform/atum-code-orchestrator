@@ -28,6 +28,13 @@ The supported interface follows a fat-skill, thin-harness split:
 - `tools/agent_job_supervisor.py` owns process lifecycle, persistence,
   credentials, deadlines, concurrency, and capability-gated implementation.
 
+The local SQLite queue uses WAL mode with `synchronous=NORMAL` and bounded
+automatic checkpoints. This keeps provider output persistence from blocking the
+supervisor's Unix-socket control plane on slow or pressured local storage. SQLite
+consistency and ordinary process/restart durability are preserved; a sudden
+power loss may discard the newest uncheckpointed queue updates, whose provider
+processes are reconciled on the next supervisor start.
+
 Legacy `review-sidecars` and `claude-plan` registrations are migration inputs
 only. This standalone repository does not ship those mode-heavy MCP servers.
 

@@ -350,6 +350,8 @@ class JobStore:
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute("PRAGMA synchronous=NORMAL")
+        self.db.execute("PRAGMA wal_autocheckpoint=256")
         self.db.execute("PRAGMA busy_timeout=5000")
         self.db.executescript(
             """

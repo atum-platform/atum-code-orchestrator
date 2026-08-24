@@ -169,6 +169,17 @@ class WorkspaceConfinementTest(unittest.TestCase):
 
 
 class JobStoreMigrationTest(unittest.TestCase):
+    def test_wal_durability_avoids_full_sync_control_plane_stalls(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = JobStore(Path(temporary) / "jobs.sqlite3")
+            try:
+                self.assertEqual("wal", store.db.execute("PRAGMA journal_mode").fetchone()[0])
+                self.assertEqual(1, store.db.execute("PRAGMA synchronous").fetchone()[0])
+                self.assertEqual(
+                    256, store.db.execute("PRAGMA wal_autocheckpoint").fetchone()[0]
+                )
+            finally:
+                store.db.close()
 
     def test_existing_jobs_gain_nullable_separate_timeout_columns(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

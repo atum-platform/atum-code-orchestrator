@@ -1,5 +1,18 @@
 # Session Log
 
+## 2026-08-24 - Prevent WAL fsync from starving control requests
+
+- Reproduced a 40-second direct supervisor-socket timeout during a live Kimi K3
+  smoke, proving the problem existed below MCP and provider run-time ceilings.
+- A process sample found the single asyncio control thread committing and
+  checkpointing SQLite WAL frames with `fsync` while socket requests waited.
+- Kept WAL but selected `synchronous=NORMAL` and 256-page automatic checkpoints,
+  trading only the newest queue updates on sudden power loss for bounded local
+  commit latency. Provider processes remain identity-reconciled after restart.
+- Verification: 2 focused persistence/control-plane tests pass; the full
+  292-test suite passes; `git diff --check` is clean. Post-deployment latency is
+  checked on both supervisors below.
+
 ## 2026-08-24 - Preserve modern Kimi model configuration
 
 - A live MacBook smoke reached Kimi Code 0.31.1 but proved the isolated runtime
@@ -8,8 +21,9 @@
   per-job home with mode `0600`, while continuing to replace MCP state and use
   an empty Skills directory. Missing configuration fails before provider launch.
 - Verification: 3 focused modern-Kimi tests pass; the full 291-test suite
-  passes; `git diff --check` is clean. The replacement smoke is recorded after
-  deployment below.
+  passes; `git diff --check` is clean. MacBook smoke job
+  `98c47bd3-2475-49cb-8c53-d592758185b6` completed on K3 with the exact retained
+  response `ACO KIMI OK`.
 
 ## 2026-08-24 - Keep MCP polling below transport ceilings
 
