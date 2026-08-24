@@ -53,6 +53,23 @@ On macOS, Claude and Kimi implementation jobs are additionally wrapped in a
 kernel-enforced workspace-write profile; Codex uses its native workspace sandbox.
 Unsupported native platforms and CAO implementation fail closed rather than run
 without equivalent write confinement.
+
+The delegation CLI accepts repeatable approved checks:
+
+```sh
+python3 ~/.agents/skills/agent-jobs/scripts/delegate.py \
+  --provider claude --model sonnet --mode implement \
+  --workdir /absolute/project \
+  --prompt 'Implement the focused change and run the unit check.' \
+  --check 'unit=npm test -- --runInBand' \
+  --check 'types=npm run typecheck'
+```
+
+The model sees only the check names and one `run_check(name)` tool. ACO executes
+the exact caller-approved argv without adding a shell, strips provider credentials
+and proxy variables, denies network and Git writes, bounds output/time, and cleans
+the process group. Keep package installs, Git, deployment, dev servers, and
+secret-dependent checks outside delegated jobs.
 Review prompts may contain up to 4 MiB of UTF-8 data. The supervisor's Unix
 socket reader is sized for that complete JSON request, so prompts larger than the
 former 400 KB ceiling are accepted end to end rather than only by one layer.

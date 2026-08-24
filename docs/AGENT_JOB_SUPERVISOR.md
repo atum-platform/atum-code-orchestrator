@@ -297,6 +297,20 @@ workspace policy remain the read-side controls. Full process-level read
 isolation would require provider authentication to be injected into a disposable
 home rather than read from each CLI's durable local login.
 
+Implementation callers can opt into narrowly mediated verification by attaching
+up to eight named approved checks. The supervisor persists each exact argv only
+until provider launch, injects one private `aco_checks.run_check(name)` MCP tool,
+and clears the contract from durable job metadata after launch. The delegated
+model supplies only the name; it cannot supply or alter command text. Each check
+runs serially without a shell added by ACO, without provider credentials or proxy
+variables, with network denied, Git metadata read-only, workspace/sibling write
+confinement, a maximum 15-minute deadline, bounded captured output, and process
+cleanup. The caller may explicitly approve an argv that invokes a project script
+or shell, so the trust decision remains with the caller. Do not approve package
+installation, Git, deployment, dev servers, commands requiring secrets, or
+untrusted repository code. Kimi always receives an explicit isolated MCP config,
+including when no checks are present, so user-global MCP servers are not loaded.
+
 Reads advance the normalized stream with the opaque byte `event_cursor`. On
 terminal failure, cancellation, or interruption, `partial_response` and
 `partial_result_state` make retained work recoverable. Existing callers that
@@ -326,8 +340,9 @@ The SQLite database contains prompts only while jobs are queued; prompts are
 cleared after provider launch and on every terminal path. Paths and hashes remain
 for operations and idempotency. Its directory and files are mode `0700`/`0600`.
 Never submit secrets, `.env` contents, credentials, or unrelated private data.
-Implementation agents cannot run Bash, tests, or Git; the calling agent remains
-responsible for inspecting the diff and running verification.
+Implementation agents cannot run arbitrary Bash or Git. They may run only caller-
+approved named checks through the mediated broker; the calling agent remains
+responsible for inspecting the diff and running final verification.
 Combined and raw per-job logs share a total 10 MiB budget. Normalized event
 journals default to 2 MiB and partial responses to 256 KiB. Override these with
 `AGENT_JOB_MAX_LOG_BYTES`, `AGENT_JOB_MAX_EVENT_BYTES`, and

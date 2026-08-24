@@ -147,13 +147,21 @@ directly to the supervisor's capability-gated write path. Read
 For explicit substantive delegation, run `scripts/delegate.py` with provider,
 model, mode, absolute workdir, and one bounded prompt. `implement` permits scoped
 reads and edits but no Bash, Git, external messaging, or nested agents. The calling
-agent runs tests and Git operations afterward. Claude and Kimi implementation
+agent runs final verification and Git operations afterward. Claude and Kimi implementation
 jobs on macOS are kernel-confined to writes inside the selected workdir plus a
 private temporary runtime directory, with Git metadata kept read-only; Codex uses
 its native workspace sandbox. Treat this as blast-radius reduction, inspect the
 entire diff before executing repository-controlled commands, and repair any CLI
 authentication refresh outside the delegated run.
 The supervisor fails closed where it cannot enforce an equivalent write boundary.
+
+The caller may add repeatable `--check 'NAME=COMMAND'` arguments for bounded,
+iterative verification. These are exact caller-approved argv contracts, not a
+shell exposed to the delegated model; the model can only call `run_check(NAME)`.
+Prefer focused tests, linters, type checks, or builds. Never approve package
+installation, Git, deployment, dev servers, secret-dependent commands, or other
+long-lived/external side effects. Approved checks run without provider credentials
+or network access and with bounded time/output under the implementation sandbox.
 
 Kimi submissions may omit `model`; the supervisor then selects
 `kimi-code/k3`. It canonicalizes supported K3 and K2.7 aliases and maps stale or

@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shlex
 import socket
 import sys
 import time
@@ -84,6 +85,19 @@ def submit(socket_path: Path | str = DEFAULT_SOCKET_PATH, **kwargs: Any) -> dict
                 raise
             time.sleep(.2)
     raise AssertionError("unreachable")
+
+
+def parse_check_spec(value: str) -> dict[str, Any]:
+    name, separator, command = value.partition("=")
+    if not separator or not name or not command:
+        raise argparse.ArgumentTypeError("check must use NAME=COMMAND syntax")
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid check command: {exc}") from exc
+    if not argv:
+        raise argparse.ArgumentTypeError("check command cannot be empty")
+    return {"name": name, "argv": argv}
 
 
 def route_decide(socket_path: Path | str = DEFAULT_SOCKET_PATH, **intent: Any) -> dict[str, Any]:
@@ -179,6 +193,10 @@ def _parser() -> argparse.ArgumentParser:
     )
     submit_parser.add_argument("--owner", default="")
     submit_parser.add_argument("--idempotency-key", default="")
+    submit_parser.add_argument(
+        "--check", action="append", type=parse_check_spec, dest="checks", default=[],
+        help="caller-approved implementation check in NAME=COMMAND form; repeatable",
+    )
     read_parser = sub.add_parser("read")
     read_parser.add_argument("job_id")
     read_parser.add_argument("--cursor", type=int, default=0)

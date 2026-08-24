@@ -496,3 +496,29 @@
   read-only exposes four file-inspection tools, implementation exposes six
   inspection/editing tools, and both expose zero subagents. The repository's
   complete 277-test suite passes under `.venv` after the review fixes.
+
+## 2026-08-24 - Mediated delegated verification
+
+- Closed the filesystem-confinement checkpoint after the requested Opus targeted
+  re-review was attempted. Anthropic returned HTTP 529 after repeated API retries
+  before reading the code; the enforced one-hop route returned the review to the
+  originating Codex session, which verified the original blockers against the
+  committed diff and closed routing feedback without weakening confinement.
+- Added durable caller-approved check contracts for explicit implementation jobs.
+  A caller may attach up to eight named argv lists; the delegated model receives
+  only `run_check(name)` and cannot submit arbitrary command text.
+- Added a thin local MCP command broker for Claude and Kimi. Checks run serially
+  in the submitted workspace under a nested macOS Seatbelt profile with network
+  denied, Git metadata read-only, sibling writes denied, provider credentials and
+  proxy variables removed, bounded output, bounded time, and process cleanup.
+- Kept arbitrary Bash, Git, package installation, deployment, dev servers,
+  external messaging, and nested delegation unavailable. The caller still owns
+  diff inspection, final verification, and all Git operations.
+- Kimi now always receives an explicit isolated MCP config, empty when no checks
+  are approved, preventing user-global MCP servers from widening its tool surface.
+- Approved argv contracts are cleared from SQLite when the provider launches;
+  only the private per-job runtime MCP config survives until job cleanup.
+- Added macOS broker tests covering unknown-name rejection, credential scrubbing,
+  workspace/Git/sibling confinement, network denial, and timeout termination,
+  plus supervisor persistence and provider-adapter tests. The complete suite now
+  passes all 281 tests under the repository `.venv`.

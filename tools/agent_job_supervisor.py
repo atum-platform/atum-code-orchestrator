@@ -37,6 +37,10 @@ DB_PATH = Path(os.environ.get("AGENT_JOB_DB", str(STATE_DIR / "jobs.sqlite3"))).
 LOG_DIR = Path(os.environ.get("AGENT_JOB_LOG_DIR", str(STATE_DIR / "logs"))).expanduser()
 SERVER_DIR = Path(__file__).resolve().parent
 MAX_PROMPT_BYTES = 4 * 1024 * 1024
+MAX_CHECKS = 8
+MAX_CHECK_ARGV_ITEMS = 64
+MAX_CHECK_SPEC_BYTES = 16 * 1024
+CHECK_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,31}$")
 MAX_READ_BYTES = 256_000
 MAX_JOB_LOG_BYTES = int(os.environ.get("AGENT_JOB_MAX_LOG_BYTES", str(10 * 1024 * 1024)))
 ROUTE_FEEDBACK_OUTCOMES = {"completed", "failed", "abandoned", "escalated", "not_started"}
@@ -175,6 +179,38 @@ def _normalize_model(provider: str, requested_model: str) -> tuple[str, str]:
     return KIMI_K27_MODEL, (
         f"Unrecognized or legacy Kimi model alias '{model}' normalized to {KIMI_K27_MODEL}"
     )
+
+
+def _normalize_checks(raw: Any, mode: str) -> list[dict[str, Any]]:
+    if raw in (None, []):
+        return []
+    if mode != "implement":
+        raise ValueError("Approved checks are available only for implementation jobs")
+    if not isinstance(raw, list) or len(raw) > MAX_CHECKS:
+        raise ValueError(f"checks must be a list of at most {MAX_CHECKS} entries")
+    normalized: list[dict[str, Any]] = []
+    names: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError("Each check must be an object")
+        name = str(item.get("name") or "")
+        argv = item.get("argv")
+        if not CHECK_NAME_PATTERN.fullmatch(name) or name in names:
+            raise ValueError(f"Invalid or duplicate check name: {name!r}")
+        if not isinstance(argv, list) or not 1 <= len(argv) <= MAX_CHECK_ARGV_ITEMS:
+            raise ValueError(f"Check {name!r} must contain 1 to {MAX_CHECK_ARGV_ITEMS} argv items")
+        clean_argv: list[str] = []
+        for value in argv:
+            if not isinstance(value, str) or not value or "\x00" in value:
+                raise ValueError(f"Check {name!r} contains an invalid argv item")
+            clean_argv.append(value)
+        timeout = max(5, min(int(item.get("timeout_seconds") or 300), 900))
+        normalized.append({"name": name, "argv": clean_argv, "timeout_seconds": timeout})
+        names.add(name)
+    encoded = _json(normalized)
+    if len(encoded.encode("utf-8")) > MAX_CHECK_SPEC_BYTES:
+        raise ValueError(f"checks exceed {MAX_CHECK_SPEC_BYTES} UTF-8 bytes")
+    return normalized
 
 
 def _allowed_roots() -> list[Path]:
@@ -404,6 +440,7 @@ class JobStore:
             "provider_result_error": "INTEGER NOT NULL DEFAULT 0",
             "semantic_normalization_failed": "INTEGER NOT NULL DEFAULT 0",
             "journal_truncated": "INTEGER NOT NULL DEFAULT 0",
+            "checks_json": "TEXT NOT NULL DEFAULT '[]'",
         }
         for name, definition in migrations.items():
             if name not in columns:
@@ -444,7 +481,8 @@ class JobStore:
             "ON provider_health_events(provider, observed_at)"
         )
         self.db.execute(
-            "UPDATE jobs SET prompt = '' WHERE status IN ('completed','failed','cancelled','interrupted')"
+            "UPDATE jobs SET prompt = '', checks_json = '[]' "
+            "WHERE status IN ('completed','failed','cancelled','interrupted')"
         )
         self.db.commit()
         try:
@@ -472,8 +510,8 @@ class JobStore:
                 created_at, updated_at, timeout_seconds, queue_timeout_seconds,
                 run_timeout_seconds, soft_stall_seconds,
                 max_turns, log_path, idempotency_key, request_hash, execution_backend,
-                semantic_stream
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                semantic_stream, checks_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 job_id, spec["provider"], spec["model"], spec.get("requested_model", ""),
                 spec["mode"], spec["workdir"],
@@ -482,7 +520,7 @@ class JobStore:
                 spec.get("queue_timeout_seconds"), spec.get("run_timeout_seconds"),
                 spec["soft_stall_seconds"], spec["max_turns"], str(log_path), key,
                 spec["request_hash"], spec.get("execution_backend", "native"),
-                int(spec.get("semantic_stream") or 0),
+                int(spec.get("semantic_stream") or 0), spec.get("checks_json", "[]"),
             ),
         )
         self.db.commit()
@@ -857,7 +895,8 @@ class JobStore:
         now = _now()
         self.db.execute(
             """UPDATE jobs SET status = 'interrupted', failure_kind = 'supervisor_restart',
-               message = 'Supervisor restarted while the job was running', prompt = '', finished_at = ?, updated_at = ?
+               message = 'Supervisor restarted while the job was running', prompt = '', checks_json = '[]',
+               finished_at = ?, updated_at = ?
                WHERE status IN ('launching','running')""",
             (now, now),
         )
@@ -1059,10 +1098,19 @@ class Supervisor:
         model = job["model"]
         mode = job["mode"]
         prompt = job["prompt"]
+        checks = json.loads(str(job.get("checks_json") or "[]"))
+        if mode == "implement" and checks:
+            names = ", ".join(str(check["name"]) for check in checks)
+            prompt += (
+                "\n\nApproved verification checks are available through the "
+                f"aco_checks run_check tool: {names}. Run only these named checks."
+            )
         max_turns = int(job["max_turns"])
         if provider == "claude":
             permission = "plan" if mode == "readonly" else "acceptEdits"
             tools = ["Read", "Glob", "Grep"] if mode == "readonly" else ["Read", "Glob", "Grep", "Edit", "Write"]
+            if mode == "implement" and checks:
+                tools.append("mcp__aco_checks__run_check")
             tool_csv = ",".join(tools)
             disallowed = [
                 "Bash", "BashOutput", "KillShell", "Agent", "Task", "Monitor",
@@ -1090,7 +1138,10 @@ class Supervisor:
             agent_path = SERVER_DIR / agent_name
             if not agent_path.is_file():
                 raise RuntimeError(f"Kimi agent definition is missing: {agent_path}")
-            argv = [binary, "--model", model, "--agent-file", str(agent_path)]
+            argv = [
+                binary, "--model", model, "--agent-file", str(agent_path),
+                "--mcp-config-file", str(SERVER_DIR / "empty_mcp.json"),
+            ]
             kimi_config = Path.home() / ".kimi" / "config.toml"
             if mode == "implement" and kimi_config.is_file():
                 argv.extend(["--config-file", str(kimi_config)])
@@ -1157,6 +1208,24 @@ class Supervisor:
                 link.symlink_to(target, target_is_directory=target.is_dir())
         return share
 
+    def _prepare_check_mcp(self, runtime: Path, job: dict[str, Any]) -> Path:
+        checks_json = str(job.get("checks_json") or "[]")
+        config_path = runtime / "checks-mcp.json"
+        config: dict[str, Any] = {"mcpServers": {}}
+        if json.loads(checks_json):
+            config["mcpServers"]["aco_checks"] = {
+                "command": sys.executable,
+                "args": [str(SERVER_DIR / "agent_job_check_server.py")],
+                "env": {
+                    "ACO_CHECKS_WORKDIR": job["workdir"],
+                    "ACO_CHECKS_RUNTIME": str(runtime),
+                    "ACO_CHECKS_JSON": checks_json,
+                },
+            }
+        config_path.write_text(_json(config), encoding="utf-8")
+        os.chmod(config_path, 0o600)
+        return config_path
+
     def _confine_implementation(
         self,
         job: dict[str, Any],
@@ -1179,6 +1248,11 @@ class Supervisor:
         if job["provider"] == "kimi":
             confined_env["KIMI_SHARE_DIR"] = str(self._prepare_kimi_runtime(runtime))
         git_meta = workdir / ".git"
+        mcp_config = self._prepare_check_mcp(runtime, job)
+        config_flag = "--mcp-config" if job["provider"] == "claude" else "--mcp-config-file"
+        if config_flag in argv:
+            config_index = argv.index(config_flag) + 1
+            argv[config_index] = str(mcp_config)
         confined_argv = [
             str(SANDBOX_EXEC_PATH),
             "-p",
@@ -1195,6 +1269,10 @@ class Supervisor:
 
     def _public(self, job: dict[str, Any]) -> dict[str, Any]:
         result = {key: value for key, value in job.items() if key != "prompt"}
+        checks_json = str(result.pop("checks_json", "[]") or "[]")
+        result["approved_checks"] = [
+            str(check["name"]) for check in json.loads(checks_json)
+        ]
         separate_timeouts = result.get("run_timeout_seconds") is not None
         result["timeout_semantics"] = "separate" if separate_timeouts else "legacy_shared"
         result["queue_deadline_at"] = _queue_deadline(result)
@@ -1447,7 +1525,7 @@ class Supervisor:
     ) -> dict[str, Any]:
         self.store.update(
             job_id, status=status, failure_kind=failure_kind, message=message,
-            prompt="", finished_at=_now(), notify=False, **values,
+            prompt="", checks_json="[]", finished_at=_now(), notify=False, **values,
         )
         try:
             self._record_event(job_id, "job_terminal", {
@@ -1639,7 +1717,7 @@ class Supervisor:
                 job_id, status="running", started_at=started, last_output_at=started,
                 pid=proc.pid, pgid=proc.pid,
                 binary_path=str(Path(live_executable or argv[0]).resolve()),
-                process_start=process_start, prompt="", message="",
+                process_start=process_start, prompt="", checks_json="[]", message="",
             )
             if self._has_semantic_adapter(job):
                 self.event_decoders[job_id] = ProviderEventDecoder(str(job["provider"]))
@@ -1820,6 +1898,7 @@ class Supervisor:
             self.binary_finder(provider)
         if mode not in {"readonly", "implement"}:
             raise ValueError(f"Unsupported mode: {mode}")
+        checks = _normalize_checks(payload.get("checks"), mode)
         if mode == "implement":
             if os.environ.get("AGENT_JOB_ALLOW_IMPLEMENT") != "1":
                 raise PermissionError("Durable implement mode is disabled by supervisor policy")
@@ -1879,12 +1958,14 @@ class Supervisor:
                 and (provider != "kimi" or _kimi_semantic_enabled())
             ),
             "idempotency_key": str(payload.get("idempotency_key") or "")[:200],
+            "checks_json": _json(checks),
         }
         hash_fields = {key: spec[key] for key in (
             "provider", "model", "requested_model", "mode", "workdir", "prompt",
             "queue_timeout_seconds", "run_timeout_seconds", "max_turns",
             "execution_backend",
             "semantic_stream",
+            "checks_json",
         )}
         spec["request_hash"] = hashlib.sha256(_json(hash_fields).encode("utf-8")).hexdigest()
         legacy_hash_fields = {key: spec[key] for key in (

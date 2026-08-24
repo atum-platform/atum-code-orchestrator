@@ -1650,6 +1650,40 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         result = await self.wait_for(str(submitted["job_id"]), {"completed"})
         self.assertEqual("completed", result["job"]["status"])
 
+    async def test_implementation_persists_only_valid_approved_checks(self) -> None:
+        spec = self.spec("complete")
+        spec.update(
+            mode="implement",
+            implement_capability="test-capability",
+            checks=[{"name": "unit", "argv": ["npm", "test"], "timeout_seconds": 42}],
+        )
+        self.supervisor.provider_limits["claude"] = 0
+        try:
+            submitted = await self.call(spec)
+            row = self.supervisor.store.get(str(submitted["job_id"]))
+            self.assertEqual(
+                [{"name": "unit", "argv": ["npm", "test"], "timeout_seconds": 42}],
+                json.loads(row["checks_json"]),
+            )
+            self.assertEqual(["unit"], submitted["approved_checks"])
+            await self.call({"action": "cancel", "job_id": submitted["job_id"]})
+        finally:
+            self.supervisor.provider_limits["claude"] = 1
+
+        readonly = self.spec("complete")
+        readonly["checks"] = [{"name": "unit", "argv": ["npm", "test"]}]
+        with self.assertRaisesRegex(RuntimeError, "implementation jobs"):
+            await self.call(readonly)
+
+        duplicate = spec.copy()
+        duplicate["idempotency_key"] = ""
+        duplicate["checks"] = [
+            {"name": "unit", "argv": ["npm", "test"]},
+            {"name": "unit", "argv": ["npm", "run", "lint"]},
+        ]
+        with self.assertRaisesRegex(RuntimeError, "duplicate check"):
+            await self.call(duplicate)
+
     async def test_cao_implementation_is_rejected_without_confinement(self) -> None:
         spec = self.spec("complete")
         spec.update(
@@ -1925,6 +1959,9 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("--max-turns", argv)
             base["mode"] = "implement"
             base["job_id"] = "00000000-0000-0000-0000-000000000002"
+            base["checks_json"] = json.dumps([
+                {"name": "unit", "argv": ["npm", "test"], "timeout_seconds": 60}
+            ])
             if sys.platform == "darwin":
                 argv, _, confined_env = self.supervisor._build_command(base)
                 self.assertEqual(str(supervisor_module.SANDBOX_EXEC_PATH), argv[0])
@@ -1934,8 +1971,12 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
                     confined_env["TMPDIR"].startswith(str(self.supervisor.state_dir.resolve()))
                 )
                 self.assertEqual(
-                    "Read,Glob,Grep,Edit,Write", argv[argv.index("--tools") + 1]
+                    "Read,Glob,Grep,Edit,Write,mcp__aco_checks__run_check",
+                    argv[argv.index("--tools") + 1],
                 )
+                mcp_path = Path(argv[argv.index("--mcp-config") + 1])
+                mcp_config = json.loads(mcp_path.read_text(encoding="utf-8"))
+                self.assertIn("aco_checks", mcp_config["mcpServers"])
                 self.assertIn("--safe-mode", argv)
                 self.assertNotIn("Bash", argv[argv.index("--tools") + 1].split(","))
                 self.assertIn("Agent", argv[argv.index("--disallowed-tools") + 1].split(","))
