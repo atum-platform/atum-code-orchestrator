@@ -22,7 +22,7 @@ import agent_job_supervisor as supervisor_module  # noqa: E402
 from agent_job_supervisor import JobStore, Supervisor  # noqa: E402
 
 
-class JobStoreMigrationTest(unittest.TestCase):
+class WorkspaceConfinementTest(unittest.TestCase):
     @unittest.skipUnless(
         sys.platform == "darwin" and supervisor_module.SANDBOX_EXEC_PATH.is_file(),
         "macOS sandbox-exec is required",
@@ -32,6 +32,7 @@ class JobStoreMigrationTest(unittest.TestCase):
             root = Path(temporary).resolve()
             workdir = root / "work"
             workdir.mkdir()
+            (workdir / ".git").mkdir()
             (workdir / "escape").symlink_to(root)
             supervisor = Supervisor(
                 state_dir=root / "state",
@@ -42,6 +43,7 @@ class JobStoreMigrationTest(unittest.TestCase):
             )
             job = {
                 "job_id": "00000000-0000-0000-0000-000000000001",
+                "provider": "claude",
                 "mode": "implement",
                 "workdir": str(workdir),
             }
@@ -49,7 +51,8 @@ class JobStoreMigrationTest(unittest.TestCase):
                 job,
                 [
                     "/bin/sh", "-c",
-                    'echo inside > "$1/in"; echo outside > "$2"; echo escaped > "$1/escape/escaped"',
+                    'echo inside > "$1/in"; echo git > "$1/.git/config"; '
+                    'echo outside > "$2"; echo escaped > "$1/escape/escaped"',
                     "sh", str(workdir), str(root / "outside"),
                 ],
                 None,
@@ -60,9 +63,51 @@ class JobStoreMigrationTest(unittest.TestCase):
 
             self.assertNotEqual(0, result.returncode)
             self.assertTrue((workdir / "in").is_file())
+            self.assertFalse((workdir / ".git/config").exists())
             self.assertFalse((root / "outside").exists())
             self.assertFalse((root / "escaped").exists())
             supervisor.store.db.close()
+
+    def test_runtime_cleanup_removes_stale_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            supervisor = Supervisor(
+                state_dir=root / "state",
+                socket_path=root / "state/supervisor.sock",
+                db_path=root / "state/jobs.sqlite3",
+                log_dir=root / "state/logs",
+            )
+            stale = supervisor._job_runtime_dir("stale-job")
+            stale.mkdir()
+            (stale / "partial").write_text("stale", encoding="utf-8")
+
+            supervisor._cleanup_stale_runtime_dirs()
+
+            self.assertFalse(stale.exists())
+            self.assertEqual(0o700, stat.S_IMODE(supervisor._runtime_base().stat().st_mode))
+            supervisor.store.db.close()
+
+    def test_runtime_base_rejects_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            state = root / "state"
+            state.mkdir()
+            outside = root / "outside"
+            outside.mkdir()
+            (state / "runtime").symlink_to(outside)
+            supervisor = Supervisor(
+                state_dir=state,
+                socket_path=state / "supervisor.sock",
+                db_path=state / "jobs.sqlite3",
+                log_dir=state / "logs",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
+                supervisor._job_runtime_dir("job")
+            supervisor.store.db.close()
+
+
+class JobStoreMigrationTest(unittest.TestCase):
 
     def test_existing_jobs_gain_nullable_separate_timeout_columns(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1746,11 +1791,9 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         job_id = "identity-match-job"
         self.supervisor.store.create(spec, job_id, self.supervisor.log_dir / f"{job_id}.log")
         process_start = await self.supervisor._ps_field(process.pid, "lstart")
-        live_executable = await self.supervisor._ps_field(process.pid, "comm")
-        live_binary = str(Path(live_executable).resolve())
         self.supervisor.store.update(
             job_id, status="running", pid=process.pid, pgid=process.pid,
-            binary_path=live_binary, process_start=process_start,
+            binary_path="/usr/bin/transient-launch-wrapper", process_start=process_start,
         )
         await self.supervisor._cleanup_interrupted()
         process.wait(timeout=5)
@@ -1821,6 +1864,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
                 "semantic_stream": 0,
             }
             argv, stdin_text, env = self.supervisor._build_command(base)
+            self.assertNotEqual(str(supervisor_module.SANDBOX_EXEC_PATH), argv[0])
             self.assertIn("--agent-file", argv)
             self.assertNotIn("--output-format", argv)
             self.assertEqual("kimi-secret", env["MOONSHOT_API_KEY"])
@@ -1829,6 +1873,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             with patch.dict(os.environ, {"AGENT_JOB_KIMI_SEMANTIC": "1"}):
                 base["semantic_stream"] = 1
                 argv, _, _ = self.supervisor._build_command(base)
+            self.assertIn("--print", argv)
             self.assertIn("--output-format", argv)
             self.assertIn("stream-json", argv)
             base.update(
@@ -1836,9 +1881,11 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
                 job_id="00000000-0000-0000-0000-000000000003",
             )
             if sys.platform == "darwin":
-                kimi_argv, _, _ = self.supervisor._build_command(base)
+                kimi_argv, _, kimi_env = self.supervisor._build_command(base)
                 self.assertEqual(str(supervisor_module.SANDBOX_EXEC_PATH), kimi_argv[0])
-                self.assertIn("kimi_implementation_agent.md", " ".join(kimi_argv))
+                self.assertIn("kimi_implementation_agent.yaml", " ".join(kimi_argv))
+                self.assertIn("KIMI_SHARE_DIR", kimi_env)
+                self.assertTrue(Path(kimi_env["KIMI_SHARE_DIR"]).is_dir())
             else:
                 with self.assertRaisesRegex(RuntimeError, "confinement is unavailable"):
                     self.supervisor._build_command(base)
@@ -1944,6 +1991,10 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("http://127.0.0.1:9889", env["AGENT_JOB_CAO_URL"])
         self.assertEqual("2800.0", env["AGENT_JOB_DEADLINE_EPOCH"])
         self.assertNotIn("ANTHROPIC_API_KEY", env)
+
+        job["mode"] = "implement"
+        with self.assertRaisesRegex(RuntimeError, "workspace-confined implementation"):
+            self.supervisor._build_command(job)
 
     async def test_route_decide_persists_shadow_decision_without_creating_job(self) -> None:
         decision = await self.call({

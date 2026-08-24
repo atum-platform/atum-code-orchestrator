@@ -149,7 +149,10 @@ model, mode, absolute workdir, and one bounded prompt. `implement` permits scope
 reads and edits but no Bash, Git, external messaging, or nested agents. The calling
 agent runs tests and Git operations afterward. Claude and Kimi implementation
 jobs on macOS are kernel-confined to writes inside the selected workdir plus a
-private temporary runtime directory; Codex uses its native workspace sandbox.
+private temporary runtime directory, with Git metadata kept read-only; Codex uses
+its native workspace sandbox. Treat this as blast-radius reduction, inspect the
+entire diff before executing repository-controlled commands, and repair any CLI
+authentication refresh outside the delegated run.
 The supervisor fails closed where it cannot enforce an equivalent write boundary.
 
 Kimi submissions may omit `model`; the supervisor then selects

@@ -270,14 +270,28 @@ delegation at the native Claude CLI boundary. It does not by itself confine
 absolute paths, so the supervisor adds a second boundary for implementation.
 On macOS, native Claude and Kimi implementation processes run under a Seatbelt
 profile that permits writes only in the resolved submitted workspace and a
-private per-job runtime directory. Symlink-resolved writes outside those paths
-are denied by the kernel. The runtime directory is mode `0700`, becomes the
-provider's `TMPDIR`, and is removed after termination. Codex continues to use
+private per-job runtime directory, except that workspace Git metadata remains
+read-only. Symlink-resolved writes outside those paths are denied by the kernel.
+The runtime directory is mode `0700`, becomes the provider's `TMPDIR`, and is
+removed after normal termination or on the next supervisor start. Codex continues to use
 its native `workspace-write` sandbox. If the required platform sandbox is not
 available, implementation fails closed. The optional CAO backend is rejected for
 implementation until it can provide the same enforceable contract.
 
-This checkpoint confines writes, not every read. The no-shell/no-network tool
+Kimi implementation jobs set `KIMI_SHARE_DIR` to a disposable directory under
+the per-job runtime so logs and sessions do not require writes to `~/.kimi`.
+The real config and credentials remain readable for subscription authentication
+but are not writable through the sandbox; token refresh that requires durable
+credential rotation therefore fails closed and must be repaired outside the job.
+
+This checkpoint reduces delegated write blast radius; it is not a complete
+security boundary. A provider still has network access for inference and can
+read files available to the macOS user, while workspace-controlled settings may
+still affect commands the calling agent runs later. The calling agent must inspect
+the complete diff before running commands. Subscription CLIs may also fail closed
+if they try to refresh durable authentication state during an implementation job;
+refresh or repair authentication outside the delegated run.
+The no-shell/no-network tool
 surface, safe mode, empty MCP configuration, secret-context rejection, and
 workspace policy remain the read-side controls. Full process-level read
 isolation would require provider authentication to be injected into a disposable

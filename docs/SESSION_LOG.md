@@ -466,4 +466,33 @@
 - Verified the actual Sonnet implementation adapter under the wrapper: `Write`
   created the requested file inside an isolated workspace, the requested absolute
   sibling write did not create a file, and the provider exited successfully.
-- Full verification passes all 275 unit and integration tests on macOS.
+- Full verification passes all 277 unit and integration tests on macOS.
+- Opus held the first checkpoint after finding that a transient `sandbox-exec`
+  process name could defeat restart cleanup, the CAO launch choke point lacked
+  its own implementation rejection, and Kimi had not been exercised live.
+- Restart cleanup now identifies the exact process group by PID, PGID, and start
+  time rather than an executable name that changes across `exec`. The command
+  builder rejects legacy queued CAO implementation jobs before launch.
+- Runtime confinement now rejects a symlinked runtime root, removes stale runtime
+  directories at startup, protects workspace Git metadata, and keeps cleanup
+  failures from leaking in-memory scheduler state. Documentation now states the
+  remaining read, network, authentication-refresh, and workspace-config risks.
+- Kimi's first live probe failed before model invocation because it writes logs
+  beneath `~/.kimi`. Implementation jobs now redirect `KIMI_SHARE_DIR` into the
+  disposable runtime while reading the real config and credentials without write
+  access; the live probe is repeated as part of this checkpoint.
+- The retry exposed current Kimi CLI argument drift: structured output now
+  requires print mode. The adapter pairs `--print` with `--output-format
+  stream-json` so durable jobs reach model execution on the installed CLI.
+- The next startup check found that current Kimi also replaced frontmatter
+  markdown agent definitions with versioned YAML specs. Both ACO Kimi agents now
+  use native YAML definitions, separate system prompts, explicit restricted tool
+  classes, and an empty subagent registry.
+- The confined Kimi adapter now reaches provider authentication. The machine's
+  current Kimi login returns the same 401 both inside and outside ACO, and its
+  local managed-model config currently exposes K2.7 but not the preferred K3
+  alias; a successful model write probe remains blocked on external reauthentication.
+- Verified both replacement Kimi agent specs with the installed Kimi parser:
+  read-only exposes four file-inspection tools, implementation exposes six
+  inspection/editing tools, and both expose zero subagents. The repository's
+  complete 277-test suite passes under `.venv` after the review fixes.

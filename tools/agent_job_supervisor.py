@@ -100,6 +100,7 @@ MACOS_WORKSPACE_WRITE_PROFILE = """(version 1)
     (require-not (subpath (param "WORKDIR")))
     (require-not (subpath (param "RUNTIME_DIR")))
     (require-not (literal "/dev/null"))))
+(deny file-write* (subpath (param "GIT_META")))
 """
 
 
@@ -1030,6 +1031,10 @@ class Supervisor:
     def _build_command(self, job: dict[str, Any]) -> tuple[list[str], str | None, dict[str, str]]:
         provider = job["provider"]
         if job.get("execution_backend", "native") == "cao":
+            if job["mode"] == "implement":
+                raise RuntimeError(
+                    "CAO cannot enforce workspace-confined implementation; use the native backend"
+                )
             bridge = SERVER_DIR / "cao_job_bridge.py"
             if not bridge.is_file():
                 raise RuntimeError(f"CAO job bridge is missing: {bridge}")
@@ -1081,13 +1086,16 @@ class Supervisor:
             argv.append("--safe-mode")
             return self._confine_implementation(job, argv, prompt, _provider_env(provider))
         if provider == "kimi":
-            agent_name = "kimi_read_only_reviewer.md" if mode == "readonly" else "kimi_implementation_agent.md"
+            agent_name = "kimi_read_only_reviewer.yaml" if mode == "readonly" else "kimi_implementation_agent.yaml"
             agent_path = SERVER_DIR / agent_name
             if not agent_path.is_file():
                 raise RuntimeError(f"Kimi agent definition is missing: {agent_path}")
             argv = [binary, "--model", model, "--agent-file", str(agent_path)]
+            kimi_config = Path.home() / ".kimi" / "config.toml"
+            if mode == "implement" and kimi_config.is_file():
+                argv.extend(["--config-file", str(kimi_config)])
             if job.get("semantic_stream"):
-                argv.extend(["--output-format", "stream-json"])
+                argv.extend(["--print", "--output-format", "stream-json"])
             argv.extend(["--prompt", prompt])
             return self._confine_implementation(job, argv, None, _provider_env(provider))
         sandbox = "read-only" if mode == "readonly" else "workspace-write"
@@ -1100,12 +1108,54 @@ class Supervisor:
         argv.append("-")
         return argv, prompt, _provider_env(provider)
 
+    def _runtime_base(self) -> Path:
+        raw = self.state_dir.resolve() / "runtime"
+        if raw.is_symlink():
+            raise RuntimeError("Runtime confinement directory cannot be a symlink")
+        raw.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(raw, 0o700)
+        return raw.resolve()
+
     def _job_runtime_dir(self, job_id: str) -> Path:
-        base = (self.state_dir / "runtime").resolve()
+        base = self._runtime_base()
         runtime = (base / job_id).resolve()
         if runtime == base or base not in runtime.parents:
             raise RuntimeError("Invalid job ID for runtime confinement")
         return runtime
+
+    def _cleanup_job_runtime(self, job_id: str) -> None:
+        try:
+            shutil.rmtree(self._job_runtime_dir(job_id))
+        except FileNotFoundError:
+            pass
+        except (OSError, RuntimeError) as exc:
+            print(
+                f"agent-job runtime cleanup failed for {job_id}: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    def _cleanup_stale_runtime_dirs(self) -> None:
+        base = self._runtime_base()
+        for candidate in base.iterdir():
+            try:
+                if candidate.is_dir() and not candidate.is_symlink():
+                    shutil.rmtree(candidate)
+                else:
+                    candidate.unlink()
+            except FileNotFoundError:
+                pass
+
+    def _prepare_kimi_runtime(self, runtime: Path) -> Path:
+        share = runtime / "kimi-share"
+        share.mkdir(mode=0o700, exist_ok=True)
+        source = Path.home() / ".kimi"
+        for name in ("credentials", "device_id"):
+            target = source / name
+            link = share / name
+            if target.exists() and not link.exists():
+                link.symlink_to(target, target_is_directory=target.is_dir())
+        return share
 
     def _confine_implementation(
         self,
@@ -1126,6 +1176,9 @@ class Supervisor:
         os.chmod(runtime, 0o700)
         confined_env = dict(env)
         confined_env["TMPDIR"] = f"{runtime}{os.sep}"
+        if job["provider"] == "kimi":
+            confined_env["KIMI_SHARE_DIR"] = str(self._prepare_kimi_runtime(runtime))
+        git_meta = workdir / ".git"
         confined_argv = [
             str(SANDBOX_EXEC_PATH),
             "-p",
@@ -1134,6 +1187,8 @@ class Supervisor:
             f"WORKDIR={workdir}",
             "-D",
             f"RUNTIME_DIR={runtime}",
+            "-D",
+            f"GIT_META={git_meta}",
             *argv,
         ]
         return confined_argv, stdin_text, confined_env
@@ -1663,17 +1718,7 @@ class Supervisor:
                 await self._terminate(proc)
             self._finish_job(job_id, "failed", "launch_error", str(exc))
         finally:
-            runtime = self._job_runtime_dir(job_id)
-            try:
-                shutil.rmtree(runtime)
-            except FileNotFoundError:
-                pass
-            except OSError as exc:
-                print(
-                    f"agent-job runtime cleanup failed for {job_id}: {exc}",
-                    file=sys.stderr,
-                    flush=True,
-                )
+            self._cleanup_job_runtime(job_id)
             self.change_events.pop(job_id, None)
             self.processes.pop(job_id, None)
             self.tasks.pop(job_id, None)
@@ -1740,15 +1785,12 @@ class Supervisor:
             try:
                 process_start = await self._ps_field(pid, "lstart")
                 live_pgid = await self._ps_field(pid, "pgid")
-                executable = await self._ps_field(pid, "comm")
             except (OSError, ValueError):
                 continue
             if (
                 not process_start
                 or process_start != str(job.get("process_start") or "")
                 or int(live_pgid or 0) != int(pgid)
-                or not executable
-                or Path(executable).expanduser().resolve() != Path(str(job.get("binary_path") or "")).expanduser().resolve()
             ):
                 self.store.update(job["job_id"], message="Restart cleanup skipped: process identity did not match")
                 continue
@@ -2247,6 +2289,7 @@ class Supervisor:
         except BlockingIOError as exc:
             raise AlreadyRunning("Another agent job supervisor already owns the state directory") from exc
         await self._cleanup_interrupted()
+        self._cleanup_stale_runtime_dirs()
         if self.socket_path.exists():
             self.socket_path.unlink()
         server = await asyncio.start_unix_server(
