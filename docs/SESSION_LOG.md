@@ -446,3 +446,8 @@
 - Added regression coverage proving ACO bootstrap and client targets do not
   manage Hermes profiles. Updated current installation and rollback docs to make
   the ownership boundary explicit.
+- Follow-up review returned SHIP and identified a remaining runtime authorization
+  overlap. Removed Hermes-owned directories from ACO's default workspace roots,
+  pinned that exclusion in policy tests, and cleaned stale migration/runbook
+  language. Opus was attempted first as requested but failed before review with
+  Anthropic HTTP 529; the enforced one-hop Kimi K3 fallback completed the review.

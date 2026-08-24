@@ -108,8 +108,9 @@ Kimi's omitted-model default is `kimi-code/k3`; deployments may override it with
 `AGENT_JOB_KIMI_DEFAULT_MODEL` after confirming the target machine's Kimi Code
 configuration supports that canonical model ID. Approved
 workspace roots are defined once in `tools/agent_job_policy.py` and used by the
-installer, supervisor, review core, and profile migrator. Override them
-consistently with `AGENT_JOB_ALLOWED_ROOTS` when deploying elsewhere.
+installer, supervisor, and review core. Hermes-owned paths are intentionally
+excluded. Override the roots consistently with `AGENT_JOB_ALLOWED_ROOTS` when
+deploying elsewhere.
 
 The same socket accepts protocol-v1 and protocol-v2 `route_decide` requests plus
 `route_feedback`, `route_reconcile`, and `route_status`. V1 preserves the legacy

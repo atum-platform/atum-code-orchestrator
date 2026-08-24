@@ -12,6 +12,10 @@ present on a machine is adopted verbatim to preserve local and temporary routing
 policy; a fresh machine receives the repository default, so machine-specific
 overrides may intentionally differ.
 
+The former `--with-hermes` bootstrap option is retired and intentionally has no
+replacement in ACO. Manage Hermes profiles through the independent Hermes
+deployment.
+
 All coding surfaces receive a separate installer-owned routing block. This block
 may be updated without replacing customized provider guidance. The installer
 also migrates its exact previous Claude default while preserving any customized
@@ -56,9 +60,9 @@ Restart client applications after installation. Verify:
 ## Rollback
 
 Stop submitting jobs and let active jobs drain. Restore the timestamped
-`*.bak.agent-jobs-*` client files and profile backups, then reinstall the prior
-supervisor from its checkout. The SQLite database and retained job results are
-not deleted by either installation.
+`*.bak.agent-jobs-*` coding-client files, then reinstall the prior supervisor
+from its checkout. The SQLite database and retained job results are not deleted
+by either installation. Hermes profile rollback belongs to the Hermes runbook.
 
 For routing-only rollback, reinstall the supervisor with
 `AGENT_JOB_ROUTING_MODE=shadow` (or remove that variable) after active durable

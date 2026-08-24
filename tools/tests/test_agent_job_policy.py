@@ -20,6 +20,11 @@ class AgentJobPolicyTest(unittest.TestCase):
         self.assertIn(home / "Projects", roots)
         self.assertIn(home / "projects", roots)
 
+    def test_default_roots_exclude_hermes_owned_paths(self) -> None:
+        roots = agent_job_policy.default_allowed_roots(Path("/Users/tester"))
+
+        self.assertFalse(any(".hermes" in path.parts for path in roots))
+
 
 if __name__ == "__main__":
     unittest.main()
