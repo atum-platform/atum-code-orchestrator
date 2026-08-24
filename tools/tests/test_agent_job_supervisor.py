@@ -1782,13 +1782,25 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("--verbose", argv)
             self.assertIn("--no-session-persistence", argv)
             self.assertIn("--max-turns", argv)
-            self.assertEqual("Read,Glob,Grep,LS", argv[argv.index("--tools") + 1])
-            self.assertEqual("Read,Glob,Grep,LS", argv[argv.index("--allowed-tools") + 1])
+            self.assertEqual("Read,Glob,Grep", argv[argv.index("--tools") + 1])
+            self.assertEqual(
+                argv[argv.index("--tools") + 1],
+                argv[argv.index("--allowed-tools") + 1],
+            )
             denied = argv[argv.index("--disallowed-tools") + 1].split(",")
-            self.assertIn("Bash", denied)
-            self.assertIn("Agent", denied)
+            for tool in (
+                "Bash", "BashOutput", "KillShell", "Agent", "Task", "Monitor",
+                "Workflow", "WebFetch", "WebSearch", "NotebookEdit",
+            ):
+                self.assertIn(tool, denied)
+            self.assertNotIn("Bash", argv[argv.index("--tools") + 1].split(","))
             self.assertNotIn("Edit", argv[argv.index("--tools") + 1].split(","))
             self.assertNotIn("Write", argv[argv.index("--tools") + 1].split(","))
+            self.assertIn("--strict-mcp-config", argv)
+            self.assertEqual(
+                '{"mcpServers":{}}', argv[argv.index("--mcp-config") + 1]
+            )
+            self.assertGreater(argv.index("--safe-mode"), argv.index("--mcp-config"))
             base["max_turns"] = 0
             argv, _, _ = self.supervisor._build_command(base)
             self.assertNotIn("--max-turns", argv)
@@ -1797,12 +1809,14 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 "Read,Glob,Grep,Edit,Write", argv[argv.index("--tools") + 1]
             )
+            self.assertIn("--safe-mode", argv)
             self.assertNotIn("Bash", argv[argv.index("--tools") + 1].split(","))
             self.assertIn("Agent", argv[argv.index("--disallowed-tools") + 1].split(","))
-            base.update(provider="codex", model="gpt-5.6-codex")
+            base.update(provider="codex", model="gpt-5.6-codex", mode="readonly")
             os.environ["AGENT_JOB_CAO_TOKEN"] = "must-not-reach-native"
             argv, stdin_text, env = self.supervisor._build_command(base)
             self.assertIn("--ignore-user-config", argv)
+            self.assertEqual("read-only", argv[argv.index("-s") + 1])
             self.assertEqual("review", stdin_text)
             self.assertNotIn("AGENT_JOB_CAO_TOKEN", env)
         finally:

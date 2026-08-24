@@ -417,7 +417,15 @@
   jobs additionally expose file editing tools but still cannot execute commands
   or recursively delegate.
 - Kept strict empty MCP configuration, disabled session persistence, and retained
-  safe mode for read-only runs.
+  safe mode for both read-only and implementation runs so hooks and other
+  customizations cannot create a separate command-execution path.
 - Verified all 120 supervisor tests pass. A live Sonnet CLI probe initialized
   with only `Glob`, `Grep`, and `Read`, exposed no MCP servers, and returned
   `BASH_UNAVAILABLE` when instructed to invoke Bash.
+- Opus independently confirmed the `--tools` mechanism and found follow-up gaps.
+  Removed the unsupported `LS` name, expanded defense-in-depth denials across
+  current and legacy tool names, restored the Codex read-only sandbox assertion,
+  and clarified that native CLI tool restriction does not yet confine read or
+  write paths. The optional CAO backend remains a separate policy contract.
+- After the review fixes, all 280 tests pass. A live implement-mode probe exposed
+  exactly `Edit`, `Glob`, `Grep`, `Read`, and `Write`, with no MCP servers.

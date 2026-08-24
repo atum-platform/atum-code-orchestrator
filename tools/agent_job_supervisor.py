@@ -1048,9 +1048,12 @@ class Supervisor:
         max_turns = int(job["max_turns"])
         if provider == "claude":
             permission = "plan" if mode == "readonly" else "acceptEdits"
-            tools = ["Read", "Glob", "Grep", "LS"] if mode == "readonly" else ["Read", "Glob", "Grep", "Edit", "Write"]
+            tools = ["Read", "Glob", "Grep"] if mode == "readonly" else ["Read", "Glob", "Grep", "Edit", "Write"]
             tool_csv = ",".join(tools)
-            disallowed = ["Bash", "Agent", "Workflow", "WebFetch", "WebSearch", "NotebookEdit"]
+            disallowed = [
+                "Bash", "BashOutput", "KillShell", "Agent", "Task", "Monitor",
+                "Workflow", "WebFetch", "WebSearch", "NotebookEdit",
+            ]
             argv = [
                 binary, "-p", "--model", model, "--permission-mode", permission,
                 # --tools defines availability; --allowed-tools only grants
@@ -1064,8 +1067,9 @@ class Supervisor:
             if max_turns > 0:
                 argv.extend(["--max-turns", str(max_turns)])
             argv.extend(["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'])
-            if mode == "readonly":
-                argv.append("--safe-mode")
+            # Disable project/user hooks and other customizations in both modes;
+            # implement mode receives only the explicit built-in edit tools above.
+            argv.append("--safe-mode")
             return argv, prompt, _provider_env(provider)
         if provider == "kimi":
             agent_name = "kimi_read_only_reviewer.md" if mode == "readonly" else "kimi_implementation_agent.md"
