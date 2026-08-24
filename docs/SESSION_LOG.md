@@ -571,4 +571,23 @@
   concurrency, three configured provider slots, and the current Kimi Code binary.
   Client bindings report current across Codex, Claude, Claude Desktop, and Kimi.
 - Focused installer tests, Python compilation, `git diff --check`, and the full
-  287-test suite pass. MacBook propagation remains the next deployment step.
+  287-test suite pass on the Mac mini.
+
+## 2026-08-24 - MacBook deployment parity
+
+- Confirmed the MacBook supervisor queue was drained before replacement: no
+  queued, launching, running, or possibly-stalled jobs were present.
+- Preserved the prior installed checkout as a patch and untracked-file archive
+  under the MacBook supervisor state directory before applying the current
+  Mac mini release overlay.
+- Reinstalled the supervisor and all Codex, Claude, Claude Desktop, and Kimi
+  bindings. Migrated the legacy Codex-only native reservation variable to the
+  shared `AGENT_JOB_NATIVE_RESERVATIONS=3` setting while retaining the MacBook's
+  provider binary paths and other known deployment overrides.
+- The MacBook's 256-file shell limit caused false `Too many open files` failures
+  in the full suite. With a 4096-file test limit, all 298 tests passed. This is a
+  test-runner environment constraint; the launchd supervisor remained healthy.
+- Verified supervisor ping, current client bindings, `surface_canary` protocol
+  v2 routing, quota-aware provider health, dynamic three-slot configuration, and
+  terminal feedback for a no-run routing smoke decision. Both coding desktop
+  applications were restarted to reload their MCP configuration.
