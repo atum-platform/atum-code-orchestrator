@@ -38,7 +38,8 @@ delegated implementation. Use Opus first for planning, architecture, design,
 product, copy, and research. Use Kimi first for code review, then Opus only on
 provider failure or quota exhaustion. Never delegate recursively or send secrets.
 Save durable job IDs and cursors, treat `possibly_stalled` as alive but quiet,
-and leave `max_turns=0` unless a bounded turn ceiling is explicitly required.
+and omit the retired `max_turns` option entirely; run deadlines remain the
+execution bound.
 Codex owns local inspection, implementation unless delegated, tests, docs, and
 the final decision. Read the retained result before acknowledging inbox delivery.
 """,
@@ -47,8 +48,8 @@ the final decision. Read the retained result before acknowledging inbox delivery
 Use `$agent-jobs` for durable cross-agent review and delegation. As a Claude
 caller, use Codex first for code review, planning, and implementation; use Kimi
 only as the documented fallback. Never delegate back to Claude, recurse, or send
-secrets. Run the skill's guarded CLI, retain job IDs and cursors, treat
-`possibly_stalled` as alive but quiet, and leave `max_turns=0` by default.
+secrets. Run the skill's guarded CLI, retain job IDs and cursors, and treat
+`possibly_stalled` as alive but quiet. The retired `max_turns` option is omitted.
 Verify returned advice and changes locally before accepting them.
 """,
     "Kimi guidance": """## Agent Jobs
@@ -57,7 +58,7 @@ Use `$agent-jobs` for durable cross-agent review and delegation. As a Kimi
 caller, use Codex first for code review and Opus first for planning, design,
 product, copy, and research. Never delegate back to Kimi, recurse, or send
 secrets. Retain job IDs and cursors, treat `possibly_stalled` as alive but quiet,
-and leave `max_turns=0` by default. Verify all returned work locally.
+and omit the retired `max_turns` option. Verify all returned work locally.
 """,
 }
 

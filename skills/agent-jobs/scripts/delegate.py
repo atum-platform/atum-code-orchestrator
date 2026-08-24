@@ -37,12 +37,6 @@ def main() -> int:
         "--timeout-seconds", type=int,
         help="deprecated alias for --run-timeout-seconds",
     )
-    parser.add_argument(
-        "--max-turns",
-        type=int,
-        default=0,
-        help="provider turn ceiling; 0 omits the ceiling (default)",
-    )
     args = parser.parse_args()
     if args.provider != "kimi" and not args.model:
         parser.error("--model is required unless --provider=kimi")
@@ -62,7 +56,6 @@ def main() -> int:
                 args.timeout_seconds if args.timeout_seconds is not None
                 else args.run_timeout_seconds
             ),
-            max_turns=args.max_turns,
             owner="agent-jobs:delegate",
         )
         job_id = str(job["job_id"])

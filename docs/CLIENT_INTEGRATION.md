@@ -70,9 +70,9 @@ send v2 with `durable_agent_jobs=true` and only claim `native_subagents=true`
 when that tool is actually present. If an older server rejects v2, retry once
 with v1; old clients remain valid against a new server.
 
-Cooperating clients call `route_decide` before every cross-agent `job_submit`,
-including design, planning, architecture, product, copywriting, research, review,
-and delegated implementation. An enforced `agent_jobs` response is the authority
+Cooperating clients call `route_decide` before every cross-agent job or native
+worker, including design, planning, architecture, product, copywriting, research,
+review, implementation, exploration, and tests. An enforced `agent_jobs` response is the authority
 for the submitted provider/model and supersedes static preference text in client
 guidance. `direct` means the primary continues locally. Static routing tables are
 used only for supervisor outage or shadow decisions. Every enforced decision
@@ -86,7 +86,11 @@ state. Shadow responses return `enforced=false` and never reserve. With
 `AGENT_JOB_ROUTING_MODE=codex_canary`, only a Codex caller on the Codex surface
 can receive `enforced=true`; focused session-scoped implementation, exploration,
 or test work may receive a `native_subagent` lane. `surface_canary` extends v2
-enforcement to the supported Claude and Kimi coding surfaces. V2 selects Opus
+enforcement and same-family native lanes to Claude Code and Kimi Code. Claude
+native lanes cover planning, architecture, design, product, copywriting, and
+research; Kimi native lanes cover implementation, exploration, and tests. Work
+outside the caller family's primary domain routes cross-family, and code review
+always routes cross-family. V2 selects Opus
 for Claude's deep/review/thinking work and K3 for Kimi review or standard/deep
 work. Codex targets use concrete GPT-5.6 Sol, with Spark reserved for focused
 native work; Fable remains explicit-only.

@@ -109,7 +109,7 @@ class ReviewCoreTest(unittest.IsolatedAsyncioTestCase):
             "context_git_diff": True, "context_git_base": "HEAD",
             "context_files": None, "context_text": "", "expected_output": "findings",
             "queue_timeout_seconds": 300, "run_timeout_seconds": 600,
-            "timeout_seconds": None, "max_turns": 10, "idempotency_key": "same",
+            "timeout_seconds": None, "idempotency_key": "same",
             "label": "checkpoint", "owner": "test",
         }
         with patch.object(review_core, "job_submit", side_effect=fake_submit):

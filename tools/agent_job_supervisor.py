@@ -1732,12 +1732,12 @@ class Supervisor:
             int(payload.get("queue_timeout_seconds") or DEFAULT_QUEUE_TIMEOUT_SECONDS),
             MAX_TIMEOUT_SECONDS,
         ))
-        requested_max_turns = int(payload.get("max_turns") or 0)
-        max_turns = 0 if requested_max_turns <= 0 else min(requested_max_turns, 10_000)
+        # Provider turn ceilings are intentionally retired.  Keep the stored
+        # field for schema/database compatibility, but force unlimited turns;
+        # queue/run deadlines and cancellation remain the lifecycle bounds.
+        max_turns = 0
         if execution_backend == "cao" and mode == "readonly" and provider == "codex":
             raise ValueError("CAO cannot enforce read-only Codex execution; use the native backend")
-        if execution_backend == "cao" and max_turns > 0:
-            raise ValueError("CAO does not support an explicit provider turn ceiling")
         soft_stall = max(30, min(
             int(payload.get("soft_stall_seconds") or DEFAULT_SOFT_STALL_SECONDS),
             run_timeout,

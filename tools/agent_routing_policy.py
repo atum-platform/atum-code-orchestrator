@@ -7,8 +7,8 @@ from typing import Any
 
 PROTOCOL_VERSION = 2
 SUPPORTED_PROTOCOL_VERSIONS = {1, 2}
-POLICY_VERSION = "2026-08-13.3"
-CAPABILITY_MATRIX_VERSION = "2026-08-13.1"
+POLICY_VERSION = "2026-08-15.1"
+CAPABILITY_MATRIX_VERSION = "2026-08-15.1"
 ROUTING_MODES = {"shadow", "codex_canary", "surface_canary"}
 
 PROVIDERS = {"codex", "claude", "kimi", "hermes"}
@@ -59,9 +59,9 @@ PROVIDER_CAPABILITY_MATRIX = {
 
 SURFACE_CAPABILITY_MATRIX = {
     "codex": {"durable_agent_jobs", "native_subagents"},
-    "claude-code": {"durable_agent_jobs"},
+    "claude-code": {"durable_agent_jobs", "native_subagents"},
     "claude-desktop": {"durable_agent_jobs"},
-    "kimi-code": {"durable_agent_jobs"},
+    "kimi-code": {"durable_agent_jobs", "native_subagents"},
     "hermes": {"durable_agent_jobs"},
 }
 CALLER_SURFACES = {
@@ -71,7 +71,27 @@ CALLER_SURFACES = {
     "hermes": {"hermes"},
 }
 
-NATIVE_CODEX_CAPABILITIES = {"implementation", "exploration", "tests"}
+ENGINEERING_CAPABILITIES = {"implementation", "exploration", "tests"}
+THINKING_CAPABILITIES = {
+    "planning", "architecture", "design", "product", "copywriting", "research",
+}
+PRIMARY_CAPABILITIES = {
+    "codex": ENGINEERING_CAPABILITIES,
+    "claude": THINKING_CAPABILITIES,
+    "kimi": ENGINEERING_CAPABILITIES,
+    "hermes": set(),
+}
+NATIVE_CAPABILITIES = {
+    "codex": ENGINEERING_CAPABILITIES,
+    "claude": THINKING_CAPABILITIES,
+    "kimi": ENGINEERING_CAPABILITIES,
+    "hermes": set(),
+}
+NATIVE_WORKER_PROFILES = {
+    "codex": "spark-worker",
+    "claude": "general-purpose",
+    "kimi": "general-purpose",
+}
 
 
 def _required_enum(intent: dict[str, Any], key: str, allowed: set[str]) -> str:
@@ -89,12 +109,31 @@ def _optional_enum(intent: dict[str, Any], key: str, allowed: set[str], default:
 
 
 def _default_targets(caller: str, capability: str) -> tuple[str, str]:
-    code_review = capability == "code_review"
-    if caller in {"codex", "hermes"}:
-        return ("kimi", "claude") if code_review else ("claude", "kimi")
-    if caller == "claude":
-        return "codex", "kimi"
-    return ("codex", "claude") if code_review else ("claude", "codex")
+    if capability == "code_review":
+        if caller in {"codex", "hermes"}:
+            return "kimi", "claude"
+        if caller == "claude":
+            return "codex", "kimi"
+        return "codex", "claude"
+    if capability in ENGINEERING_CAPABILITIES:
+        if caller in {"claude", "hermes"}:
+            return "codex", "kimi"
+        return "", ""
+    if capability in THINKING_CAPABILITIES:
+        if caller in {"codex", "hermes"}:
+            return "claude", "kimi"
+        if caller == "kimi":
+            return "claude", "codex"
+        return "", ""
+    return "", ""
+
+
+def _native_model_alias(caller: str, intent: dict[str, Any]) -> str:
+    if intent["protocol_version"] == 1:
+        return "codex_fast" if caller == "codex" else LEGACY_MODEL_ALIASES[caller]
+    if caller == "codex":
+        return PROVIDER_CAPABILITY_MATRIX[caller]["fast_model"]
+    return _model_alias(caller, intent)
 
 
 def normalize_intent(intent: dict[str, Any]) -> dict[str, Any]:
@@ -273,7 +312,7 @@ def decide(intent: dict[str, Any], routing_mode: str = "shadow") -> dict[str, An
             reasons.append("explicit provider request overrides default routing")
     elif (
         canary
-        and capability in NATIVE_CODEX_CAPABILITIES
+        and capability in NATIVE_CAPABILITIES[caller]
         and intent["complexity"] in {"trivial", "focused"}
         and intent["risk"] in {"low", "medium"}
         and intent["scope"] in {"local", "single_module"}
@@ -283,21 +322,23 @@ def decide(intent: dict[str, Any], routing_mode: str = "shadow") -> dict[str, An
         and intent["session_id"]
     ):
         lane = "native_subagent"
-        provider = "codex"
+        provider = caller
         fallback_provider = ""
-        reasons.append("focused session-scoped work fits a Codex native worker")
-    elif capability in {
-        "code_review", "planning", "architecture", "design", "product",
-        "copywriting", "research",
-    }:
-        lane = "agent_jobs"
-        provider, fallback_provider = _default_targets(caller, capability)
-        reasons.append("centralized copy of the current independent-specialist routing table")
+        reasons.append(
+            f"focused session-scoped {capability} fits a same-family {caller} native worker"
+        )
     else:
-        lane = "direct"
-        provider = ""
-        fallback_provider = ""
-        reasons.append("current policy does not automatically delegate this capability")
+        provider, fallback_provider = _default_targets(caller, capability)
+        if provider:
+            lane = "agent_jobs"
+            reasons.append(
+                "capability belongs to a complementary family or requires cross-family review"
+            )
+        else:
+            lane = "direct"
+            reasons.append(
+                "same-family primary work remains with the caller when a native worker does not fit"
+            )
 
     degraded_from_lane = ""
     if (
@@ -323,13 +364,10 @@ def decide(intent: dict[str, Any], routing_mode: str = "shadow") -> dict[str, An
         "provider": provider,
         "model_alias": (
             "" if lane == "direct" else
-            (
-                "codex_fast" if intent["protocol_version"] == 1
-                else PROVIDER_CAPABILITY_MATRIX["codex"]["fast_model"]
-            ) if lane == "native_subagent" else
+            _native_model_alias(caller, intent) if lane == "native_subagent" else
             explicit_model or _model_alias(provider, intent)
         ),
-        "worker_profile": "spark-worker" if lane == "native_subagent" else "",
+        "worker_profile": NATIVE_WORKER_PROFILES[caller] if lane == "native_subagent" else "",
         "fallback_provider": fallback_provider,
         "fallback_model_alias": _model_alias(fallback_provider, intent) if fallback_provider else "",
         "effective_surface_capabilities": intent["effective_surface_capabilities"],

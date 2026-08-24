@@ -173,12 +173,6 @@ def _parser() -> argparse.ArgumentParser:
         "--timeout-seconds", type=int,
         help="deprecated alias for --run-timeout-seconds",
     )
-    submit_parser.add_argument(
-        "--max-turns",
-        type=int,
-        default=0,
-        help="provider turn ceiling; 0 omits the ceiling (default)",
-    )
     submit_parser.add_argument("--owner", default="")
     submit_parser.add_argument("--idempotency-key", default="")
     read_parser = sub.add_parser("read")

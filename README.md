@@ -5,10 +5,12 @@ It lets any supported coding surface submit work to another provider, observe
 incremental progress, recover partial responses, and receive durable completion
 notices without keeping one MCP request open.
 
-The versioned routing protocol supports shadow mode everywhere and an opt-in
-Codex-only canary. In the canary, focused session work can receive an atomic,
-expiring native-worker reservation; Codex still performs the actual spawn and
-reports the outcome. Other surfaces remain shadow-only.
+The versioned routing protocol supports shadow mode everywhere, a Codex canary,
+and a multi-surface canary. Focused session work can receive an atomic, expiring
+same-family native-worker reservation on Codex, Claude Code, or Kimi Code when
+the client declares native support. Complementary-domain execution and every
+code review route cross-family; the original caller still assembles, verifies,
+and reports the outcome.
 
 An optional local quota broker reads CodexBar history without credentials,
 normalizes provider rate-limit failures, and rebalances default specialist routes

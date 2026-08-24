@@ -1850,7 +1850,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         payload = {
             "action": "route_decide", "protocol_version": 2,
             "caller_provider": "claude", "surface": "claude-code",
-            "capability": "planning", "session_id": "claude-session",
+            "capability": "code_review", "session_id": "claude-session",
         }
 
         degraded = await self.call(payload)
@@ -2227,10 +2227,13 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ValueError, "read-only Codex"):
                 self.supervisor.submit(codex)
 
-            claude = self.spec("review")
-            claude.update(provider="claude", model="opus", max_turns=2)
-            with self.assertRaisesRegex(ValueError, "turn ceiling"):
-                self.supervisor.submit(claude)
+    async def test_retired_turn_ceiling_is_ignored_for_legacy_submissions(self) -> None:
+        spec = self.spec("review")
+        spec.update(provider="claude", model="opus", max_turns=2)
+
+        submitted = self.supervisor.submit(spec)
+
+        self.assertEqual(0, submitted["max_turns"])
 
     async def test_submit_persists_execution_backend(self) -> None:
         with patch.dict(os.environ, {"AGENT_JOB_EXECUTION_BACKEND": "cao"}):

@@ -1,5 +1,23 @@
 # Session Log
 
+## 2026-08-24 - Recover deployed routing changes into source control
+
+- Recovered the tracked delta from the active
+  `~/.local/share/atum-agent-jobs` runtime into the canonical repository instead
+  of leaving the running protocol as an uncommitted installation artifact.
+- Preserved the deployed same-family native-worker routing for Codex, Claude,
+  and Kimi, complementary-family durable routing, retired public provider turn
+  ceilings, updated client guidance, and MECE assembly-review instructions.
+- Reconciled stale tests and payload fixtures with the deployed contracts:
+  legacy nonzero `max_turns` input is normalized to unlimited, cross-family
+  degradation tests use code review rather than same-family planning, and MCP
+  parity no longer submits the removed field.
+- Verification: 40 focused routing/supervisor/review-core tests pass; the full
+  274-test suite passes; `git diff --check` is clean.
+- The source checkpoint is intentionally not deployed yet. Claude tool-surface
+  enforcement, supervisor consolidation, filesystem confinement, and mediated
+  commands remain separate reviewed checkpoints.
+
 ## 2026-08-13 - Use the organization Actions runner
 
 - Moved repository tests from GitHub-hosted macOS to the private organization

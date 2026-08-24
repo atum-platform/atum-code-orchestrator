@@ -121,11 +121,10 @@ common secret shapes as defense in depth.
 Use `queue_timeout_seconds` for capacity waiting and `run_timeout_seconds` as
 the execution backstop. Defaults are 900 and 2700 seconds; queue waiting does
 not consume execution time. `timeout_seconds` is a deprecated run-time alias.
-Leave
-`max_turns` at its default `0`, which omits the provider turn ceiling. Set a
-positive turn ceiling only when the user explicitly requests one or the task has
-a known bounded interaction protocol; an arbitrary turn cap can discard an
-otherwise healthy run after its tokens have already been spent.
+Provider turn ceilings are retired from the public ACO interface. Do not add or
+send `max_turns`; jobs run until their queue/run deadline, cancellation, or
+provider termination. An arbitrary cap can discard an otherwise healthy run
+after its tokens have already been spent.
 
 ## Use the available binding
 
