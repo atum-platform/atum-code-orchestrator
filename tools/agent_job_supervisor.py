@@ -17,6 +17,7 @@ import shutil
 import signal
 import sqlite3
 import stat
+import subprocess
 import sys
 import time
 import uuid
@@ -181,11 +182,13 @@ def _normalize_model(provider: str, requested_model: str) -> tuple[str, str]:
     )
 
 
-def _normalize_checks(raw: Any, mode: str) -> list[dict[str, Any]]:
+def _normalize_checks(raw: Any, mode: str, provider: str) -> list[dict[str, Any]]:
     if raw in (None, []):
         return []
     if mode != "implement":
         raise ValueError("Approved checks are available only for implementation jobs")
+    if provider != "claude":
+        raise ValueError("Approved checks are currently supported only for Claude implementation jobs")
     if not isinstance(raw, list) or len(raw) > MAX_CHECKS:
         raise ValueError(f"checks must be a list of at most {MAX_CHECKS} entries")
     normalized: list[dict[str, Any]] = []
@@ -199,6 +202,8 @@ def _normalize_checks(raw: Any, mode: str) -> list[dict[str, Any]]:
             raise ValueError(f"Invalid or duplicate check name: {name!r}")
         if not isinstance(argv, list) or not 1 <= len(argv) <= MAX_CHECK_ARGV_ITEMS:
             raise ValueError(f"Check {name!r} must contain 1 to {MAX_CHECK_ARGV_ITEMS} argv items")
+        if isinstance(argv[0], str) and argv[0].startswith("-"):
+            raise ValueError(f"Check {name!r} executable cannot start with '-'")
         clean_argv: list[str] = []
         for value in argv:
             if not isinstance(value, str) or not value or "\x00" in value:
@@ -1138,9 +1143,12 @@ class Supervisor:
             agent_path = SERVER_DIR / agent_name
             if not agent_path.is_file():
                 raise RuntimeError(f"Kimi agent definition is missing: {agent_path}")
+            empty_mcp_path = SERVER_DIR / "empty_mcp.json"
+            if not empty_mcp_path.is_file():
+                raise RuntimeError(f"Kimi empty MCP configuration is missing: {empty_mcp_path}")
             argv = [
                 binary, "--model", model, "--agent-file", str(agent_path),
-                "--mcp-config-file", str(SERVER_DIR / "empty_mcp.json"),
+                "--mcp-config-file", str(empty_mcp_path),
             ]
             kimi_config = Path.home() / ".kimi" / "config.toml"
             if mode == "implement" and kimi_config.is_file():
@@ -1175,8 +1183,10 @@ class Supervisor:
         return runtime
 
     def _cleanup_job_runtime(self, job_id: str) -> None:
+        runtime = self._job_runtime_dir(job_id)
+        self._reap_check_processes(runtime)
         try:
-            shutil.rmtree(self._job_runtime_dir(job_id))
+            shutil.rmtree(runtime)
         except FileNotFoundError:
             pass
         except (OSError, RuntimeError) as exc:
@@ -1191,11 +1201,38 @@ class Supervisor:
         for candidate in base.iterdir():
             try:
                 if candidate.is_dir() and not candidate.is_symlink():
+                    self._reap_check_processes(candidate)
                     shutil.rmtree(candidate)
                 else:
                     candidate.unlink()
             except FileNotFoundError:
                 pass
+
+    def _reap_check_processes(self, runtime: Path) -> None:
+        for record_path in runtime.glob("check-*.process.json"):
+            try:
+                record = json.loads(record_path.read_text(encoding="utf-8"))
+                pid = int(record["pid"])
+                expected_start = str(record["process_start"])
+                if pid <= 1 or os.getpgid(pid) != pid:
+                    continue
+                actual = subprocess.run(
+                    ["/bin/ps", "-o", "lstart=", "-p", str(pid)],
+                    check=False, capture_output=True, text=True, timeout=2,
+                ).stdout.strip()
+                if not actual or actual != expected_start:
+                    continue
+                for sig in (signal.SIGTERM, signal.SIGKILL):
+                    try:
+                        os.killpg(pid, sig)
+                    except ProcessLookupError:
+                        break
+                    if sig == signal.SIGTERM:
+                        time.sleep(0.1)
+            except (KeyError, ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError):
+                continue
+            finally:
+                record_path.unlink(missing_ok=True)
 
     def _prepare_kimi_runtime(self, runtime: Path) -> Path:
         share = runtime / "kimi-share"
@@ -1898,7 +1935,7 @@ class Supervisor:
             self.binary_finder(provider)
         if mode not in {"readonly", "implement"}:
             raise ValueError(f"Unsupported mode: {mode}")
-        checks = _normalize_checks(payload.get("checks"), mode)
+        checks = _normalize_checks(payload.get("checks"), mode, provider)
         if mode == "implement":
             if os.environ.get("AGENT_JOB_ALLOW_IMPLEMENT") != "1":
                 raise PermissionError("Durable implement mode is disabled by supervisor policy")
@@ -1972,7 +2009,7 @@ class Supervisor:
             "provider", "model", "requested_model", "mode", "workdir", "prompt",
             "timeout_seconds", "max_turns", "execution_backend", "semantic_stream",
         )}
-        spec["legacy_request_hash"] = hashlib.sha256(
+        spec["legacy_request_hash"] = "" if checks else hashlib.sha256(
             _json(legacy_hash_fields).encode("utf-8")
         ).hexdigest()
         job_id = str(uuid.uuid4())

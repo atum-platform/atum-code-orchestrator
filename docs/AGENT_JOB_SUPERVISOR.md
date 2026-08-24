@@ -297,8 +297,10 @@ workspace policy remain the read-side controls. Full process-level read
 isolation would require provider authentication to be injected into a disposable
 home rather than read from each CLI's durable local login.
 
-Implementation callers can opt into narrowly mediated verification by attaching
-up to eight named approved checks. The supervisor persists each exact argv only
+Claude implementation callers can opt into narrowly mediated verification by
+attaching up to eight named approved checks. Codex and Kimi check contracts fail
+closed until equivalent tool mediation is verified for those provider CLIs. The
+supervisor persists each exact argv only
 until provider launch, injects one private `aco_checks.run_check(name)` MCP tool,
 and clears the contract from durable job metadata after launch. The delegated
 model supplies only the name; it cannot supply or alter command text. Each check
@@ -306,10 +308,17 @@ runs serially without a shell added by ACO, without provider credentials or prox
 variables, with network denied, Git metadata read-only, workspace/sibling write
 confinement, a maximum 15-minute deadline, bounded captured output, and process
 cleanup. The caller may explicitly approve an argv that invokes a project script
-or shell, so the trust decision remains with the caller. Do not approve package
-installation, Git, deployment, dev servers, commands requiring secrets, or
-untrusted repository code. Kimi always receives an explicit isolated MCP config,
-including when no checks are present, so user-global MCP servers are not loaded.
+or shell, so the trust decision remains with the caller. Repository code becomes
+model-influenced as soon as the delegated job edits it; approving `npm test`,
+`pytest`, or a similar command therefore authorizes execution of code the model
+may have changed. Do not approve package installation, Git, deployment, dev
+servers, commands requiring secrets, or untrusted code. The macOS profile is
+targeted blast-radius reduction, not a default-deny execution sandbox: it blocks
+network, Apple Events, common launchd/script escapes, sensitive credential reads,
+out-of-workspace writes, and Git writes, but callers must still inspect the diff.
+Kimi always receives an explicit MCP config that replaces its user-level
+`~/.kimi-code/mcp.json` registration; its normal subscription config remains
+available for authentication and model selection.
 
 Reads advance the normalized stream with the opaque byte `event_cursor`. On
 terminal failure, cancellation, or interruption, `partial_response` and

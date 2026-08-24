@@ -15,6 +15,25 @@ SCRIPT = Path(__file__).resolve().parents[2] / "skills/agent-jobs/scripts/delega
 
 
 class DelegateClientTest(unittest.TestCase):
+    def test_checks_fail_closed_for_unmediated_provider(self) -> None:
+        spec = importlib.util.spec_from_file_location("agent_job_delegate_check_test", SCRIPT)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as root, patch.object(
+            sys, "argv", [
+                "delegate.py", "--provider", "kimi", "--model", "kimi-code/k3",
+                "--mode", "implement", "--workdir", root, "--prompt", "change",
+                "--check", "unit=npm test",
+            ],
+        ):
+            stderr = io.StringIO()
+            with redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                module.main()
+
+        self.assertEqual(2, raised.exception.code)
+        self.assertIn("supported only with --provider=claude", stderr.getvalue())
+
     def test_kimi_semantic_job_prints_events_and_terminal_remainder(self) -> None:
         spec = importlib.util.spec_from_file_location("agent_job_delegate_test", SCRIPT)
         assert spec is not None and spec.loader is not None

@@ -88,8 +88,11 @@ The script prints `AGENT_JOB_ID` before polling. If the shell exits, recover the
 job through the guarded review CLI's `list`/`read` operations or the low-level
 `agent_job_client.py`.
 
-Repeat `--check 'NAME=COMMAND'` for focused caller-approved verification. The
-delegated model chooses only a name; it cannot alter the argv. Do not approve
+For Claude implementation jobs, repeat `--check 'NAME=COMMAND'` for focused
+caller-approved verification. Codex and Kimi check contracts currently fail
+closed. The delegated model chooses only a name; it cannot alter the argv. A
+check can execute project code the model just edited, so inspect that trust
+decision deliberately. Do not approve
 Git, installs, deployments, dev servers, external side effects, or commands that
 require secrets. The originating agent runs final verification itself.
 

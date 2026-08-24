@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 import uuid
@@ -93,6 +95,32 @@ class ApprovedCheckBrokerTest(unittest.TestCase):
             self.assertFalse(network["ok"])
             self.assertFalse(slow["ok"])
             self.assertTrue(slow["timed_out"])
+
+    def test_external_cleanup_terminates_active_check_group(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workdir = root / "work"
+            runtime = root / "runtime"
+            workdir.mkdir()
+            runtime.mkdir()
+            broker = load_broker(workdir, runtime, [
+                {"name": "slow", "argv": ["/bin/sleep", "30"], "timeout_seconds": 30}
+            ])
+            result: dict[str, object] = {}
+
+            thread = threading.Thread(target=lambda: result.update(broker._run("slow")))
+            thread.start()
+            deadline = time.monotonic() + 5
+            while not (runtime / "check-slow.process.json").exists():
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.02)
+
+            broker._stop_active_process()
+            thread.join(timeout=5)
+
+            self.assertFalse(thread.is_alive())
+            self.assertFalse(result["ok"])
+            self.assertFalse((runtime / "check-slow.process.json").exists())
 
 
 if __name__ == "__main__":

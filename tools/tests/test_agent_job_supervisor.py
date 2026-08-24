@@ -87,6 +87,33 @@ class WorkspaceConfinementTest(unittest.TestCase):
             self.assertEqual(0o700, stat.S_IMODE(supervisor._runtime_base().stat().st_mode))
             supervisor.store.db.close()
 
+    def test_runtime_cleanup_reaps_recorded_check_process(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            supervisor = Supervisor(
+                state_dir=root / "state",
+                socket_path=root / "state/supervisor.sock",
+                db_path=root / "state/jobs.sqlite3",
+                log_dir=root / "state/logs",
+            )
+            runtime = supervisor._job_runtime_dir("check-job")
+            runtime.mkdir()
+            process = subprocess.Popen(["/bin/sleep", "30"], start_new_session=True)
+            process_start = subprocess.run(
+                ["/bin/ps", "-o", "lstart=", "-p", str(process.pid)],
+                check=False, capture_output=True, text=True,
+            ).stdout.strip()
+            (runtime / "check-slow.process.json").write_text(json.dumps({
+                "pid": process.pid, "process_start": process_start,
+            }), encoding="utf-8")
+
+            supervisor._cleanup_job_runtime("check-job")
+            process.wait(timeout=5)
+
+            self.assertFalse(runtime.exists())
+            self.assertIsNotNone(process.returncode)
+            supervisor.store.db.close()
+
     def test_runtime_base_rejects_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
@@ -1683,6 +1710,22 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         ]
         with self.assertRaisesRegex(RuntimeError, "duplicate check"):
             await self.call(duplicate)
+
+        invalid_executable = spec.copy()
+        invalid_executable["idempotency_key"] = ""
+        invalid_executable["checks"] = [{"name": "unit", "argv": ["-p", "profile"]}]
+        with self.assertRaisesRegex(RuntimeError, "executable cannot start"):
+            await self.call(invalid_executable)
+
+        for provider in ("codex", "kimi"):
+            unsupported = spec.copy()
+            unsupported.update(
+                provider=provider,
+                model="gpt-5.6-codex" if provider == "codex" else "kimi-code/k3",
+                idempotency_key="",
+            )
+            with self.assertRaisesRegex(RuntimeError, "only for Claude"):
+                await self.call(unsupported)
 
     async def test_cao_implementation_is_rejected_without_confinement(self) -> None:
         spec = self.spec("complete")

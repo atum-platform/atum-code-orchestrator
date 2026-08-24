@@ -1,5 +1,29 @@
 # Session Log
 
+## 2026-08-24 - Harden mediated verification after Opus review
+
+- Kept the named-check broker available only to Claude implementation jobs;
+  Codex and Kimi submissions with checks now fail closed until their equivalent
+  mediated tool paths are proven end to end.
+- Added broker signal/parent-loss cleanup plus supervisor-owned, identity-checked
+  reaping of recorded check process groups on cancellation, timeout, shutdown,
+  and restart cleanup.
+- Expanded the inner macOS profile to deny Apple Events, common launchd/script
+  escapes, and the local credential stores used by ACO providers and package
+  tooling; added broker-side contract validation and a missing Kimi MCP-config
+  guard.
+- Removed legacy idempotency-hash compatibility for submissions carrying checks,
+  so an old row cannot match a different verification contract.
+- Documented that caller-approved project checks execute model-influenced
+  repository code and that the targeted Seatbelt profile reduces blast radius
+  rather than providing a complete default-deny execution boundary.
+- Review: Opus 5 held phase 6 on orphaned check processes, unsupported Codex
+  mediation, and an unverified Kimi tool path; this checkpoint addresses each
+  release blocker before deployment.
+- Verification: 12 focused broker, delegation, confinement, and submission tests
+  pass; the full 284-test suite passes; Python compilation and `git diff --check`
+  are clean.
+
 ## 2026-08-24 - Close cross-surface routing and compatibility gaps
 
 - Installed the enforced routing protocol into Codex, Claude Code, and Kimi Code

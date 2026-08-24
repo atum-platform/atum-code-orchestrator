@@ -155,13 +155,17 @@ entire diff before executing repository-controlled commands, and repair any CLI
 authentication refresh outside the delegated run.
 The supervisor fails closed where it cannot enforce an equivalent write boundary.
 
-The caller may add repeatable `--check 'NAME=COMMAND'` arguments for bounded,
-iterative verification. These are exact caller-approved argv contracts, not a
-shell exposed to the delegated model; the model can only call `run_check(NAME)`.
+For Claude implementation jobs, the caller may add repeatable
+`--check 'NAME=COMMAND'` arguments for bounded, iterative verification. Codex and
+Kimi check contracts fail closed until their equivalent mediated tool paths are
+verified. These are exact caller-approved argv contracts, not a shell exposed to
+the delegated model; the model can only call `run_check(NAME)`.
 Prefer focused tests, linters, type checks, or builds. Never approve package
 installation, Git, deployment, dev servers, secret-dependent commands, or other
 long-lived/external side effects. Approved checks run without provider credentials
 or network access and with bounded time/output under the implementation sandbox.
+Because a delegated job may edit project code before invoking a check, approving
+the check explicitly authorizes execution of model-influenced repository code.
 
 Kimi submissions may omit `model`; the supervisor then selects
 `kimi-code/k3`. It canonicalizes supported K3 and K2.7 aliases and maps stale or

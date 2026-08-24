@@ -54,7 +54,8 @@ kernel-enforced workspace-write profile; Codex uses its native workspace sandbox
 Unsupported native platforms and CAO implementation fail closed rather than run
 without equivalent write confinement.
 
-The delegation CLI accepts repeatable approved checks:
+The delegation CLI accepts repeatable approved checks for Claude implementation
+jobs. Codex and Kimi check contracts currently fail closed:
 
 ```sh
 python3 ~/.agents/skills/agent-jobs/scripts/delegate.py \
@@ -68,7 +69,9 @@ python3 ~/.agents/skills/agent-jobs/scripts/delegate.py \
 The model sees only the check names and one `run_check(name)` tool. ACO executes
 the exact caller-approved argv without adding a shell, strips provider credentials
 and proxy variables, denies network and Git writes, bounds output/time, and cleans
-the process group. Keep package installs, Git, deployment, dev servers, and
+the process group. A project check executes repository code after the model may
+have edited it, so approval is an explicit trust decision rather than proof that
+the code is safe. Keep package installs, Git, deployment, dev servers, and
 secret-dependent checks outside delegated jobs.
 Review prompts may contain up to 4 MiB of UTF-8 data. The supervisor's Unix
 socket reader is sized for that complete JSON request, so prompts larger than the

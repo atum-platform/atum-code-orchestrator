@@ -48,6 +48,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.provider != "kimi" and not args.model:
         parser.error("--model is required unless --provider=kimi")
+    if args.checks and args.provider != "claude":
+        parser.error("--check is currently supported only with --provider=claude")
     workdir = Path(args.workdir).expanduser().resolve()
     if not workdir.is_dir():
         parser.error(f"workdir is not an existing directory: {workdir}")
