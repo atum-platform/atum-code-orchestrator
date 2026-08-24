@@ -7,6 +7,7 @@ import argparse
 import asyncio
 from collections import Counter
 import fcntl
+import functools
 import hashlib
 import hmac
 import json
@@ -166,6 +167,32 @@ def _kimi_semantic_enabled() -> bool:
     return os.environ.get("AGENT_JOB_KIMI_SEMANTIC", "1").strip().lower() not in {
         "0", "false", "no", "off",
     }
+
+
+@functools.lru_cache(maxsize=8)
+def _kimi_cli_generation(binary: str) -> str:
+    """Distinguish the legacy Python CLI from the current Node CLI."""
+    try:
+        result = subprocess.run(
+            [binary, "--help"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"Unable to inspect Kimi CLI capabilities: {exc}") from exc
+    help_text = f"{result.stdout}\n{result.stderr}"
+    if result.returncode == 0 and "--mcp-config-file" in help_text:
+        return "legacy"
+    if (
+        result.returncode == 0
+        and "--output-format" in help_text
+        and "--skills-dir" in help_text
+        and "--prompt" in help_text
+    ):
+        return "modern"
+    raise RuntimeError("Installed Kimi CLI exposes an unsupported command-line contract")
 
 
 def _normalize_model(provider: str, requested_model: str) -> tuple[str, str]:
@@ -1139,24 +1166,39 @@ class Supervisor:
             argv.append("--safe-mode")
             return self._confine_implementation(job, argv, prompt, _provider_env(provider))
         if provider == "kimi":
-            agent_name = "kimi_read_only_reviewer.yaml" if mode == "readonly" else "kimi_implementation_agent.yaml"
+            generation = _kimi_cli_generation(binary)
+            suffix = "yaml" if generation == "legacy" else "md"
+            agent_name = (
+                f"kimi_read_only_reviewer.{suffix}"
+                if mode == "readonly" else
+                f"kimi_implementation_agent.{suffix}"
+            )
             agent_path = SERVER_DIR / agent_name
             if not agent_path.is_file():
                 raise RuntimeError(f"Kimi agent definition is missing: {agent_path}")
-            empty_mcp_path = SERVER_DIR / "empty_mcp.json"
-            if not empty_mcp_path.is_file():
-                raise RuntimeError(f"Kimi empty MCP configuration is missing: {empty_mcp_path}")
-            argv = [
-                binary, "--model", model, "--agent-file", str(agent_path),
-                "--mcp-config-file", str(empty_mcp_path),
-            ]
-            kimi_config = Path.home() / ".kimi" / "config.toml"
-            if mode == "implement" and kimi_config.is_file():
-                argv.extend(["--config-file", str(kimi_config)])
+            argv = [binary, "--model", model, "--agent-file", str(agent_path)]
+            env = _provider_env(provider)
+            if generation == "legacy":
+                empty_mcp_path = SERVER_DIR / "empty_mcp.json"
+                if not empty_mcp_path.is_file():
+                    raise RuntimeError(f"Kimi empty MCP configuration is missing: {empty_mcp_path}")
+                argv.extend(["--mcp-config-file", str(empty_mcp_path)])
+                kimi_config = Path.home() / ".kimi" / "config.toml"
+                if mode == "implement" and kimi_config.is_file():
+                    argv.extend(["--config-file", str(kimi_config)])
+                if job.get("semantic_stream"):
+                    argv.append("--print")
+            else:
+                runtime = self._job_runtime_dir(str(job["job_id"]))
+                runtime.mkdir(parents=True, mode=0o700, exist_ok=True)
+                modern_home, empty_skills = self._prepare_modern_kimi_runtime(runtime, job)
+                env["KIMI_CODE_HOME"] = str(modern_home)
+                env["KIMI_DISABLE_TELEMETRY"] = "1"
+                argv.extend(["--skills-dir", str(empty_skills)])
             if job.get("semantic_stream"):
-                argv.extend(["--print", "--output-format", "stream-json"])
+                argv.extend(["--output-format", "stream-json"])
             argv.extend(["--prompt", prompt])
-            return self._confine_implementation(job, argv, None, _provider_env(provider))
+            return self._confine_implementation(job, argv, None, env)
         sandbox = "read-only" if mode == "readonly" else "workspace-write"
         argv = [
             binary, "exec", "--ignore-user-config", "-C", job["workdir"],
@@ -1244,6 +1286,30 @@ class Supervisor:
             if target.exists() and not link.exists():
                 link.symlink_to(target, target_is_directory=target.is_dir())
         return share
+
+    def _prepare_modern_kimi_runtime(
+        self, runtime: Path, job: dict[str, Any]
+    ) -> tuple[Path, Path]:
+        home = runtime / "kimi-code-home"
+        home.mkdir(mode=0o700, exist_ok=True)
+        source = Path.home() / ".kimi-code"
+        for name in ("credentials", "oauth", "device_id"):
+            target = source / name
+            link = home / name
+            if target.exists() and not link.exists():
+                link.symlink_to(target, target_is_directory=target.is_dir())
+        checks = json.loads(str(job.get("checks_json") or "[]"))
+        mcp_source = (
+            self._prepare_check_mcp(runtime, job)
+            if job["mode"] == "implement" and checks else
+            SERVER_DIR / "empty_mcp.json"
+        )
+        if not mcp_source.is_file():
+            raise RuntimeError(f"Kimi MCP configuration is missing: {mcp_source}")
+        shutil.copyfile(mcp_source, home / "mcp.json")
+        empty_skills = runtime / "empty-skills"
+        empty_skills.mkdir(mode=0o700, exist_ok=True)
+        return home, empty_skills
 
     def _prepare_check_mcp(self, runtime: Path, job: dict[str, Any]) -> Path:
         checks_json = str(job.get("checks_json") or "[]")

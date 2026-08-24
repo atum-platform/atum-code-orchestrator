@@ -4,6 +4,12 @@ The agent job supervisor owns long-running Claude Code, Codex, and Kimi Code CLI
 processes independently of the Codex, Claude, or Hermes session that submitted
 them. It replaces caller-bound subprocess waits with durable job IDs.
 
+Kimi execution negotiates the installed CLI contract at launch. The legacy
+Python CLI uses YAML agents, print-mode JSON streaming, and an explicit empty
+MCP file. The current Node CLI uses Markdown agents, prompt-mode JSON streaming,
+an isolated per-job `KIMI_CODE_HOME`, and an empty Skills directory. This keeps
+automatic Kimi upgrades from silently leaving the supervisor on retired flags.
+
 ## Architecture
 
 The supported interface follows a fat-skill, thin-harness split:

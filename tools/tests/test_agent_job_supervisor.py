@@ -1940,31 +1940,63 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
                 "prompt": "review", "max_turns": 2, "workdir": str(self.workdir),
                 "semantic_stream": 0,
             }
-            argv, stdin_text, env = self.supervisor._build_command(base)
+            with patch.object(
+                supervisor_module, "_kimi_cli_generation", return_value="legacy"
+            ):
+                argv, stdin_text, env = self.supervisor._build_command(base)
             self.assertNotEqual(str(supervisor_module.SANDBOX_EXEC_PATH), argv[0])
             self.assertIn("--agent-file", argv)
             self.assertNotIn("--output-format", argv)
             self.assertEqual("kimi-secret", env["MOONSHOT_API_KEY"])
             self.assertNotIn("ANTHROPIC_API_KEY", env)
             self.assertIsNone(stdin_text)
-            with patch.dict(os.environ, {"AGENT_JOB_KIMI_SEMANTIC": "1"}):
+            with patch.dict(os.environ, {"AGENT_JOB_KIMI_SEMANTIC": "1"}), patch.object(
+                supervisor_module, "_kimi_cli_generation", return_value="legacy"
+            ):
                 base["semantic_stream"] = 1
                 argv, _, _ = self.supervisor._build_command(base)
             self.assertIn("--print", argv)
             self.assertIn("--output-format", argv)
             self.assertIn("stream-json", argv)
+            modern = dict(base)
+            modern.update(
+                job_id="00000000-0000-0000-0000-000000000004",
+                checks_json="[]",
+            )
+            with patch.object(
+                supervisor_module, "_kimi_cli_generation", return_value="modern"
+            ):
+                modern_argv, modern_stdin, modern_env = self.supervisor._build_command(modern)
+            self.assertNotIn("--print", modern_argv)
+            self.assertNotIn("--mcp-config-file", modern_argv)
+            self.assertIn("--output-format", modern_argv)
+            self.assertIn("kimi_read_only_reviewer.md", " ".join(modern_argv))
+            self.assertIn("--skills-dir", modern_argv)
+            self.assertIsNone(modern_stdin)
+            modern_home = Path(modern_env["KIMI_CODE_HOME"])
+            self.assertTrue(modern_home.is_dir())
+            self.assertEqual(
+                {"mcpServers": {}},
+                json.loads((modern_home / "mcp.json").read_text(encoding="utf-8")),
+            )
+            self.assertEqual("1", modern_env["KIMI_DISABLE_TELEMETRY"])
             base.update(
                 mode="implement",
                 job_id="00000000-0000-0000-0000-000000000003",
             )
             if sys.platform == "darwin":
-                kimi_argv, _, kimi_env = self.supervisor._build_command(base)
+                with patch.object(
+                    supervisor_module, "_kimi_cli_generation", return_value="legacy"
+                ):
+                    kimi_argv, _, kimi_env = self.supervisor._build_command(base)
                 self.assertEqual(str(supervisor_module.SANDBOX_EXEC_PATH), kimi_argv[0])
                 self.assertIn("kimi_implementation_agent.yaml", " ".join(kimi_argv))
                 self.assertIn("KIMI_SHARE_DIR", kimi_env)
                 self.assertTrue(Path(kimi_env["KIMI_SHARE_DIR"]).is_dir())
             else:
-                with self.assertRaisesRegex(RuntimeError, "confinement is unavailable"):
+                with self.assertRaisesRegex(RuntimeError, "confinement is unavailable"), patch.object(
+                    supervisor_module, "_kimi_cli_generation", return_value="legacy"
+                ):
                     self.supervisor._build_command(base)
             base.update(mode="readonly")
             base.update(provider="claude", model="opus")

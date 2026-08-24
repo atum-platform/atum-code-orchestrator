@@ -591,3 +591,15 @@
   v2 routing, quota-aware provider health, dynamic three-slot configuration, and
   terminal feedback for a no-run routing smoke decision. Both coding desktop
   applications were restarted to reload their MCP configuration.
+
+## 2026-08-24 - Kimi CLI generation compatibility
+
+- Diagnosed four MacBook ACO failures after Kimi auto-upgraded to the Node-based
+  CLI 0.31.1. The supervisor was still passing the legacy Python CLI's
+  `--mcp-config-file` option, so jobs exited before model execution.
+- Added capability-based CLI generation detection. Legacy installations retain
+  their YAML agent, print-mode streaming, and explicit MCP arguments; modern
+  installations use Markdown tool policies and prompt-mode JSON streaming.
+- Modern jobs receive a private per-job `KIMI_CODE_HOME`, empty MCP declaration,
+  and empty Skills directory while reusing only local Kimi authentication state.
+  The runtime is removed by the existing terminal cleanup path.
