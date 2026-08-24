@@ -92,6 +92,15 @@ SEMANTIC_PROVIDERS = {"claude", "codex", "kimi"}
 SEMANTIC_LIVENESS_PROVIDERS = {"claude", "codex"}
 DYNAMIC_HEALTH_REFRESH_SECONDS = 15
 NATIVE_FEEDBACK_JOIN_GATE = 0.95
+SANDBOX_EXEC_PATH = Path("/usr/bin/sandbox-exec")
+MACOS_WORKSPACE_WRITE_PROFILE = """(version 1)
+(allow default)
+(deny file-write*
+  (require-all
+    (require-not (subpath (param "WORKDIR")))
+    (require-not (subpath (param "RUNTIME_DIR")))
+    (require-not (literal "/dev/null"))))
+"""
 
 
 class AlreadyRunning(RuntimeError):
@@ -1070,7 +1079,7 @@ class Supervisor:
             # Disable project/user hooks and other customizations in both modes;
             # implement mode receives only the explicit built-in edit tools above.
             argv.append("--safe-mode")
-            return argv, prompt, _provider_env(provider)
+            return self._confine_implementation(job, argv, prompt, _provider_env(provider))
         if provider == "kimi":
             agent_name = "kimi_read_only_reviewer.md" if mode == "readonly" else "kimi_implementation_agent.md"
             agent_path = SERVER_DIR / agent_name
@@ -1080,7 +1089,7 @@ class Supervisor:
             if job.get("semantic_stream"):
                 argv.extend(["--output-format", "stream-json"])
             argv.extend(["--prompt", prompt])
-            return argv, None, _provider_env(provider)
+            return self._confine_implementation(job, argv, None, _provider_env(provider))
         sandbox = "read-only" if mode == "readonly" else "workspace-write"
         argv = [
             binary, "exec", "--ignore-user-config", "-C", job["workdir"],
@@ -1090,6 +1099,44 @@ class Supervisor:
             argv.extend(["--model", model])
         argv.append("-")
         return argv, prompt, _provider_env(provider)
+
+    def _job_runtime_dir(self, job_id: str) -> Path:
+        base = (self.state_dir / "runtime").resolve()
+        runtime = (base / job_id).resolve()
+        if runtime == base or base not in runtime.parents:
+            raise RuntimeError("Invalid job ID for runtime confinement")
+        return runtime
+
+    def _confine_implementation(
+        self,
+        job: dict[str, Any],
+        argv: list[str],
+        stdin_text: str | None,
+        env: dict[str, str],
+    ) -> tuple[list[str], str | None, dict[str, str]]:
+        if job["mode"] != "implement":
+            return argv, stdin_text, env
+        if sys.platform != "darwin" or not SANDBOX_EXEC_PATH.is_file():
+            raise RuntimeError(
+                "Workspace write confinement is unavailable for this implementation provider"
+            )
+        workdir = Path(job["workdir"]).resolve()
+        runtime = self._job_runtime_dir(str(job["job_id"]))
+        runtime.mkdir(parents=True, mode=0o700, exist_ok=True)
+        os.chmod(runtime, 0o700)
+        confined_env = dict(env)
+        confined_env["TMPDIR"] = f"{runtime}{os.sep}"
+        confined_argv = [
+            str(SANDBOX_EXEC_PATH),
+            "-p",
+            MACOS_WORKSPACE_WRITE_PROFILE,
+            "-D",
+            f"WORKDIR={workdir}",
+            "-D",
+            f"RUNTIME_DIR={runtime}",
+            *argv,
+        ]
+        return confined_argv, stdin_text, confined_env
 
     def _public(self, job: dict[str, Any]) -> dict[str, Any]:
         result = {key: value for key, value in job.items() if key != "prompt"}
@@ -1616,6 +1663,17 @@ class Supervisor:
                 await self._terminate(proc)
             self._finish_job(job_id, "failed", "launch_error", str(exc))
         finally:
+            runtime = self._job_runtime_dir(job_id)
+            try:
+                shutil.rmtree(runtime)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                print(
+                    f"agent-job runtime cleanup failed for {job_id}: {exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             self.change_events.pop(job_id, None)
             self.processes.pop(job_id, None)
             self.tasks.pop(job_id, None)
@@ -1757,6 +1815,8 @@ class Supervisor:
         max_turns = 0
         if execution_backend == "cao" and mode == "readonly" and provider == "codex":
             raise ValueError("CAO cannot enforce read-only Codex execution; use the native backend")
+        if execution_backend == "cao" and mode == "implement":
+            raise ValueError("CAO cannot enforce workspace-confined implementation; use the native backend")
         soft_stall = max(30, min(
             int(payload.get("soft_stall_seconds") or DEFAULT_SOFT_STALL_SECONDS),
             run_timeout,

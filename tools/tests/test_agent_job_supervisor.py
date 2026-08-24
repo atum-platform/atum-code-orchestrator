@@ -23,6 +23,47 @@ from agent_job_supervisor import JobStore, Supervisor  # noqa: E402
 
 
 class JobStoreMigrationTest(unittest.TestCase):
+    @unittest.skipUnless(
+        sys.platform == "darwin" and supervisor_module.SANDBOX_EXEC_PATH.is_file(),
+        "macOS sandbox-exec is required",
+    )
+    def test_macos_workspace_confinement_blocks_sibling_write(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            workdir = root / "work"
+            workdir.mkdir()
+            (workdir / "escape").symlink_to(root)
+            supervisor = Supervisor(
+                state_dir=root / "state",
+                socket_path=root / "state/supervisor.sock",
+                db_path=root / "state/jobs.sqlite3",
+                log_dir=root / "state/logs",
+                binary_finder=lambda provider: "/bin/sh",
+            )
+            job = {
+                "job_id": "00000000-0000-0000-0000-000000000001",
+                "mode": "implement",
+                "workdir": str(workdir),
+            }
+            argv, _, env = supervisor._confine_implementation(
+                job,
+                [
+                    "/bin/sh", "-c",
+                    'echo inside > "$1/in"; echo outside > "$2"; echo escaped > "$1/escape/escaped"',
+                    "sh", str(workdir), str(root / "outside"),
+                ],
+                None,
+                os.environ.copy(),
+            )
+
+            result = subprocess.run(argv, cwd=workdir, env=env, check=False)
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertTrue((workdir / "in").is_file())
+            self.assertFalse((root / "outside").exists())
+            self.assertFalse((root / "escaped").exists())
+            supervisor.store.db.close()
+
     def test_existing_jobs_gain_nullable_separate_timeout_columns(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             store = JobStore(Path(temporary) / "jobs.sqlite3")
@@ -1564,6 +1605,25 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         result = await self.wait_for(str(submitted["job_id"]), {"completed"})
         self.assertEqual("completed", result["job"]["status"])
 
+    async def test_cao_implementation_is_rejected_without_confinement(self) -> None:
+        spec = self.spec("complete")
+        spec.update(
+            mode="implement",
+            implement_capability="test-capability",
+            owner="cao-canary:test",
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_JOB_EXECUTION_BACKEND": "native",
+                "AGENT_JOB_CAO_CANARY_PROVIDERS": "claude",
+                "AGENT_JOB_CAO_CANARY_OWNER_PREFIXES": "cao-canary:",
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "workspace-confined implementation"):
+                await self.call(spec)
+
     async def test_large_valid_prompt_crosses_socket_transport(self) -> None:
         spec = self.spec(("line with a quote: \"value\"\n" * 18_000)[:500_000])
         submitted = await self.call(spec)
@@ -1771,6 +1831,18 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
                 argv, _, _ = self.supervisor._build_command(base)
             self.assertIn("--output-format", argv)
             self.assertIn("stream-json", argv)
+            base.update(
+                mode="implement",
+                job_id="00000000-0000-0000-0000-000000000003",
+            )
+            if sys.platform == "darwin":
+                kimi_argv, _, _ = self.supervisor._build_command(base)
+                self.assertEqual(str(supervisor_module.SANDBOX_EXEC_PATH), kimi_argv[0])
+                self.assertIn("kimi_implementation_agent.md", " ".join(kimi_argv))
+            else:
+                with self.assertRaisesRegex(RuntimeError, "confinement is unavailable"):
+                    self.supervisor._build_command(base)
+            base.update(mode="readonly")
             base.update(provider="claude", model="opus")
             argv, stdin_text, env = self.supervisor._build_command(base)
             self.assertEqual("claude-secret", env["ANTHROPIC_API_KEY"])
@@ -1805,13 +1877,24 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             argv, _, _ = self.supervisor._build_command(base)
             self.assertNotIn("--max-turns", argv)
             base["mode"] = "implement"
-            argv, _, _ = self.supervisor._build_command(base)
-            self.assertEqual(
-                "Read,Glob,Grep,Edit,Write", argv[argv.index("--tools") + 1]
-            )
-            self.assertIn("--safe-mode", argv)
-            self.assertNotIn("Bash", argv[argv.index("--tools") + 1].split(","))
-            self.assertIn("Agent", argv[argv.index("--disallowed-tools") + 1].split(","))
+            base["job_id"] = "00000000-0000-0000-0000-000000000002"
+            if sys.platform == "darwin":
+                argv, _, confined_env = self.supervisor._build_command(base)
+                self.assertEqual(str(supervisor_module.SANDBOX_EXEC_PATH), argv[0])
+                self.assertIn(supervisor_module.MACOS_WORKSPACE_WRITE_PROFILE, argv)
+                self.assertIn(f"WORKDIR={self.workdir.resolve()}", argv)
+                self.assertTrue(
+                    confined_env["TMPDIR"].startswith(str(self.supervisor.state_dir.resolve()))
+                )
+                self.assertEqual(
+                    "Read,Glob,Grep,Edit,Write", argv[argv.index("--tools") + 1]
+                )
+                self.assertIn("--safe-mode", argv)
+                self.assertNotIn("Bash", argv[argv.index("--tools") + 1].split(","))
+                self.assertIn("Agent", argv[argv.index("--disallowed-tools") + 1].split(","))
+            else:
+                with self.assertRaisesRegex(RuntimeError, "confinement is unavailable"):
+                    self.supervisor._build_command(base)
             base.update(provider="codex", model="gpt-5.6-codex", mode="readonly")
             os.environ["AGENT_JOB_CAO_TOKEN"] = "must-not-reach-native"
             argv, stdin_text, env = self.supervisor._build_command(base)

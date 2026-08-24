@@ -451,3 +451,19 @@
   pinned that exclusion in policy tests, and cleaned stale migration/runbook
   language. Opus was attempted first as requested but failed before review with
   Anthropic HTTP 529; the enforced one-hop Kimi K3 fallback completed the review.
+
+## 2026-08-24 - Delegated implementation write confinement
+
+- Added kernel-enforced macOS write confinement around native Claude and Kimi
+  implementation jobs. Writes are limited to the resolved submitted workdir and
+  a mode-`0700` per-job runtime directory used as `TMPDIR` and removed at job end.
+- Kept Codex on its native `workspace-write` sandbox. Rejected CAO implementation
+  and unsupported native platforms until they can enforce an equivalent boundary.
+- Added a real Seatbelt regression test that permits a workspace write while
+  denying sibling and symlink-escape writes. Existing tool restrictions remain
+  in force; this phase intentionally addresses writes, while full read isolation
+  remains constrained by subscription CLI authentication stored outside the repo.
+- Verified the actual Sonnet implementation adapter under the wrapper: `Write`
+  created the requested file inside an isolated workspace, the requested absolute
+  sibling write did not create a file, and the provider exited successfully.
+- Full verification passes all 275 unit and integration tests on macOS.

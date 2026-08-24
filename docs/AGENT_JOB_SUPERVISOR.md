@@ -267,9 +267,21 @@ tools as defense in depth. Both also use an empty strict MCP configuration and
 safe mode, so project or user hooks and other customizations cannot introduce a
 separate execution path. This prevents within-session shell execution and nested
 delegation at the native Claude CLI boundary. It does not by itself confine
-absolute reads or writes to the submitted workspace; filesystem confinement is
-a separate supervisor boundary. The optional CAO backend has its own tool-policy
-contract and is not covered by these native CLI flags.
+absolute paths, so the supervisor adds a second boundary for implementation.
+On macOS, native Claude and Kimi implementation processes run under a Seatbelt
+profile that permits writes only in the resolved submitted workspace and a
+private per-job runtime directory. Symlink-resolved writes outside those paths
+are denied by the kernel. The runtime directory is mode `0700`, becomes the
+provider's `TMPDIR`, and is removed after termination. Codex continues to use
+its native `workspace-write` sandbox. If the required platform sandbox is not
+available, implementation fails closed. The optional CAO backend is rejected for
+implementation until it can provide the same enforceable contract.
+
+This checkpoint confines writes, not every read. The no-shell/no-network tool
+surface, safe mode, empty MCP configuration, secret-context rejection, and
+workspace policy remain the read-side controls. Full process-level read
+isolation would require provider authentication to be injected into a disposable
+home rather than read from each CLI's durable local login.
 
 Reads advance the normalized stream with the opaque byte `event_cursor`. On
 terminal failure, cancellation, or interruption, `partial_response` and

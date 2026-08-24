@@ -49,6 +49,10 @@ MCP intentionally exposes route decision, feedback, reconciliation, status,
 submit, read, list, cancel, and owner-inbox operations for read-only jobs.
 Explicit implementation remains behind the local capability-protected delegation
 CLI. This prevents a general chat client from selecting write mode directly.
+On macOS, Claude and Kimi implementation jobs are additionally wrapped in a
+kernel-enforced workspace-write profile; Codex uses its native workspace sandbox.
+Unsupported native platforms and CAO implementation fail closed rather than run
+without equivalent write confinement.
 Review prompts may contain up to 4 MiB of UTF-8 data. The supervisor's Unix
 socket reader is sized for that complete JSON request, so prompts larger than the
 former 400 KB ceiling are accepted end to end rather than only by one layer.
