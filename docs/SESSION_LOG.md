@@ -546,3 +546,29 @@
   workspace/Git/sibling confinement, network denial, and timeout termination,
   plus supervisor persistence and provider-adapter tests. The complete suite now
   passes all 281 tests under the repository `.venv`.
+- Opus's targeted follow-up could not start because Anthropic returned HTTP 529.
+  The enforced one-hop Kimi K3 review verified the remediation commit, closed
+  the orphan-process, unmediated-Codex, and unverified-Kimi blockers, and returned
+  `SHIP`. Codex recorded terminal routing feedback exactly once.
+
+## 2026-08-24 - Deployment setting retention
+
+- The reviewed release was overlaid into the fixed Mac mini install checkout
+  after preserving the prior working-tree patch under the supervisor state
+  directory. No Hermes checkout, profile, service, state, or process was changed.
+- Live deployment exposed two installer defects. Launchd needed slightly more
+  than the previous ten-second observation window even though the replacement
+  daemon started successfully, and a plain reinstall discarded existing
+  routing, quota, concurrency, and provider-binary overrides from the plist.
+- The installer now retains only its known machine deployment overrides, with
+  explicit command environment values taking precedence. Release-owned policy
+  such as approved workspace roots is still recomputed so stale authorization
+  does not survive an upgrade.
+- Launchd stop/start observation now permits 30 seconds. Regression tests cover
+  retained settings, explicit precedence, stale policy rejection, and the new
+  transition budget.
+- The Mac mini was recovered with `surface_canary`, quota routing, dynamic
+  concurrency, three configured provider slots, and the current Kimi Code binary.
+  Client bindings report current across Codex, Claude, Claude Desktop, and Kimi.
+- Focused installer tests, Python compilation, `git diff --check`, and the full
+  287-test suite pass. MacBook propagation remains the next deployment step.

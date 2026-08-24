@@ -23,6 +23,35 @@ PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
 STATE_DIR = Path.home() / ".local" / "state" / "agent-job-supervisor"
 SUPERVISOR = Path(__file__).resolve().with_name("agent_job_supervisor.py")
 IMPLEMENT_TOKEN_PATH = STATE_DIR / "implement.token"
+SERVICE_TRANSITION_POLLS = 300
+
+PERSISTED_OVERRIDE_NAMES = (
+    "AGENT_JOB_EXECUTION_BACKEND",
+    "AGENT_JOB_CAO_URL",
+    "AGENT_JOB_CAO_TOKEN",
+    "AGENT_JOB_CAO_LAUNCH_TIMEOUT",
+    "AGENT_JOB_CAO_PROVIDERS",
+    "AGENT_JOB_CAO_CANARY_PROVIDERS",
+    "AGENT_JOB_CAO_CANARY_OWNER_PREFIXES",
+    "AGENT_JOB_CLAUDE_CONCURRENCY",
+    "AGENT_JOB_CODEX_CONCURRENCY",
+    "AGENT_JOB_KIMI_CONCURRENCY",
+    "AGENT_JOB_KIMI_DEFAULT_MODEL",
+    "AGENT_JOB_MAX_LOG_BYTES",
+    "AGENT_JOB_MAX_EVENT_BYTES",
+    "AGENT_JOB_MAX_PARTIAL_RESPONSE_BYTES",
+    "AGENT_JOB_RETENTION_SECONDS",
+    "AGENT_JOB_ROUTING_MODE",
+    "AGENT_JOB_NATIVE_RESERVATIONS",
+    # Compatibility input for installations not yet migrated.
+    "AGENT_JOB_CODEX_NATIVE_RESERVATIONS",
+    "AGENT_JOB_ROUTE_RESERVATION_SECONDS",
+    "AGENT_JOB_QUOTA_ROUTING",
+    "AGENT_JOB_QUOTA_HISTORY_DIR",
+    "AGENT_JOB_QUOTA_STALE_SECONDS",
+    "AGENT_JOB_RATE_LIMIT_COOLDOWN_SECONDS",
+    "AGENT_JOB_DYNAMIC_CONCURRENCY",
+)
 
 
 def _run(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -61,10 +90,32 @@ def _active_jobs() -> list[dict[str, object]]:
     return active
 
 
-def _provider_binary(env_name: str, command: str, candidates: tuple[Path, ...]) -> str:
+def _existing_service_environment() -> dict[str, str]:
+    if not PLIST_PATH.is_file() or PLIST_PATH.is_symlink():
+        return {}
+    try:
+        with PLIST_PATH.open("rb") as handle:
+            payload = plistlib.load(handle)
+    except (OSError, ValueError, plistlib.InvalidFileException) as exc:
+        raise RuntimeError(f"Cannot read existing {LABEL} plist: {exc}") from exc
+    raw = payload.get("EnvironmentVariables") or {}
+    if not isinstance(raw, dict):
+        raise RuntimeError(f"Existing {LABEL} environment is invalid")
+    return {str(name): str(value) for name, value in raw.items()}
+
+
+def _provider_binary(
+    env_name: str,
+    command: str,
+    candidates: tuple[Path, ...],
+    existing: dict[str, str],
+) -> str:
     override = os.environ.get(env_name, "").strip()
     if override:
         return str(Path(override).expanduser().resolve())
+    retained = existing.get(env_name, "").strip()
+    if retained:
+        return retained
     discovered = shutil.which(command)
     if discovered:
         return str(Path(discovered).resolve())
@@ -76,6 +127,7 @@ def _provider_binary(env_name: str, command: str, candidates: tuple[Path, ...]) 
 
 def _service_environment() -> dict[str, str]:
     home = Path.home()
+    existing = _existing_service_environment()
     environment = {
         "HOME": str(home),
         "USER": home.name,
@@ -91,41 +143,17 @@ def _service_environment() -> dict[str, str]:
         "AGENT_JOB_ALLOWED_ROOTS": os.environ.get(
             "AGENT_JOB_ALLOWED_ROOTS", allowed_roots_value(),
         ),
-        "AGENT_JOB_CLAUDE_BIN": _provider_binary("AGENT_JOB_CLAUDE_BIN", "claude", (home / ".local/bin/claude",)),
-        "AGENT_JOB_KIMI_BIN": _provider_binary("AGENT_JOB_KIMI_BIN", "kimi", (home / ".kimi-code/bin/kimi",)),
-        "AGENT_JOB_CODEX_BIN": _provider_binary("AGENT_JOB_CODEX_BIN", "codex", (home / ".local/bin/codex", Path("/opt/homebrew/bin/codex"))),
+        "AGENT_JOB_CLAUDE_BIN": _provider_binary("AGENT_JOB_CLAUDE_BIN", "claude", (home / ".local/bin/claude",), existing),
+        "AGENT_JOB_KIMI_BIN": _provider_binary("AGENT_JOB_KIMI_BIN", "kimi", (home / ".kimi-code/bin/kimi",), existing),
+        "AGENT_JOB_CODEX_BIN": _provider_binary("AGENT_JOB_CODEX_BIN", "codex", (home / ".local/bin/codex", Path("/opt/homebrew/bin/codex")), existing),
     }
-    if os.environ.get("AGENT_JOB_PROFILE_ENV"):
-        environment["AGENT_JOB_PROFILE_ENV"] = os.environ["AGENT_JOB_PROFILE_ENV"]
-    for name in (
-        "AGENT_JOB_EXECUTION_BACKEND",
-        "AGENT_JOB_CAO_URL",
-        "AGENT_JOB_CAO_TOKEN",
-        "AGENT_JOB_CAO_LAUNCH_TIMEOUT",
-        "AGENT_JOB_CAO_PROVIDERS",
-        "AGENT_JOB_CAO_CANARY_PROVIDERS",
-        "AGENT_JOB_CAO_CANARY_OWNER_PREFIXES",
-        "AGENT_JOB_CLAUDE_CONCURRENCY",
-        "AGENT_JOB_CODEX_CONCURRENCY",
-        "AGENT_JOB_KIMI_CONCURRENCY",
-        "AGENT_JOB_KIMI_DEFAULT_MODEL",
-        "AGENT_JOB_MAX_LOG_BYTES",
-        "AGENT_JOB_MAX_EVENT_BYTES",
-        "AGENT_JOB_MAX_PARTIAL_RESPONSE_BYTES",
-        "AGENT_JOB_RETENTION_SECONDS",
-        "AGENT_JOB_ROUTING_MODE",
-        "AGENT_JOB_NATIVE_RESERVATIONS",
-        # Compatibility input for installations not yet migrated.
-        "AGENT_JOB_CODEX_NATIVE_RESERVATIONS",
-        "AGENT_JOB_ROUTE_RESERVATION_SECONDS",
-        "AGENT_JOB_QUOTA_ROUTING",
-        "AGENT_JOB_QUOTA_HISTORY_DIR",
-        "AGENT_JOB_QUOTA_STALE_SECONDS",
-        "AGENT_JOB_RATE_LIMIT_COOLDOWN_SECONDS",
-        "AGENT_JOB_DYNAMIC_CONCURRENCY",
-    ):
-        if os.environ.get(name):
-            environment[name] = os.environ[name]
+    profile_env = os.environ.get("AGENT_JOB_PROFILE_ENV") or existing.get("AGENT_JOB_PROFILE_ENV")
+    if profile_env:
+        environment["AGENT_JOB_PROFILE_ENV"] = profile_env
+    for name in PERSISTED_OVERRIDE_NAMES:
+        value = os.environ.get(name) or existing.get(name)
+        if value:
+            environment[name] = value
     return environment
 
 
@@ -185,7 +213,7 @@ def install() -> None:
     _run("launchctl", "bootout", domain, str(PLIST_PATH), check=False)
     if old_ping:
         old_pid = int(old_ping.get("pid") or 0)
-        for _ in range(100):
+        for _ in range(SERVICE_TRANSITION_POLLS):
             current = _socket_request({"action": "ping"})
             if current is None or int(current.get("pid") or 0) != old_pid:
                 break
@@ -198,7 +226,7 @@ def install() -> None:
     _run("launchctl", "bootstrap", domain, str(PLIST_PATH))
     _run("launchctl", "kickstart", "-k", f"{domain}/{LABEL}")
     ready = None
-    for _ in range(100):
+    for _ in range(SERVICE_TRANSITION_POLLS):
         ready = _socket_request({"action": "ping"})
         if ready and (not old_ping or ready.get("pid") != old_ping.get("pid")):
             break

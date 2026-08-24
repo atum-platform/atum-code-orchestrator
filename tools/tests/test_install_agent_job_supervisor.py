@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import plistlib
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -14,6 +16,52 @@ import install_agent_job_supervisor as installer  # noqa: E402
 
 
 class SupervisorInstallerTest(unittest.TestCase):
+    def test_service_environment_retains_known_existing_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plist_path = Path(temp_dir) / "supervisor.plist"
+            with plist_path.open("wb") as handle:
+                plistlib.dump(
+                    {
+                        "EnvironmentVariables": {
+                            "AGENT_JOB_ROUTING_MODE": "surface_canary",
+                            "AGENT_JOB_QUOTA_ROUTING": "1",
+                            "AGENT_JOB_DYNAMIC_CONCURRENCY": "1",
+                            "AGENT_JOB_KIMI_BIN": "/retained/kimi",
+                            "AGENT_JOB_ALLOWED_ROOTS": "/stale/policy/root",
+                            "UNRELATED_VALUE": "discard-me",
+                        }
+                    },
+                    handle,
+                )
+            with patch.object(installer, "PLIST_PATH", plist_path), \
+                 patch.dict(os.environ, {}, clear=True):
+                environment = installer._service_environment()
+
+        self.assertEqual("surface_canary", environment["AGENT_JOB_ROUTING_MODE"])
+        self.assertEqual("1", environment["AGENT_JOB_QUOTA_ROUTING"])
+        self.assertEqual("1", environment["AGENT_JOB_DYNAMIC_CONCURRENCY"])
+        self.assertEqual("/retained/kimi", environment["AGENT_JOB_KIMI_BIN"])
+        self.assertNotEqual("/stale/policy/root", environment["AGENT_JOB_ALLOWED_ROOTS"])
+        self.assertNotIn("UNRELATED_VALUE", environment)
+
+    def test_service_environment_explicit_override_wins_over_existing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plist_path = Path(temp_dir) / "supervisor.plist"
+            with plist_path.open("wb") as handle:
+                plistlib.dump(
+                    {"EnvironmentVariables": {"AGENT_JOB_ROUTING_MODE": "shadow"}},
+                    handle,
+                )
+            with patch.object(installer, "PLIST_PATH", plist_path), patch.dict(
+                os.environ, {"AGENT_JOB_ROUTING_MODE": "surface_canary"}, clear=True
+            ):
+                environment = installer._service_environment()
+
+        self.assertEqual("surface_canary", environment["AGENT_JOB_ROUTING_MODE"])
+
+    def test_launchd_transition_budget_allows_thirty_seconds(self) -> None:
+        self.assertEqual(300, installer.SERVICE_TRANSITION_POLLS)
+
     def test_service_environment_forwards_cao_canary_configuration(self) -> None:
         values = {
             "AGENT_JOB_EXECUTION_BACKEND": "native",

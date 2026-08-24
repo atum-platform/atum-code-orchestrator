@@ -26,6 +26,13 @@ The shared native reservation setting is `AGENT_JOB_NATIVE_RESERVATIONS`. The
 legacy `AGENT_JOB_CODEX_NATIVE_RESERVATIONS` name remains a fallback for one
 compatibility window; set only the new name on upgraded installations.
 
+Reinstalling preserves known routing, quota, concurrency, backend, provider
+binary, and profile-environment overrides from the existing ACO LaunchAgent.
+An explicit environment value on the install command still wins. Policy-owned
+values such as approved workspace roots are recomputed from the current release
+instead of retaining a stale deployment value. Launchd process transitions are
+observed for up to 30 seconds before installation reports failure.
+
 Before replacing an existing supervisor, let all `running` and `launching` jobs
 finish. The installer refuses to proceed while active jobs exist. Quit Codex
 Desktop, Claude Desktop, and Kimi before rewriting their configuration so an app
