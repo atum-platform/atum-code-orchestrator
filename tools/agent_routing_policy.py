@@ -125,8 +125,13 @@ def _default_targets(caller: str, capability: str) -> tuple[str, str]:
 
 def _native_model_alias(caller: str, intent: dict[str, Any]) -> str:
     if intent["protocol_version"] == 1:
+        if caller != "codex":
+            raise ValueError("Protocol-v1 native routing is supported only for Codex")
         return "codex_fast"
-    return PROVIDER_CAPABILITY_MATRIX[caller]["fast_model"]
+    fast_model = PROVIDER_CAPABILITY_MATRIX.get(caller, {}).get("fast_model", "")
+    if not fast_model:
+        raise ValueError(f"No native model is configured for caller: {caller}")
+    return fast_model
 
 
 def normalize_intent(intent: dict[str, Any]) -> dict[str, Any]:

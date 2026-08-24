@@ -13,6 +13,13 @@
   CLI boundaries; run deadlines remain the sole effective execution ceiling.
 - Verification: 69 focused routing, client, and guarded-interface tests pass;
   the full 279-test suite passes; `git diff --check` is clean.
+- Review: Opus 5 returned a ship verdict and confirmed the compatibility, model,
+  and cross-family-review changes. Its follow-up findings were applied: exact
+  stale Claude defaults now migrate without overwriting custom policy, the shared
+  skill describes every same-family native lane, cross-surface capacity has a
+  positive control, protocol-v1 native routing pins its Codex-only invariant, and
+  migration documentation covers the provider-neutral setting. The 50 focused
+  tests covering those corrections pass.
 
 ## 2026-08-24 - Recover deployed routing changes into source control
 

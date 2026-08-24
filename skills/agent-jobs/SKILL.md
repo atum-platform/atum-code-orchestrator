@@ -71,11 +71,13 @@ Fresh actual utilization at or above the supervisor's exhaustion threshold is
 fail-closed for that provider, including explicit targets and one-hop fallbacks;
 continue directly or use the enforced alternate instead of bypassing admission.
 
-## Route focused Codex work
+## Route focused same-family work
 
-For a separable implementation, exploration, or test scope, Codex calls
-`route_decide` before spawning a native worker. Pass a stable ID for the current
-task as `session_id`, use protocol v2, and report
+For a separable bounded scope in the caller's primary domain, call `route_decide`
+before spawning a native worker. Codex and Kimi native lanes cover implementation,
+exploration, and tests; Claude native lanes cover planning, architecture, design,
+product, copywriting, and research. Pass a stable ID for the current task as
+`session_id`, use protocol v2, and report
 `surface_capabilities.durable_agent_jobs=true`. Report `native_subagents=true`
 only when native agents are actually available. If an older supervisor rejects
 v2, retry once with v1 and follow its legacy result. A `native_subagent` response includes
@@ -86,9 +88,9 @@ Retain the decision ID. Spawn one native worker for the bounded scope, integrate
 and verify its result, then call `route_feedback` once with `completed`, `failed`,
 `abandoned`, `escalated`, or `not_started`. Identical feedback retries are safe.
 On task resume, call `route_reconcile` with that session's decision IDs that are
-still running; omitted active reservations are released. `codex_fast` means the
-current Codex Spark-class worker available on that surface. Capacity exhaustion
-returns `direct`, so the primary continues the work itself.
+still running; omitted active reservations are released. Focused native routes
+use Spark for Codex, Sonnet for Claude, and high-speed K2.7 for Kimi. Capacity
+exhaustion returns `direct`, so the primary continues the work itself.
 
 1. Inspect the exact project and define one checkpoint, risk, and expected output.
 2. Load only the relevant rubric and incorporate it into `instructions`.

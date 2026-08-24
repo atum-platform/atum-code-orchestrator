@@ -82,6 +82,18 @@ class ClientInstallerTest(unittest.TestCase):
         self.assertTrue(path.with_name("AGENTS.md.bak.agent-jobs-test").exists())
         self.assertFalse(installer.merge_guidance(path, "Kimi guidance", "second", True))
 
+    def test_known_stale_claude_managed_policy_is_migrated(self) -> None:
+        path = self.root / "CLAUDE.md"
+        stale = installer.MIGRATABLE_MANAGED_GUIDANCE["Claude guidance"]
+        path.write_text(
+            f"{installer.GUIDANCE_START}\n{stale.rstrip()}\n{installer.GUIDANCE_END}\n",
+            encoding="utf-8",
+        )
+        self.assertTrue(installer.merge_guidance(path, "Claude guidance", "test", True))
+        result = path.read_text(encoding="utf-8")
+        self.assertIn("Claude keeps", result)
+        self.assertNotIn("Codex first for code review, planning", result)
+
     def test_invalid_json_has_actionable_error(self) -> None:
         path = self.root / "mcp.json"
         path.write_text('{"broken": }', encoding="utf-8")

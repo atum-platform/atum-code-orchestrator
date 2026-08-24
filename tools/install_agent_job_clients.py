@@ -65,6 +65,18 @@ and omit the retired `max_turns` option. Verify all returned work locally.
 """,
 }
 
+MIGRATABLE_MANAGED_GUIDANCE = {
+    "Claude guidance": """## Agent Jobs
+
+Use `$agent-jobs` for durable cross-agent review and delegation. As a Claude
+caller, use Codex first for code review, planning, and implementation; use Kimi
+only as the documented fallback. Never delegate back to Claude, recurse, or send
+secrets. Run the skill's guarded CLI, retain job IDs and cursors, and treat
+`possibly_stalled` as alive but quiet. The retired `max_turns` option is omitted.
+Verify returned advice and changes locally before accepting them.
+""",
+}
+
 ROUTING_GUIDANCE = """## Agent Jobs Routing Protocol
 
 Before every cross-agent review, consultation, planning, architecture, design,
@@ -260,7 +272,17 @@ def merge_guidance(path: Path, name: str, suffix: str, apply: bool) -> bool:
     if start != -1:
         # Existing marked guidance is locally owned policy. Provider availability
         # overrides and team-specific routing must not be silently overwritten.
-        updated = original
+        end += len(GUIDANCE_END)
+        existing = original[start:end]
+        migratable = MIGRATABLE_MANAGED_GUIDANCE.get(name)
+        old_managed = (
+            f"{GUIDANCE_START}\n{migratable.rstrip()}\n{GUIDANCE_END}"
+            if migratable else ""
+        )
+        updated = (
+            original[:start] + managed + original[end:]
+            if existing == old_managed else original
+        )
     else:
         # Adopt legacy policy verbatim; the shared skill carries portable defaults.
         import re

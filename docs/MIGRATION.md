@@ -12,10 +12,15 @@ guidance already present on a machine is adopted verbatim to preserve local and
 temporary routing policy; a fresh machine receives the repository default, so
 machine-specific overrides may intentionally differ.
 
-Codex routing instructions use a separate installer-owned marked block. This
-block may be updated without replacing customized provider guidance. The
-installer also adds the `spark-worker` role and a three-thread native machine ceiling
-only when no ceiling is already configured.
+All coding surfaces receive a separate installer-owned routing block. This block
+may be updated without replacing customized provider guidance. The installer
+also migrates its exact previous Claude default while preserving any customized
+managed section. It adds the `spark-worker` role and a three-thread Codex native
+machine ceiling only when no ceiling is already configured.
+
+The shared native reservation setting is `AGENT_JOB_NATIVE_RESERVATIONS`. The
+legacy `AGENT_JOB_CODEX_NATIVE_RESERVATIONS` name remains a fallback for one
+compatibility window; set only the new name on upgraded installations.
 
 Before replacing an existing supervisor, let all `running` and `launching` jobs
 finish. The installer refuses to proceed while active jobs exist. Quit Codex

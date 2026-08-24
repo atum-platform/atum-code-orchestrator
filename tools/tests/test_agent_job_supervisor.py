@@ -2101,20 +2101,39 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
     async def test_native_reservation_capacity_is_shared_across_coding_surfaces(self) -> None:
         self.supervisor.routing_mode = "surface_canary"
         self.supervisor.native_reservation_limit = 1
-        first = await self.call({
-            **self.codex_native_route("codex-session"), "protocol_version": 2,
-            "surface_capabilities": {"native_subagents": True, "durable_agent_jobs": True},
-        })
-        second = await self.call({
+        claude_route = {
             "action": "route_decide", "protocol_version": 2,
             "caller_provider": "claude", "surface": "claude-code",
             "capability": "design", "complexity": "focused", "risk": "low",
             "scope": "single_module", "duration": "short", "durability": "session",
             "parallelizable": True, "session_id": "claude-session",
             "surface_capabilities": {"native_subagents": True, "durable_agent_jobs": True},
+        }
+        first = await self.call({
+            **self.codex_native_route("codex-session"), "protocol_version": 2,
+            "surface_capabilities": {"native_subagents": True, "durable_agent_jobs": True},
         })
+        second = await self.call(claude_route)
         self.assertEqual("native_subagent", first["lane"])
         self.assertEqual("direct", second["lane"])
+        self.assertEqual("none", second["reservation_status"])
+
+        await self.call({
+            "action": "route_feedback", "decision_id": first["decision_id"],
+            "session_id": "codex-session", "outcome": "completed",
+        })
+        self.supervisor.native_reservation_limit = 2
+        codex, claude = await asyncio.gather(
+            self.call({
+                **self.codex_native_route("codex-control"), "protocol_version": 2,
+                "surface_capabilities": {"native_subagents": True, "durable_agent_jobs": True},
+            }),
+            self.call({**claude_route, "session_id": "claude-control"}),
+        )
+        self.assertEqual(
+            ["native_subagent", "native_subagent"],
+            [codex["lane"], claude["lane"]],
+        )
 
     async def test_route_feedback_is_idempotent_and_releases_reservation(self) -> None:
         self.supervisor.routing_mode = "codex_canary"
