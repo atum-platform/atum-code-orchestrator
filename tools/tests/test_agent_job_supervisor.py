@@ -1782,9 +1782,23 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("--verbose", argv)
             self.assertIn("--no-session-persistence", argv)
             self.assertIn("--max-turns", argv)
+            self.assertEqual("Read,Glob,Grep,LS", argv[argv.index("--tools") + 1])
+            self.assertEqual("Read,Glob,Grep,LS", argv[argv.index("--allowed-tools") + 1])
+            denied = argv[argv.index("--disallowed-tools") + 1].split(",")
+            self.assertIn("Bash", denied)
+            self.assertIn("Agent", denied)
+            self.assertNotIn("Edit", argv[argv.index("--tools") + 1].split(","))
+            self.assertNotIn("Write", argv[argv.index("--tools") + 1].split(","))
             base["max_turns"] = 0
             argv, _, _ = self.supervisor._build_command(base)
             self.assertNotIn("--max-turns", argv)
+            base["mode"] = "implement"
+            argv, _, _ = self.supervisor._build_command(base)
+            self.assertEqual(
+                "Read,Glob,Grep,Edit,Write", argv[argv.index("--tools") + 1]
+            )
+            self.assertNotIn("Bash", argv[argv.index("--tools") + 1].split(","))
+            self.assertIn("Agent", argv[argv.index("--disallowed-tools") + 1].split(","))
             base.update(provider="codex", model="gpt-5.6-codex")
             os.environ["AGENT_JOB_CAO_TOKEN"] = "must-not-reach-native"
             argv, stdin_text, env = self.supervisor._build_command(base)

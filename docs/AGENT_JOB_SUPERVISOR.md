@@ -256,6 +256,15 @@ and Kimi records retain only byte count and digest.
 Raw bounded logs remain private operational evidence under the user-only state
 directory and are not returned through normal semantic job reads.
 
+Claude's native tool surface is selected with `--tools`, not merely approved
+with `--allowed-tools`. Read-only jobs expose only `Read`, `Glob`, `Grep`, and
+`LS`; implementation jobs add `Edit` and `Write`. Both modes deny `Bash`,
+`Agent`, `Workflow`, `WebFetch`, `WebSearch`, and `NotebookEdit`, use an empty
+strict MCP configuration, and disable customizations in read-only mode. This
+prevents shell execution and nested delegation at the Claude CLI boundary. It
+does not by itself confine absolute reads to the submitted workspace; filesystem
+confinement is a separate supervisor boundary.
+
 Reads advance the normalized stream with the opaque byte `event_cursor`. On
 terminal failure, cancellation, or interruption, `partial_response` and
 `partial_result_state` make retained work recoverable. Existing callers that

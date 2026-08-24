@@ -1049,9 +1049,15 @@ class Supervisor:
         if provider == "claude":
             permission = "plan" if mode == "readonly" else "acceptEdits"
             tools = ["Read", "Glob", "Grep", "LS"] if mode == "readonly" else ["Read", "Glob", "Grep", "Edit", "Write"]
+            tool_csv = ",".join(tools)
+            disallowed = ["Bash", "Agent", "Workflow", "WebFetch", "WebSearch", "NotebookEdit"]
             argv = [
                 binary, "-p", "--model", model, "--permission-mode", permission,
-                "--allowed-tools", *tools,
+                # --tools defines availability; --allowed-tools only grants
+                # permission and does not remove other built-ins.
+                "--tools", tool_csv,
+                "--allowed-tools", tool_csv,
+                "--disallowed-tools", ",".join(disallowed),
                 "--output-format", "stream-json", "--include-partial-messages", "--verbose",
                 "--no-session-persistence",
             ]
