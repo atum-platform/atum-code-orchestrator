@@ -603,3 +603,7 @@
 - Modern jobs receive a private per-job `KIMI_CODE_HOME`, empty MCP declaration,
   and empty Skills directory while reusing only local Kimi authentication state.
   The runtime is removed by the existing terminal cleanup path.
+- The first launchd smoke test showed that invoking modern Kimi `--help` can
+  block behind its updater long enough to fail capability detection. Official
+  `.kimi-code/bin/kimi` installs are now identified without spawning the CLI;
+  nonstandard binary paths use the faster `--version` contract as fallback.

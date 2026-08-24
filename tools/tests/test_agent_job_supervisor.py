@@ -22,6 +22,40 @@ import agent_job_supervisor as supervisor_module  # noqa: E402
 from agent_job_supervisor import JobStore, Supervisor  # noqa: E402
 
 
+class KimiCliCompatibilityTest(unittest.TestCase):
+    def tearDown(self) -> None:
+        supervisor_module._kimi_cli_generation.cache_clear()
+
+    def test_official_modern_install_path_needs_no_subprocess_probe(self) -> None:
+        supervisor_module._kimi_cli_generation.cache_clear()
+        with patch.object(supervisor_module.subprocess, "run") as run:
+            generation = supervisor_module._kimi_cli_generation(
+                "/Users/example/.kimi-code/bin/kimi"
+            )
+        self.assertEqual("modern", generation)
+        run.assert_not_called()
+
+    def test_nonstandard_paths_use_version_contract(self) -> None:
+        supervisor_module._kimi_cli_generation.cache_clear()
+        with patch.object(
+            supervisor_module.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess(
+                ["/custom/kimi", "--version"], 0, stdout="kimi, version 1.49.0\n", stderr=""
+            ),
+        ) as run:
+            self.assertEqual(
+                "legacy", supervisor_module._kimi_cli_generation("/custom/kimi")
+            )
+        run.assert_called_once_with(
+            ["/custom/kimi", "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+
 class WorkspaceConfinementTest(unittest.TestCase):
     @unittest.skipUnless(
         sys.platform == "darwin" and supervisor_module.SANDBOX_EXEC_PATH.is_file(),

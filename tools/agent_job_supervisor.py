@@ -172,25 +172,23 @@ def _kimi_semantic_enabled() -> bool:
 @functools.lru_cache(maxsize=8)
 def _kimi_cli_generation(binary: str) -> str:
     """Distinguish the legacy Python CLI from the current Node CLI."""
+    path = Path(binary).expanduser().resolve()
+    if ".kimi-code" in path.parts:
+        return "modern"
     try:
         result = subprocess.run(
-            [binary, "--help"],
+            [binary, "--version"],
             check=False,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=5,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeError(f"Unable to inspect Kimi CLI capabilities: {exc}") from exc
-    help_text = f"{result.stdout}\n{result.stderr}"
-    if result.returncode == 0 and "--mcp-config-file" in help_text:
+    version_text = f"{result.stdout}\n{result.stderr}".strip()
+    if result.returncode == 0 and version_text.startswith("kimi, version "):
         return "legacy"
-    if (
-        result.returncode == 0
-        and "--output-format" in help_text
-        and "--skills-dir" in help_text
-        and "--prompt" in help_text
-    ):
+    if result.returncode == 0 and re.fullmatch(r"\d+\.\d+\.\d+(?:[-+].*)?", version_text):
         return "modern"
     raise RuntimeError("Installed Kimi CLI exposes an unsupported command-line contract")
 
