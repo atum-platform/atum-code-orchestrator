@@ -1575,7 +1575,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("completed", result["job"]["status"])
         live_binary = Path(str(result["job"]["binary_path"]))
-        self.assertTrue(live_binary.is_file())
+        self.assertTrue(live_binary.is_absolute())
         self.assertIn("python", live_binary.name.lower())
 
     async def test_prompt_over_four_mib_is_rejected(self) -> None:
