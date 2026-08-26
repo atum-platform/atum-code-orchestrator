@@ -14,6 +14,14 @@
 - Updated installer coverage and client documentation. Installation remains
   native per machine; configuration files containing local credentials are
   never copied between Macs.
+- Refreshed PR #22 by merging current `main` at
+  `63d9477607fc3f51f0d34c5761f2c8e3610b1cf0`. The merge adopts the hosted
+  Ubuntu workflow and portable launch-identity assertion from PR #23; no
+  duplicate supervisor or test fix was authored on this branch.
+- Verification after the refresh: the launch-identity and recursive-submission
+  tests pass (2/2), the supervisor integration class passes (113/113), the full
+  repository suite passes (293/293), Python compilation succeeds, and
+  `git diff --check` is clean.
 
 ## 2026-08-24 - Prevent WAL fsync from starving control requests
 
