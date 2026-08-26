@@ -15,11 +15,14 @@ concurrency:
 jobs:
   test:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, portable-ci, local-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Verify runner Python
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Verify Python
         run: python3.11 --version
       - run: python3.11 -m venv .venv
       - run: .venv/bin/python -m pip install -r requirements.txt
