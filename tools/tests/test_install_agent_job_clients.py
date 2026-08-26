@@ -25,6 +25,17 @@ class ClientInstallerTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
+    def test_installer_has_no_hermes_profile_targets(self) -> None:
+        targets = installer._paths(self.root)
+        self.assertFalse(any(".hermes/profiles" in str(path) for path in targets.values()))
+
+    def test_claude_code_uses_official_user_scope_config(self) -> None:
+        targets = installer._paths(self.root)
+        self.assertEqual(
+            self.root / ".claude.json",
+            targets["Claude Code MCP"],
+        )
+
     def test_mcp_merge_preserves_unrelated_configuration(self) -> None:
         path = self.root / "config.json"
         path.write_text(
@@ -69,14 +80,30 @@ class ClientInstallerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Duplicate"):
             installer.merge_kimi_guidance(path, "test", False)
 
-    def test_locally_owned_non_codex_guidance_is_byte_preserved(self) -> None:
+    def test_locally_owned_non_codex_policy_is_preserved_and_routing_added(self) -> None:
         path = self.root / "AGENTS.md"
         original = f"{installer.GUIDANCE_START}\nCustom policy.\n{installer.GUIDANCE_END}"
         path.write_text(original, encoding="utf-8")
 
-        self.assertFalse(installer.merge_guidance(path, "Kimi guidance", "test", True))
-        self.assertEqual(original, path.read_text(encoding="utf-8"))
-        self.assertFalse(path.with_name("AGENTS.md.bak.agent-jobs-test").exists())
+        self.assertTrue(installer.merge_guidance(path, "Kimi guidance", "test", True))
+        result = path.read_text(encoding="utf-8")
+        self.assertIn(original, result)
+        self.assertIn(installer.ROUTING_START, result)
+        self.assertIn("route_decide", result)
+        self.assertTrue(path.with_name("AGENTS.md.bak.agent-jobs-test").exists())
+        self.assertFalse(installer.merge_guidance(path, "Kimi guidance", "second", True))
+
+    def test_known_stale_claude_managed_policy_is_migrated(self) -> None:
+        path = self.root / "CLAUDE.md"
+        stale = installer.MIGRATABLE_MANAGED_GUIDANCE["Claude guidance"]
+        path.write_text(
+            f"{installer.GUIDANCE_START}\n{stale.rstrip()}\n{installer.GUIDANCE_END}\n",
+            encoding="utf-8",
+        )
+        self.assertTrue(installer.merge_guidance(path, "Claude guidance", "test", True))
+        result = path.read_text(encoding="utf-8")
+        self.assertIn("Claude keeps", result)
+        self.assertNotIn("Codex first for code review, planning", result)
 
     def test_invalid_json_has_actionable_error(self) -> None:
         path = self.root / "mcp.json"
@@ -110,7 +137,7 @@ class ClientInstallerTest(unittest.TestCase):
     def test_apply_rolls_back_all_prior_targets_on_failure(self) -> None:
         home = self.root / "home"
         paths = installer._paths(home)
-        for name in ("Claude Desktop MCP", "Kimi MCP", "Kimi guidance"):
+        for name in ("Claude Code MCP", "Claude Desktop MCP", "Kimi MCP", "Kimi guidance"):
             path = paths[name]
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("{}\n" if "MCP" in name else "# Existing\n", encoding="utf-8")
@@ -167,6 +194,7 @@ class ClientInstallerTest(unittest.TestCase):
         self.assertEqual(2, code)
         self.assertIn("shared skill: error:", output.getvalue())
         self.assertIn("Claude Desktop MCP: would update", output.getvalue())
+        self.assertIn("Claude Code MCP: would update", output.getvalue())
 
     def test_check_returns_one_when_changes_are_pending(self) -> None:
         home = self.root / "home"
@@ -258,6 +286,20 @@ class ClientInstallerTest(unittest.TestCase):
         self.assertIn("supersede static", routing)
         self.assertIn("job_submit", routing)
         self.assertIn("route_feedback", routing)
+
+    def test_claude_and_kimi_receive_generic_routing_protocol(self) -> None:
+        for name in ("Claude guidance", "Kimi guidance"):
+            with self.subTest(name=name):
+                path = self.root / name.replace(" ", "-")
+                self.assertTrue(installer.merge_guidance(path, name, "test", True))
+                result = path.read_text(encoding="utf-8")
+                routing = result.split(installer.ROUTING_START, 1)[1].split(
+                    installer.ROUTING_END, 1
+                )[0]
+                self.assertIn("route_decide", routing)
+                self.assertIn("native_subagents=true", routing)
+                self.assertIn("route_feedback", routing)
+                self.assertIn("parallel MECE workstreams", routing)
 
     def test_existing_codex_routing_block_is_replaced_without_touching_policy(self) -> None:
         path = self.root / "AGENTS.md"

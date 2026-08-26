@@ -7,6 +7,7 @@ import argparse
 import asyncio
 from collections import Counter
 import fcntl
+import functools
 import hashlib
 import hmac
 import json
@@ -17,6 +18,7 @@ import shutil
 import signal
 import sqlite3
 import stat
+import subprocess
 import sys
 import time
 import uuid
@@ -37,6 +39,10 @@ DB_PATH = Path(os.environ.get("AGENT_JOB_DB", str(STATE_DIR / "jobs.sqlite3"))).
 LOG_DIR = Path(os.environ.get("AGENT_JOB_LOG_DIR", str(STATE_DIR / "logs"))).expanduser()
 SERVER_DIR = Path(__file__).resolve().parent
 MAX_PROMPT_BYTES = 4 * 1024 * 1024
+MAX_CHECKS = 8
+MAX_CHECK_ARGV_ITEMS = 64
+MAX_CHECK_SPEC_BYTES = 16 * 1024
+CHECK_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,31}$")
 MAX_READ_BYTES = 256_000
 MAX_JOB_LOG_BYTES = int(os.environ.get("AGENT_JOB_MAX_LOG_BYTES", str(10 * 1024 * 1024)))
 ROUTE_FEEDBACK_OUTCOMES = {"completed", "failed", "abandoned", "escalated", "not_started"}
@@ -92,6 +98,16 @@ SEMANTIC_PROVIDERS = {"claude", "codex", "kimi"}
 SEMANTIC_LIVENESS_PROVIDERS = {"claude", "codex"}
 DYNAMIC_HEALTH_REFRESH_SECONDS = 15
 NATIVE_FEEDBACK_JOIN_GATE = 0.95
+SANDBOX_EXEC_PATH = Path("/usr/bin/sandbox-exec")
+MACOS_WORKSPACE_WRITE_PROFILE = """(version 1)
+(allow default)
+(deny file-write*
+  (require-all
+    (require-not (subpath (param "WORKDIR")))
+    (require-not (subpath (param "RUNTIME_DIR")))
+    (require-not (literal "/dev/null"))))
+(deny file-write* (subpath (param "GIT_META")))
+"""
 
 
 class AlreadyRunning(RuntimeError):
@@ -123,13 +139,16 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-def _bounded_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
-    raw = os.environ.get(name, str(default))
+def _bounded_int_value(name: str, raw: str, minimum: int, maximum: int) -> int:
     try:
         value = int(raw)
     except ValueError:
         raise ValueError(f"{name} must be an integer, got {raw!r}") from None
     return max(minimum, min(value, maximum))
+
+
+def _bounded_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
+    return _bounded_int_value(name, os.environ.get(name, str(default)), minimum, maximum)
 
 
 def _boolean_env(name: str, default: bool = False) -> bool:
@@ -150,6 +169,30 @@ def _kimi_semantic_enabled() -> bool:
     }
 
 
+@functools.lru_cache(maxsize=8)
+def _kimi_cli_generation(binary: str) -> str:
+    """Distinguish the legacy Python CLI from the current Node CLI."""
+    path = Path(binary).expanduser().resolve()
+    if ".kimi-code" in path.parts:
+        return "modern"
+    try:
+        result = subprocess.run(
+            [binary, "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"Unable to inspect Kimi CLI capabilities: {exc}") from exc
+    version_text = f"{result.stdout}\n{result.stderr}".strip()
+    if result.returncode == 0 and version_text.startswith("kimi, version "):
+        return "legacy"
+    if result.returncode == 0 and re.fullmatch(r"\d+\.\d+\.\d+(?:[-+].*)?", version_text):
+        return "modern"
+    raise RuntimeError("Installed Kimi CLI exposes an unsupported command-line contract")
+
+
 def _normalize_model(provider: str, requested_model: str) -> tuple[str, str]:
     model = requested_model.strip()
     if provider != "kimi":
@@ -162,6 +205,42 @@ def _normalize_model(provider: str, requested_model: str) -> tuple[str, str]:
     return KIMI_K27_MODEL, (
         f"Unrecognized or legacy Kimi model alias '{model}' normalized to {KIMI_K27_MODEL}"
     )
+
+
+def _normalize_checks(raw: Any, mode: str, provider: str) -> list[dict[str, Any]]:
+    if raw in (None, []):
+        return []
+    if mode != "implement":
+        raise ValueError("Approved checks are available only for implementation jobs")
+    if provider != "claude":
+        raise ValueError("Approved checks are currently supported only for Claude implementation jobs")
+    if not isinstance(raw, list) or len(raw) > MAX_CHECKS:
+        raise ValueError(f"checks must be a list of at most {MAX_CHECKS} entries")
+    normalized: list[dict[str, Any]] = []
+    names: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError("Each check must be an object")
+        name = str(item.get("name") or "")
+        argv = item.get("argv")
+        if not CHECK_NAME_PATTERN.fullmatch(name) or name in names:
+            raise ValueError(f"Invalid or duplicate check name: {name!r}")
+        if not isinstance(argv, list) or not 1 <= len(argv) <= MAX_CHECK_ARGV_ITEMS:
+            raise ValueError(f"Check {name!r} must contain 1 to {MAX_CHECK_ARGV_ITEMS} argv items")
+        if isinstance(argv[0], str) and argv[0].startswith("-"):
+            raise ValueError(f"Check {name!r} executable cannot start with '-'")
+        clean_argv: list[str] = []
+        for value in argv:
+            if not isinstance(value, str) or not value or "\x00" in value:
+                raise ValueError(f"Check {name!r} contains an invalid argv item")
+            clean_argv.append(value)
+        timeout = max(5, min(int(item.get("timeout_seconds") or 300), 900))
+        normalized.append({"name": name, "argv": clean_argv, "timeout_seconds": timeout})
+        names.add(name)
+    encoded = _json(normalized)
+    if len(encoded.encode("utf-8")) > MAX_CHECK_SPEC_BYTES:
+        raise ValueError(f"checks exceed {MAX_CHECK_SPEC_BYTES} UTF-8 bytes")
+    return normalized
 
 
 def _allowed_roots() -> list[Path]:
@@ -271,6 +350,8 @@ class JobStore:
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute("PRAGMA synchronous=NORMAL")
+        self.db.execute("PRAGMA wal_autocheckpoint=256")
         self.db.execute("PRAGMA busy_timeout=5000")
         self.db.executescript(
             """
@@ -391,6 +472,7 @@ class JobStore:
             "provider_result_error": "INTEGER NOT NULL DEFAULT 0",
             "semantic_normalization_failed": "INTEGER NOT NULL DEFAULT 0",
             "journal_truncated": "INTEGER NOT NULL DEFAULT 0",
+            "checks_json": "TEXT NOT NULL DEFAULT '[]'",
         }
         for name, definition in migrations.items():
             if name not in columns:
@@ -431,7 +513,8 @@ class JobStore:
             "ON provider_health_events(provider, observed_at)"
         )
         self.db.execute(
-            "UPDATE jobs SET prompt = '' WHERE status IN ('completed','failed','cancelled','interrupted')"
+            "UPDATE jobs SET prompt = '', checks_json = '[]' "
+            "WHERE status IN ('completed','failed','cancelled','interrupted')"
         )
         self.db.commit()
         try:
@@ -459,8 +542,8 @@ class JobStore:
                 created_at, updated_at, timeout_seconds, queue_timeout_seconds,
                 run_timeout_seconds, soft_stall_seconds,
                 max_turns, log_path, idempotency_key, request_hash, execution_backend,
-                semantic_stream
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                semantic_stream, checks_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 job_id, spec["provider"], spec["model"], spec.get("requested_model", ""),
                 spec["mode"], spec["workdir"],
@@ -469,7 +552,7 @@ class JobStore:
                 spec.get("queue_timeout_seconds"), spec.get("run_timeout_seconds"),
                 spec["soft_stall_seconds"], spec["max_turns"], str(log_path), key,
                 spec["request_hash"], spec.get("execution_backend", "native"),
-                int(spec.get("semantic_stream") or 0),
+                int(spec.get("semantic_stream") or 0), spec.get("checks_json", "[]"),
             ),
         )
         self.db.commit()
@@ -844,7 +927,8 @@ class JobStore:
         now = _now()
         self.db.execute(
             """UPDATE jobs SET status = 'interrupted', failure_kind = 'supervisor_restart',
-               message = 'Supervisor restarted while the job was running', prompt = '', finished_at = ?, updated_at = ?
+               message = 'Supervisor restarted while the job was running', prompt = '', checks_json = '[]',
+               finished_at = ?, updated_at = ?
                WHERE status IN ('launching','running')""",
             (now, now),
         )
@@ -949,8 +1033,14 @@ class Supervisor:
         self.routing_mode = os.environ.get("AGENT_JOB_ROUTING_MODE", "shadow").strip().lower()
         if self.routing_mode not in {"shadow", "codex_canary", "surface_canary"}:
             raise ValueError(f"Unsupported AGENT_JOB_ROUTING_MODE: {self.routing_mode}")
-        self.native_reservation_limit = _bounded_int_env(
-            "AGENT_JOB_CODEX_NATIVE_RESERVATIONS", 3, 1, 32
+        native_limit_name = (
+            "AGENT_JOB_NATIVE_RESERVATIONS"
+            if "AGENT_JOB_NATIVE_RESERVATIONS" in os.environ
+            else "AGENT_JOB_CODEX_NATIVE_RESERVATIONS"
+        )
+        native_limit_raw = os.environ.get(native_limit_name, "3")
+        self.native_reservation_limit = _bounded_int_value(
+            native_limit_name, native_limit_raw, 1, 32
         )
         self.native_reservation_ttl = _bounded_int_env(
             "AGENT_JOB_ROUTE_RESERVATION_SECONDS", 900, 30, 86_400
@@ -1012,6 +1102,10 @@ class Supervisor:
     def _build_command(self, job: dict[str, Any]) -> tuple[list[str], str | None, dict[str, str]]:
         provider = job["provider"]
         if job.get("execution_backend", "native") == "cao":
+            if job["mode"] == "implement":
+                raise RuntimeError(
+                    "CAO cannot enforce workspace-confined implementation; use the native backend"
+                )
             bridge = SERVER_DIR / "cao_job_bridge.py"
             if not bridge.is_file():
                 raise RuntimeError(f"CAO job bridge is missing: {bridge}")
@@ -1036,32 +1130,75 @@ class Supervisor:
         model = job["model"]
         mode = job["mode"]
         prompt = job["prompt"]
+        checks = json.loads(str(job.get("checks_json") or "[]"))
+        if mode == "implement" and checks:
+            names = ", ".join(str(check["name"]) for check in checks)
+            prompt += (
+                "\n\nApproved verification checks are available through the "
+                f"aco_checks run_check tool: {names}. Run only these named checks."
+            )
         max_turns = int(job["max_turns"])
         if provider == "claude":
             permission = "plan" if mode == "readonly" else "acceptEdits"
-            tools = ["Read", "Glob", "Grep", "LS"] if mode == "readonly" else ["Read", "Glob", "Grep", "Edit", "Write"]
+            tools = ["Read", "Glob", "Grep"] if mode == "readonly" else ["Read", "Glob", "Grep", "Edit", "Write"]
+            if mode == "implement" and checks:
+                tools.append("mcp__aco_checks__run_check")
+            tool_csv = ",".join(tools)
+            disallowed = [
+                "Bash", "BashOutput", "KillShell", "Agent", "Task", "Monitor",
+                "Workflow", "WebFetch", "WebSearch", "NotebookEdit",
+            ]
             argv = [
                 binary, "-p", "--model", model, "--permission-mode", permission,
-                "--allowed-tools", *tools,
+                # --tools defines availability; --allowed-tools only grants
+                # permission and does not remove other built-ins.
+                "--tools", tool_csv,
+                "--allowed-tools", tool_csv,
+                "--disallowed-tools", ",".join(disallowed),
                 "--output-format", "stream-json", "--include-partial-messages", "--verbose",
                 "--no-session-persistence",
             ]
             if max_turns > 0:
                 argv.extend(["--max-turns", str(max_turns)])
             argv.extend(["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'])
-            if mode == "readonly":
-                argv.append("--safe-mode")
-            return argv, prompt, _provider_env(provider)
+            # Disable project/user hooks and other customizations in both modes;
+            # implement mode receives only the explicit built-in edit tools above.
+            argv.append("--safe-mode")
+            return self._confine_implementation(job, argv, prompt, _provider_env(provider))
         if provider == "kimi":
-            agent_name = "kimi_read_only_reviewer.md" if mode == "readonly" else "kimi_implementation_agent.md"
+            generation = _kimi_cli_generation(binary)
+            suffix = "yaml" if generation == "legacy" else "md"
+            agent_name = (
+                f"kimi_read_only_reviewer.{suffix}"
+                if mode == "readonly" else
+                f"kimi_implementation_agent.{suffix}"
+            )
             agent_path = SERVER_DIR / agent_name
             if not agent_path.is_file():
                 raise RuntimeError(f"Kimi agent definition is missing: {agent_path}")
             argv = [binary, "--model", model, "--agent-file", str(agent_path)]
+            env = _provider_env(provider)
+            if generation == "legacy":
+                empty_mcp_path = SERVER_DIR / "empty_mcp.json"
+                if not empty_mcp_path.is_file():
+                    raise RuntimeError(f"Kimi empty MCP configuration is missing: {empty_mcp_path}")
+                argv.extend(["--mcp-config-file", str(empty_mcp_path)])
+                kimi_config = Path.home() / ".kimi" / "config.toml"
+                if mode == "implement" and kimi_config.is_file():
+                    argv.extend(["--config-file", str(kimi_config)])
+                if job.get("semantic_stream"):
+                    argv.append("--print")
+            else:
+                runtime = self._job_runtime_dir(str(job["job_id"]))
+                runtime.mkdir(parents=True, mode=0o700, exist_ok=True)
+                modern_home, empty_skills = self._prepare_modern_kimi_runtime(runtime, job)
+                env["KIMI_CODE_HOME"] = str(modern_home)
+                env["KIMI_DISABLE_TELEMETRY"] = "1"
+                argv.extend(["--skills-dir", str(empty_skills)])
             if job.get("semantic_stream"):
                 argv.extend(["--output-format", "stream-json"])
             argv.extend(["--prompt", prompt])
-            return argv, None, _provider_env(provider)
+            return self._confine_implementation(job, argv, None, env)
         sandbox = "read-only" if mode == "readonly" else "workspace-write"
         argv = [
             binary, "exec", "--ignore-user-config", "-C", job["workdir"],
@@ -1072,8 +1209,179 @@ class Supervisor:
         argv.append("-")
         return argv, prompt, _provider_env(provider)
 
+    def _runtime_base(self) -> Path:
+        raw = self.state_dir.resolve() / "runtime"
+        if raw.is_symlink():
+            raise RuntimeError("Runtime confinement directory cannot be a symlink")
+        raw.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(raw, 0o700)
+        return raw.resolve()
+
+    def _job_runtime_dir(self, job_id: str) -> Path:
+        base = self._runtime_base()
+        runtime = (base / job_id).resolve()
+        if runtime == base or base not in runtime.parents:
+            raise RuntimeError("Invalid job ID for runtime confinement")
+        return runtime
+
+    def _cleanup_job_runtime(self, job_id: str) -> None:
+        runtime = self._job_runtime_dir(job_id)
+        self._reap_check_processes(runtime)
+        try:
+            shutil.rmtree(runtime)
+        except FileNotFoundError:
+            pass
+        except (OSError, RuntimeError) as exc:
+            print(
+                f"agent-job runtime cleanup failed for {job_id}: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    def _cleanup_stale_runtime_dirs(self) -> None:
+        base = self._runtime_base()
+        for candidate in base.iterdir():
+            try:
+                if candidate.is_dir() and not candidate.is_symlink():
+                    self._reap_check_processes(candidate)
+                    shutil.rmtree(candidate)
+                else:
+                    candidate.unlink()
+            except FileNotFoundError:
+                pass
+
+    def _reap_check_processes(self, runtime: Path) -> None:
+        for record_path in runtime.glob("check-*.process.json"):
+            try:
+                record = json.loads(record_path.read_text(encoding="utf-8"))
+                pid = int(record["pid"])
+                expected_start = str(record["process_start"])
+                if pid <= 1 or os.getpgid(pid) != pid:
+                    continue
+                actual = subprocess.run(
+                    ["/bin/ps", "-o", "lstart=", "-p", str(pid)],
+                    check=False, capture_output=True, text=True, timeout=2,
+                ).stdout.strip()
+                if not actual or actual != expected_start:
+                    continue
+                for sig in (signal.SIGTERM, signal.SIGKILL):
+                    try:
+                        os.killpg(pid, sig)
+                    except ProcessLookupError:
+                        break
+                    if sig == signal.SIGTERM:
+                        time.sleep(0.1)
+            except (KeyError, ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError):
+                continue
+            finally:
+                record_path.unlink(missing_ok=True)
+
+    def _prepare_kimi_runtime(self, runtime: Path) -> Path:
+        share = runtime / "kimi-share"
+        share.mkdir(mode=0o700, exist_ok=True)
+        source = Path.home() / ".kimi"
+        for name in ("credentials", "device_id"):
+            target = source / name
+            link = share / name
+            if target.exists() and not link.exists():
+                link.symlink_to(target, target_is_directory=target.is_dir())
+        return share
+
+    def _prepare_modern_kimi_runtime(
+        self, runtime: Path, job: dict[str, Any]
+    ) -> tuple[Path, Path]:
+        home = runtime / "kimi-code-home"
+        home.mkdir(mode=0o700, exist_ok=True)
+        source = Path.home() / ".kimi-code"
+        config_source = source / "config.toml"
+        if not config_source.is_file():
+            raise RuntimeError(f"Modern Kimi configuration is missing: {config_source}")
+        config_target = home / "config.toml"
+        shutil.copyfile(config_source, config_target)
+        os.chmod(config_target, 0o600)
+        for name in ("credentials", "oauth", "device_id"):
+            target = source / name
+            link = home / name
+            if target.exists() and not link.exists():
+                link.symlink_to(target, target_is_directory=target.is_dir())
+        checks = json.loads(str(job.get("checks_json") or "[]"))
+        mcp_source = (
+            self._prepare_check_mcp(runtime, job)
+            if job["mode"] == "implement" and checks else
+            SERVER_DIR / "empty_mcp.json"
+        )
+        if not mcp_source.is_file():
+            raise RuntimeError(f"Kimi MCP configuration is missing: {mcp_source}")
+        shutil.copyfile(mcp_source, home / "mcp.json")
+        empty_skills = runtime / "empty-skills"
+        empty_skills.mkdir(mode=0o700, exist_ok=True)
+        return home, empty_skills
+
+    def _prepare_check_mcp(self, runtime: Path, job: dict[str, Any]) -> Path:
+        checks_json = str(job.get("checks_json") or "[]")
+        config_path = runtime / "checks-mcp.json"
+        config: dict[str, Any] = {"mcpServers": {}}
+        if json.loads(checks_json):
+            config["mcpServers"]["aco_checks"] = {
+                "command": sys.executable,
+                "args": [str(SERVER_DIR / "agent_job_check_server.py")],
+                "env": {
+                    "ACO_CHECKS_WORKDIR": job["workdir"],
+                    "ACO_CHECKS_RUNTIME": str(runtime),
+                    "ACO_CHECKS_JSON": checks_json,
+                },
+            }
+        config_path.write_text(_json(config), encoding="utf-8")
+        os.chmod(config_path, 0o600)
+        return config_path
+
+    def _confine_implementation(
+        self,
+        job: dict[str, Any],
+        argv: list[str],
+        stdin_text: str | None,
+        env: dict[str, str],
+    ) -> tuple[list[str], str | None, dict[str, str]]:
+        if job["mode"] != "implement":
+            return argv, stdin_text, env
+        if sys.platform != "darwin" or not SANDBOX_EXEC_PATH.is_file():
+            raise RuntimeError(
+                "Workspace write confinement is unavailable for this implementation provider"
+            )
+        workdir = Path(job["workdir"]).resolve()
+        runtime = self._job_runtime_dir(str(job["job_id"]))
+        runtime.mkdir(parents=True, mode=0o700, exist_ok=True)
+        os.chmod(runtime, 0o700)
+        confined_env = dict(env)
+        confined_env["TMPDIR"] = f"{runtime}{os.sep}"
+        if job["provider"] == "kimi":
+            confined_env["KIMI_SHARE_DIR"] = str(self._prepare_kimi_runtime(runtime))
+        git_meta = workdir / ".git"
+        mcp_config = self._prepare_check_mcp(runtime, job)
+        config_flag = "--mcp-config" if job["provider"] == "claude" else "--mcp-config-file"
+        if config_flag in argv:
+            config_index = argv.index(config_flag) + 1
+            argv[config_index] = str(mcp_config)
+        confined_argv = [
+            str(SANDBOX_EXEC_PATH),
+            "-p",
+            MACOS_WORKSPACE_WRITE_PROFILE,
+            "-D",
+            f"WORKDIR={workdir}",
+            "-D",
+            f"RUNTIME_DIR={runtime}",
+            "-D",
+            f"GIT_META={git_meta}",
+            *argv,
+        ]
+        return confined_argv, stdin_text, confined_env
+
     def _public(self, job: dict[str, Any]) -> dict[str, Any]:
         result = {key: value for key, value in job.items() if key != "prompt"}
+        checks_json = str(result.pop("checks_json", "[]") or "[]")
+        result["approved_checks"] = [
+            str(check["name"]) for check in json.loads(checks_json)
+        ]
         separate_timeouts = result.get("run_timeout_seconds") is not None
         result["timeout_semantics"] = "separate" if separate_timeouts else "legacy_shared"
         result["queue_deadline_at"] = _queue_deadline(result)
@@ -1326,7 +1634,7 @@ class Supervisor:
     ) -> dict[str, Any]:
         self.store.update(
             job_id, status=status, failure_kind=failure_kind, message=message,
-            prompt="", finished_at=_now(), notify=False, **values,
+            prompt="", checks_json="[]", finished_at=_now(), notify=False, **values,
         )
         try:
             self._record_event(job_id, "job_terminal", {
@@ -1518,7 +1826,7 @@ class Supervisor:
                 job_id, status="running", started_at=started, last_output_at=started,
                 pid=proc.pid, pgid=proc.pid,
                 binary_path=str(Path(live_executable or argv[0]).resolve()),
-                process_start=process_start, prompt="", message="",
+                process_start=process_start, prompt="", checks_json="[]", message="",
             )
             if self._has_semantic_adapter(job):
                 self.event_decoders[job_id] = ProviderEventDecoder(str(job["provider"]))
@@ -1597,6 +1905,7 @@ class Supervisor:
                 await self._terminate(proc)
             self._finish_job(job_id, "failed", "launch_error", str(exc))
         finally:
+            self._cleanup_job_runtime(job_id)
             self.change_events.pop(job_id, None)
             self.processes.pop(job_id, None)
             self.tasks.pop(job_id, None)
@@ -1663,15 +1972,12 @@ class Supervisor:
             try:
                 process_start = await self._ps_field(pid, "lstart")
                 live_pgid = await self._ps_field(pid, "pgid")
-                executable = await self._ps_field(pid, "comm")
             except (OSError, ValueError):
                 continue
             if (
                 not process_start
                 or process_start != str(job.get("process_start") or "")
                 or int(live_pgid or 0) != int(pgid)
-                or not executable
-                or Path(executable).expanduser().resolve() != Path(str(job.get("binary_path") or "")).expanduser().resolve()
             ):
                 self.store.update(job["job_id"], message="Restart cleanup skipped: process identity did not match")
                 continue
@@ -1701,6 +2007,7 @@ class Supervisor:
             self.binary_finder(provider)
         if mode not in {"readonly", "implement"}:
             raise ValueError(f"Unsupported mode: {mode}")
+        checks = _normalize_checks(payload.get("checks"), mode, provider)
         if mode == "implement":
             if os.environ.get("AGENT_JOB_ALLOW_IMPLEMENT") != "1":
                 raise PermissionError("Durable implement mode is disabled by supervisor policy")
@@ -1732,12 +2039,14 @@ class Supervisor:
             int(payload.get("queue_timeout_seconds") or DEFAULT_QUEUE_TIMEOUT_SECONDS),
             MAX_TIMEOUT_SECONDS,
         ))
-        requested_max_turns = int(payload.get("max_turns") or 0)
-        max_turns = 0 if requested_max_turns <= 0 else min(requested_max_turns, 10_000)
+        # Provider turn ceilings are intentionally retired.  Keep the stored
+        # field for schema/database compatibility, but force unlimited turns;
+        # queue/run deadlines and cancellation remain the lifecycle bounds.
+        max_turns = 0
         if execution_backend == "cao" and mode == "readonly" and provider == "codex":
             raise ValueError("CAO cannot enforce read-only Codex execution; use the native backend")
-        if execution_backend == "cao" and max_turns > 0:
-            raise ValueError("CAO does not support an explicit provider turn ceiling")
+        if execution_backend == "cao" and mode == "implement":
+            raise ValueError("CAO cannot enforce workspace-confined implementation; use the native backend")
         soft_stall = max(30, min(
             int(payload.get("soft_stall_seconds") or DEFAULT_SOFT_STALL_SECONDS),
             run_timeout,
@@ -1758,19 +2067,21 @@ class Supervisor:
                 and (provider != "kimi" or _kimi_semantic_enabled())
             ),
             "idempotency_key": str(payload.get("idempotency_key") or "")[:200],
+            "checks_json": _json(checks),
         }
         hash_fields = {key: spec[key] for key in (
             "provider", "model", "requested_model", "mode", "workdir", "prompt",
             "queue_timeout_seconds", "run_timeout_seconds", "max_turns",
             "execution_backend",
             "semantic_stream",
+            "checks_json",
         )}
         spec["request_hash"] = hashlib.sha256(_json(hash_fields).encode("utf-8")).hexdigest()
         legacy_hash_fields = {key: spec[key] for key in (
             "provider", "model", "requested_model", "mode", "workdir", "prompt",
             "timeout_seconds", "max_turns", "execution_backend", "semantic_stream",
         )}
-        spec["legacy_request_hash"] = hashlib.sha256(
+        spec["legacy_request_hash"] = "" if checks else hashlib.sha256(
             _json(legacy_hash_fields).encode("utf-8")
         ).hexdigest()
         job_id = str(uuid.uuid4())
@@ -2155,10 +2466,19 @@ class Supervisor:
             response = {"ok": True, "result": result}
         except Exception as exc:
             response = {"ok": False, "error": str(exc)}
-        writer.write((_json(response) + "\n").encode("utf-8"))
-        await writer.drain()
-        writer.close()
-        await writer.wait_closed()
+        try:
+            writer.write((_json(response) + "\n").encode("utf-8"))
+            await writer.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            # MCP and shell callers may abandon a bounded long-poll. The durable
+            # job and retained result remain available to the next request.
+            pass
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
     async def serve(self) -> None:
         lock_path = self.state_dir / "supervisor.lock"
@@ -2168,6 +2488,7 @@ class Supervisor:
         except BlockingIOError as exc:
             raise AlreadyRunning("Another agent job supervisor already owns the state directory") from exc
         await self._cleanup_interrupted()
+        self._cleanup_stale_runtime_dirs()
         if self.socket_path.exists():
             self.socket_path.unlink()
         server = await asyncio.start_unix_server(

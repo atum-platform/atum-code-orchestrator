@@ -5,17 +5,21 @@ It lets any supported coding surface submit work to another provider, observe
 incremental progress, recover partial responses, and receive durable completion
 notices without keeping one MCP request open.
 
-The versioned routing protocol supports shadow mode everywhere and an opt-in
-Codex-only canary. In the canary, focused session work can receive an atomic,
-expiring native-worker reservation; Codex still performs the actual spawn and
-reports the outcome. Other surfaces remain shadow-only.
+The versioned routing protocol supports shadow mode everywhere, a Codex canary,
+and a multi-surface canary. Focused session work can receive an atomic, expiring
+same-family native-worker reservation on Codex, Claude Code, or Kimi Code when
+the client declares native support. Complementary-domain execution and every
+code review route cross-family; the original caller still assembles, verifies,
+and reports the outcome.
 
 An optional local quota broker reads CodexBar history without credentials,
 normalizes provider rate-limit failures, and rebalances default specialist routes
 when fresh evidence shows pressure. Explicit provider requests are never changed.
 
-The supervisor is coding-agent infrastructure. Hermes can consume it, but does
-not own its runtime, protocol, or repository.
+The supervisor is coding-agent infrastructure. The Hermes agent cluster is a
+separate deployment with its own checkout, service, state, and profile
+installer. Hermes may use the same wire protocol, but ACO never installs or
+repoints Hermes profiles.
 
 ## Install
 
@@ -25,14 +29,14 @@ Clone to the stable path on each Mac, then bootstrap locally:
 git clone https://github.com/anka-ventures-labs/atum-code-orchestrator.git \
   ~/.local/share/atum-agent-jobs
 cd ~/.local/share/atum-agent-jobs
-python3 bootstrap.py --with-hermes
+python3 bootstrap.py
 ```
 
 Bootstrap requires Python 3.10 or newer. When Apple `python3` is older, it
 automatically restarts with Homebrew Python from a standard install path.
 
-Omit `--with-hermes` on machines without Hermes profiles. Restart Codex Desktop,
-Claude Desktop, and Kimi after first installation so they reload MCP settings.
+Restart Codex Desktop, Claude Desktop, and Kimi after first installation so they
+reload MCP settings.
 Claude Code uses the installed skill and guarded CLI rather than a nested MCP
 process.
 
@@ -47,7 +51,7 @@ sync between machines.
 - Claude Code: global skill and guarded command-line binding.
 - Claude Desktop: `agent-jobs` MCP registration.
 - Kimi Code: MCP registration, global guidance, and shared skill.
-- Hermes: optional copied skill and MCP profile registration as a consumer.
+- Hermes: protocol-compatible only; managed by its independent cluster runtime.
 
 Provider execution uses the locally authenticated `codex`, `claude`, and `kimi`
 CLIs, so usage is charged to the account or subscription configured in each CLI.

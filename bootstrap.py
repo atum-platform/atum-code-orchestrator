@@ -29,11 +29,7 @@ def main() -> int:
         raise SystemExit("Python 3.10+ is required; install it with Homebrew and rerun bootstrap.py")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="verify bindings without changing them")
-    parser.add_argument("--with-hermes", action="store_true", help="also update existing Hermes profiles")
     args = parser.parse_args()
-    stable_root = Path.home() / ".local/share/atum-agent-jobs"
-    if args.with_hermes and ROOT.resolve() != stable_root.resolve():
-        raise SystemExit(f"Hermes integration requires the stable checkout path: {stable_root}")
     if args.check:
         python = VENV / "bin/python"
         if not python.is_file():
@@ -46,12 +42,8 @@ def main() -> int:
     python = str(VENV / "bin/python")
     run(python, "-m", "pip", "install", "-r", "requirements.txt")
     run(python, "tools/install_agent_job_clients.py")
-    if args.with_hermes and Path.home().joinpath(".hermes/profiles").is_dir():
-        run(python, "tools/install_hermes_profiles.py")
     run(python, "tools/install_agent_job_supervisor.py", "install")
     run(python, "tools/install_agent_job_clients.py", "--apply")
-    if args.with_hermes and Path.home().joinpath(".hermes/profiles").is_dir():
-        run(python, "tools/install_hermes_profiles.py", "--apply")
     run(python, "tools/agent_job_client.py", "ping")
     return 0
 

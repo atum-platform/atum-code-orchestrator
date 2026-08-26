@@ -19,12 +19,16 @@ settings. Before changing an existing file it creates a sibling
 `*.bak.agent-jobs-<suffix>` backup. It manages:
 
 - the shared `~/.agents/skills/agent-jobs` link;
+- Claude Code's user-scope `~/.claude.json` MCP registration;
 - Claude Desktop's `mcpServers.agent-jobs` registration;
 - Kimi Code's user-level `~/.kimi-code/mcp.json` registration; and
 - a marked agent-jobs guidance section in `~/.kimi-code/AGENTS.md`.
 
-Restart Claude Desktop and start a new Kimi Code session after applying changes.
+Restart Claude Desktop and start new Claude Code and Kimi Code sessions after
+applying changes.
 Existing sessions retain the tools and instructions loaded when they started.
+Quit active Claude Code sessions before installation because Claude Code also
+updates its user-scope state file while running.
 The installer validates every target and backup slot before writing, and restores
 all prior targets if an unexpected later write fails. `--check` exits nonzero
 when configuration drift is pending.
@@ -37,15 +41,42 @@ the corresponding `*.bak.agent-jobs-<suffix>` file, and restart the client.
 | Client | Caller binding | Shared policy | Target adapter |
 |---|---|---|---|
 | Codex Desktop and CLI | MCP | `~/.agents/skills` plus global guidance | Codex CLI |
-| Claude Code, including Desktop code sessions | Review CLI | Claude skill link and `CLAUDE.md` | Claude CLI |
+| Claude Code, including Desktop code sessions | MCP or review CLI | Claude skill link and `CLAUDE.md` | Claude CLI |
 | Claude Desktop chat | Local MCP | Tool schema; coding policy applies in Claude Code sessions | Claude CLI |
 | Kimi Code | MCP | `~/.agents/skills` and Kimi `AGENTS.md` | Kimi CLI |
-| Hermes profiles | MCP | Per-profile skill copies | Not a provider |
+| Hermes profiles | Compatible protocol, separate runtime | Managed by Hermes | Not an ACO provider |
+
+ACO's installer does not inspect or modify `~/.hermes/profiles`. Hermes profile
+bindings belong to the independent Hermes cluster deployment.
 
 MCP intentionally exposes route decision, feedback, reconciliation, status,
 submit, read, list, cancel, and owner-inbox operations for read-only jobs.
 Explicit implementation remains behind the local capability-protected delegation
 CLI. This prevents a general chat client from selecting write mode directly.
+On macOS, Claude and Kimi implementation jobs are additionally wrapped in a
+kernel-enforced workspace-write profile; Codex uses its native workspace sandbox.
+Unsupported native platforms and CAO implementation fail closed rather than run
+without equivalent write confinement.
+
+The delegation CLI accepts repeatable approved checks for Claude implementation
+jobs. Codex and Kimi check contracts currently fail closed:
+
+```sh
+python3 ~/.agents/skills/agent-jobs/scripts/delegate.py \
+  --provider claude --model sonnet --mode implement \
+  --workdir /absolute/project \
+  --prompt 'Implement the focused change and run the unit check.' \
+  --check 'unit=npm test -- --runInBand' \
+  --check 'types=npm run typecheck'
+```
+
+The model sees only the check names and one `run_check(name)` tool. ACO executes
+the exact caller-approved argv without adding a shell, strips provider credentials
+and proxy variables, denies network and Git writes, bounds output/time, and cleans
+the process group. A project check executes repository code after the model may
+have edited it, so approval is an explicit trust decision rather than proof that
+the code is safe. Keep package installs, Git, deployment, dev servers, and
+secret-dependent checks outside delegated jobs.
 Review prompts may contain up to 4 MiB of UTF-8 data. The supervisor's Unix
 socket reader is sized for that complete JSON request, so prompts larger than the
 former 400 KB ceiling are accepted end to end rather than only by one layer.
@@ -70,9 +101,13 @@ send v2 with `durable_agent_jobs=true` and only claim `native_subagents=true`
 when that tool is actually present. If an older server rejects v2, retry once
 with v1; old clients remain valid against a new server.
 
-Cooperating clients call `route_decide` before every cross-agent `job_submit`,
-including design, planning, architecture, product, copywriting, research, review,
-and delegated implementation. An enforced `agent_jobs` response is the authority
+The installer adds this routing protocol to Codex, Claude Code, and Kimi Code
+guidance. Each surface retains the decision ID and returns exactly one
+`route_feedback` outcome for every enforced decision.
+
+Cooperating clients call `route_decide` before every cross-agent job or native
+worker, including design, planning, architecture, product, copywriting, research,
+review, implementation, exploration, and tests. An enforced `agent_jobs` response is the authority
 for the submitted provider/model and supersedes static preference text in client
 guidance. `direct` means the primary continues locally. Static routing tables are
 used only for supervisor outage or shadow decisions. Every enforced decision
@@ -86,17 +121,22 @@ state. Shadow responses return `enforced=false` and never reserve. With
 `AGENT_JOB_ROUTING_MODE=codex_canary`, only a Codex caller on the Codex surface
 can receive `enforced=true`; focused session-scoped implementation, exploration,
 or test work may receive a `native_subagent` lane. `surface_canary` extends v2
-enforcement to the supported Claude and Kimi coding surfaces. V2 selects Opus
+enforcement and same-family native lanes to Claude Code and Kimi Code. Claude
+native lanes cover planning, architecture, design, product, copywriting, and
+research; Kimi native lanes cover implementation, exploration, and tests. Work
+outside the caller family's primary domain routes cross-family, and code review
+always routes cross-family. V2 selects Opus
 for Claude's deep/review/thinking work and K3 for Kimi review or standard/deep
 work. Codex targets use concrete GPT-5.6 Sol, with Spark reserved for focused
-native work; Fable remains explicit-only.
+native work. Focused Claude native work uses Sonnet and focused Kimi native work
+uses high-speed K2.7; Fable remains explicit-only.
 
 Native admission and persistence occur in one SQLite `BEGIN IMMEDIATE`
-transaction. The default machine-wide cooperative limit is three active Codex
-native reservations, each expiring after 900 seconds. Capacity exhaustion
-returns `direct`. The reservation is advisory outside cooperating clients: Codex
-itself enforces the installed three-thread machine ceiling and owns spawn,
-termination, integration, and verification.
+transaction. The default machine-wide cooperative limit is three active native
+reservations shared across coding surfaces, each expiring after 900 seconds.
+Capacity exhaustion returns `direct`. The reservation is advisory outside
+cooperating clients; the originating surface owns spawn, termination,
+integration, and verification.
 
 ```bash
 python3 tools/review_cli.py route-decide \
@@ -106,7 +146,7 @@ python3 tools/review_cli.py route-decide \
   --surface-capabilities '{"durable_agent_jobs":true,"native_subagents":true}'
 ```
 
-Codex sends `route_feedback` after every enforced native decision. Identical
+Every coding surface sends `route_feedback` after every enforced native decision. Identical
 outcome retries are idempotent; conflicting outcomes fail. `route_reconcile`
 releases one session's omitted active decisions after resume, while TTL expiry
 recovers callers that never return. `route_status` reports the live mode, policy
@@ -217,9 +257,10 @@ does not change transport when configuration changes.
 
 CAO read-only execution is enabled only for Claude and Kimi, whose adapters
 enforce native tool denial. Read-only Codex fails before launch because this CAO
-fork currently launches Codex without an enforceable sandbox. A positive
-`max_turns` also fails closed because CAO has no equivalent limit; the normal
-unlimited value remains supported and bounded by the run deadline.
+fork currently launches Codex without an enforceable sandbox. Legacy callers
+may still send `max_turns`; it is accepted and normalized to unlimited during
+the compatibility window because CAO has no equivalent limit. New callers omit
+it. The run deadline remains the effective ceiling.
 
 During the pilot, CAO emits status transitions and a retained final result, not
 the provider's incremental token stream. A long quiet processing state can

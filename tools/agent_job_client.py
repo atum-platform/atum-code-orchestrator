@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shlex
 import socket
 import sys
 import time
@@ -29,13 +30,18 @@ class SupervisorUnavailable(RuntimeError):
     pass
 
 
+def _request_timeout_seconds(payload: dict[str, Any]) -> int:
+    wait_seconds = max(0, min(int(payload.get("wait_seconds") or 0), 60))
+    return 30 + wait_seconds
+
+
 def request(payload: dict[str, Any], socket_path: Path | str = DEFAULT_SOCKET_PATH) -> dict[str, Any]:
     path = Path(socket_path).expanduser()
     data = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
     chunks: list[bytes] = []
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.settimeout(15 + max(0, min(int(payload.get("wait_seconds") or 0), 60)))
+            client.settimeout(_request_timeout_seconds(payload))
             client.connect(str(path))
             client.sendall(data)
             client.shutdown(socket.SHUT_WR)
@@ -84,6 +90,19 @@ def submit(socket_path: Path | str = DEFAULT_SOCKET_PATH, **kwargs: Any) -> dict
                 raise
             time.sleep(.2)
     raise AssertionError("unreachable")
+
+
+def parse_check_spec(value: str) -> dict[str, Any]:
+    name, separator, command = value.partition("=")
+    if not separator or not name or not command:
+        raise argparse.ArgumentTypeError("check must use NAME=COMMAND syntax")
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid check command: {exc}") from exc
+    if not argv:
+        raise argparse.ArgumentTypeError("check command cannot be empty")
+    return {"name": name, "argv": argv}
 
 
 def route_decide(socket_path: Path | str = DEFAULT_SOCKET_PATH, **intent: Any) -> dict[str, Any]:
@@ -174,13 +193,15 @@ def _parser() -> argparse.ArgumentParser:
         help="deprecated alias for --run-timeout-seconds",
     )
     submit_parser.add_argument(
-        "--max-turns",
-        type=int,
-        default=0,
-        help="provider turn ceiling; 0 omits the ceiling (default)",
+        "--max-turns", type=int, default=0,
+        help="deprecated compatibility option; normalized to unlimited",
     )
     submit_parser.add_argument("--owner", default="")
     submit_parser.add_argument("--idempotency-key", default="")
+    submit_parser.add_argument(
+        "--check", action="append", type=parse_check_spec, dest="checks", default=[],
+        help="caller-approved implementation check in NAME=COMMAND form; repeatable",
+    )
     read_parser = sub.add_parser("read")
     read_parser.add_argument("job_id")
     read_parser.add_argument("--cursor", type=int, default=0)

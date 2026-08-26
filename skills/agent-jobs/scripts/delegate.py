@@ -21,7 +21,7 @@ if TOOLS is None:
     raise SystemExit("agent-jobs tools not found; set AGENT_JOB_TOOLS_DIR to the repository tools directory")
 sys.path.insert(0, str(TOOLS))
 
-from agent_job_client import cancel, read, submit  # noqa: E402
+from agent_job_client import cancel, parse_check_spec, read, submit  # noqa: E402
 
 
 def main() -> int:
@@ -38,14 +38,18 @@ def main() -> int:
         help="deprecated alias for --run-timeout-seconds",
     )
     parser.add_argument(
-        "--max-turns",
-        type=int,
-        default=0,
-        help="provider turn ceiling; 0 omits the ceiling (default)",
+        "--max-turns", type=int, default=0,
+        help="deprecated compatibility option; accepted but ignored",
+    )
+    parser.add_argument(
+        "--check", action="append", type=parse_check_spec, dest="checks", default=[],
+        help="caller-approved check in NAME=COMMAND form; repeatable",
     )
     args = parser.parse_args()
     if args.provider != "kimi" and not args.model:
         parser.error("--model is required unless --provider=kimi")
+    if args.checks and args.provider != "claude":
+        parser.error("--check is currently supported only with --provider=claude")
     workdir = Path(args.workdir).expanduser().resolve()
     if not workdir.is_dir():
         parser.error(f"workdir is not an existing directory: {workdir}")
@@ -62,7 +66,8 @@ def main() -> int:
                 args.timeout_seconds if args.timeout_seconds is not None
                 else args.run_timeout_seconds
             ),
-            max_turns=args.max_turns,
+            max_turns=0,
+            checks=args.checks,
             owner="agent-jobs:delegate",
         )
         job_id = str(job["job_id"])

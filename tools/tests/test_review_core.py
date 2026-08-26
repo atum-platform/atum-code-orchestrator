@@ -109,13 +109,28 @@ class ReviewCoreTest(unittest.IsolatedAsyncioTestCase):
             "context_git_diff": True, "context_git_base": "HEAD",
             "context_files": None, "context_text": "", "expected_output": "findings",
             "queue_timeout_seconds": 300, "run_timeout_seconds": 600,
-            "timeout_seconds": None, "max_turns": 10, "idempotency_key": "same",
+            "timeout_seconds": None, "max_turns": 7, "idempotency_key": "same",
             "label": "checkpoint", "owner": "test",
         }
         with patch.object(review_core, "job_submit", side_effect=fake_submit):
             review_cli.dispatch(values.copy())
             await agent_jobs_server.job_submit(**{key: value for key, value in values.items() if key != "action"})
         self.assertEqual(calls[0], calls[1])
+
+    async def test_mcp_read_clamps_wait_below_surface_transport_ceiling(self) -> None:
+        with patch.object(review_core, "job_read", return_value={"job": {}}) as mocked:
+            await agent_jobs_server.job_read("job", wait_seconds=60)
+        mocked.assert_called_once_with(
+            "job", 0, 64_000, agent_jobs_server.MCP_MAX_WAIT_SECONDS, None
+        )
+
+    async def test_legacy_max_turns_is_accepted_but_not_forwarded(self) -> None:
+        with patch.object(review_core, "submit", return_value={"job_id": "job"}) as mocked:
+            review_core.job_submit(
+                provider="claude", model="opus", instructions="review",
+                workdir=str(self.workdir), max_turns=4,
+            )
+        self.assertNotIn("max_turns", mocked.call_args.kwargs)
 
     async def test_cli_dispatch_threads_all_lifecycle_arguments(self) -> None:
         cases = [

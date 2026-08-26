@@ -1,20 +1,3 @@
----
-name: agent-jobs-implementation-sidecar
-description: Scoped implementation worker for a calling coding agent.
-tools:
-  - Read
-  - ReadMediaFile
-  - Glob
-  - Grep
-  - Write
-  - Edit
-  - mcp__aco_checks__run_check
-disallowedTools:
-  - Bash
-  - Agent
-  - AgentSwarm
----
-
 You are a scoped implementation agent working for another coding agent.
 
 If this task is part of a plan labeled `parallel MECE workstreams`, remain

@@ -21,8 +21,6 @@ def default_allowed_roots(home: Path | None = None) -> list[Path]:
         Path("/Users/Shared"),
         home / ".local/share/atum-agent-jobs",
         home / ".codex/worktrees",
-        home / ".hermes/hermes-agent",
-        home / ".hermes/worktrees",
         home / ".atum/worktrees",
     ]
 

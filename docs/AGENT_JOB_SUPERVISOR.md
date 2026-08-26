@@ -4,6 +4,14 @@ The agent job supervisor owns long-running Claude Code, Codex, and Kimi Code CLI
 processes independently of the Codex, Claude, or Hermes session that submitted
 them. It replaces caller-bound subprocess waits with durable job IDs.
 
+Kimi execution negotiates the installed CLI contract at launch. The legacy
+Python CLI uses YAML agents, print-mode JSON streaming, and an explicit empty
+MCP file. The current Node CLI uses Markdown agents, prompt-mode JSON streaming,
+an isolated per-job `KIMI_CODE_HOME`, a private copy of the authenticated model
+configuration, and an empty Skills directory. MCP configuration is replaced with
+the job-scoped declaration. This keeps automatic Kimi upgrades from silently
+leaving the supervisor on retired flags without inheriting user MCPs or skills.
+
 ## Architecture
 
 The supported interface follows a fat-skill, thin-harness split:
@@ -19,6 +27,13 @@ The supported interface follows a fat-skill, thin-harness split:
   and cannot select write mode.
 - `tools/agent_job_supervisor.py` owns process lifecycle, persistence,
   credentials, deadlines, concurrency, and capability-gated implementation.
+
+The local SQLite queue uses WAL mode with `synchronous=NORMAL` and bounded
+automatic checkpoints. This keeps provider output persistence from blocking the
+supervisor's Unix-socket control plane on slow or pressured local storage. SQLite
+consistency and ordinary process/restart durability are preserved; a sudden
+power loss may discard the newest uncheckpointed queue updates, whose provider
+processes are reconciled on the next supervisor start.
 
 Legacy `review-sidecars` and `claude-plan` registrations are migration inputs
 only. This standalone repository does not ship those mode-heavy MCP servers.
@@ -73,12 +88,14 @@ budget.
 ## Installation
 
 ```bash
-python3 bootstrap.py --with-hermes
+python3 bootstrap.py
 .venv/bin/python tools/agent_job_client.py ping
 ```
 
 The LaunchAgent label is `com.atum.agent-job-supervisor`. Runtime state is kept
 under `~/.local/state/agent-job-supervisor` with user-only permissions.
+The Hermes cluster uses a different checkout, LaunchAgent label, and state
+directory; ACO installation does not manage it.
 
 ## Operations
 
@@ -106,8 +123,9 @@ Kimi's omitted-model default is `kimi-code/k3`; deployments may override it with
 `AGENT_JOB_KIMI_DEFAULT_MODEL` after confirming the target machine's Kimi Code
 configuration supports that canonical model ID. Approved
 workspace roots are defined once in `tools/agent_job_policy.py` and used by the
-installer, supervisor, review core, and profile migrator. Override them
-consistently with `AGENT_JOB_ALLOWED_ROOTS` when deploying elsewhere.
+installer, supervisor, and review core. Hermes-owned paths are intentionally
+excluded. Override the roots consistently with `AGENT_JOB_ALLOWED_ROOTS` when
+deploying elsewhere.
 
 The same socket accepts protocol-v1 and protocol-v2 `route_decide` requests plus
 `route_feedback`, `route_reconcile`, and `route_status`. V1 preserves the legacy
@@ -122,21 +140,27 @@ centralized recommendations without changing caller behavior. Set
 `AGENT_JOB_ROUTING_MODE=codex_canary` to make only Codex-on-Codex responses
 authoritative. `surface_canary` also makes v2 decisions authoritative for Codex,
 Claude Code/Desktop, and Kimi Code while keeping every v1 caller in shadow.
-Eligible focused Codex work atomically claims an expiring cooperative
-native reservation; the supervisor does not spawn or terminate the subagent and
-does not change durable `submit` behavior.
+Eligible focused same-family work from Codex, Claude Code, or Kimi Code
+atomically claims an expiring cooperative native reservation; the supervisor
+does not spawn or terminate the subagent and does not change durable `submit`
+behavior.
 Unknown routing modes fail during supervisor startup.
 
 Routing identity and capabilities are self-asserted by clients on a trusted
 per-user Unix socket; they coordinate cooperating processes and are not an
 authentication boundary against another process running as the same user.
 
-`AGENT_JOB_CODEX_NATIVE_RESERVATIONS` controls the machine-wide cooperative
-reservation limit (default 3), and `AGENT_JOB_ROUTE_RESERVATION_SECONDS` controls
-TTL (default 900, bounded to 30-86400). The client installer also declares a
-`spark-worker` Codex role backed by `clients/codex/spark-worker.toml` and sets the
-stable `agents.max_threads` machine ceiling to three when the user has not already
-chosen one. Feedback is idempotent, reconciliation is session-scoped, and status reports
+`AGENT_JOB_NATIVE_RESERVATIONS` controls the machine-wide cooperative reservation
+limit shared by all coding surfaces (default 3). The legacy
+`AGENT_JOB_CODEX_NATIVE_RESERVATIONS` name remains an accepted fallback during
+the compatibility window. `AGENT_JOB_ROUTE_RESERVATION_SECONDS` controls TTL
+(default 900, bounded to 30-86400). The client installer declares a `spark-worker`
+Codex role backed by `clients/codex/spark-worker.toml`; Claude Code and Kimi Code
+use their native general-purpose worker interfaces. Focused native routing uses
+Spark for Codex, Sonnet for Claude, and high-speed K2.7 for Kimi. The installer
+sets the stable Codex `agents.max_threads` machine ceiling to three when the user
+has not already chosen one. Feedback is idempotent, reconciliation is
+session-scoped, and status reports
 reservation counts plus the terminal decision-to-feedback return rate. Expired
 or reconciled decisions without feedback intentionally lower that rate because
 it measures whether callers returned, not transport delivery reliability. Both
@@ -250,6 +274,67 @@ and Kimi records retain only byte count and digest.
 Raw bounded logs remain private operational evidence under the user-only state
 directory and are not returned through normal semantic job reads.
 
+Claude's native-backend tool surface is selected with `--tools`, not merely
+approved with `--allowed-tools`. Read-only jobs expose only `Read`, `Glob`, and
+`Grep`; implementation jobs add `Edit` and `Write`. Both modes deny the shell
+tool family, current and legacy subagent tools, workflow, network, and notebook
+tools as defense in depth. Both also use an empty strict MCP configuration and
+safe mode, so project or user hooks and other customizations cannot introduce a
+separate execution path. This prevents within-session shell execution and nested
+delegation at the native Claude CLI boundary. It does not by itself confine
+absolute paths, so the supervisor adds a second boundary for implementation.
+On macOS, native Claude and Kimi implementation processes run under a Seatbelt
+profile that permits writes only in the resolved submitted workspace and a
+private per-job runtime directory, except that workspace Git metadata remains
+read-only. Symlink-resolved writes outside those paths are denied by the kernel.
+The runtime directory is mode `0700`, becomes the provider's `TMPDIR`, and is
+removed after normal termination or on the next supervisor start. Codex continues to use
+its native `workspace-write` sandbox. If the required platform sandbox is not
+available, implementation fails closed. The optional CAO backend is rejected for
+implementation until it can provide the same enforceable contract.
+
+Kimi implementation jobs set `KIMI_SHARE_DIR` to a disposable directory under
+the per-job runtime so logs and sessions do not require writes to `~/.kimi`.
+The real config and credentials remain readable for subscription authentication
+but are not writable through the sandbox; token refresh that requires durable
+credential rotation therefore fails closed and must be repaired outside the job.
+
+This checkpoint reduces delegated write blast radius; it is not a complete
+security boundary. A provider still has network access for inference and can
+read files available to the macOS user, while workspace-controlled settings may
+still affect commands the calling agent runs later. The calling agent must inspect
+the complete diff before running commands. Subscription CLIs may also fail closed
+if they try to refresh durable authentication state during an implementation job;
+refresh or repair authentication outside the delegated run.
+The no-shell/no-network tool
+surface, safe mode, empty MCP configuration, secret-context rejection, and
+workspace policy remain the read-side controls. Full process-level read
+isolation would require provider authentication to be injected into a disposable
+home rather than read from each CLI's durable local login.
+
+Claude implementation callers can opt into narrowly mediated verification by
+attaching up to eight named approved checks. Codex and Kimi check contracts fail
+closed until equivalent tool mediation is verified for those provider CLIs. The
+supervisor persists each exact argv only
+until provider launch, injects one private `aco_checks.run_check(name)` MCP tool,
+and clears the contract from durable job metadata after launch. The delegated
+model supplies only the name; it cannot supply or alter command text. Each check
+runs serially without a shell added by ACO, without provider credentials or proxy
+variables, with network denied, Git metadata read-only, workspace/sibling write
+confinement, a maximum 15-minute deadline, bounded captured output, and process
+cleanup. The caller may explicitly approve an argv that invokes a project script
+or shell, so the trust decision remains with the caller. Repository code becomes
+model-influenced as soon as the delegated job edits it; approving `npm test`,
+`pytest`, or a similar command therefore authorizes execution of code the model
+may have changed. Do not approve package installation, Git, deployment, dev
+servers, commands requiring secrets, or untrusted code. The macOS profile is
+targeted blast-radius reduction, not a default-deny execution sandbox: it blocks
+network, Apple Events, common launchd/script escapes, sensitive credential reads,
+out-of-workspace writes, and Git writes, but callers must still inspect the diff.
+Kimi always receives an explicit MCP config that replaces its user-level
+`~/.kimi-code/mcp.json` registration; its normal subscription config remains
+available for authentication and model selection.
+
 Reads advance the normalized stream with the opaque byte `event_cursor`. On
 terminal failure, cancellation, or interruption, `partial_response` and
 `partial_result_state` make retained work recoverable. Existing callers that
@@ -279,8 +364,9 @@ The SQLite database contains prompts only while jobs are queued; prompts are
 cleared after provider launch and on every terminal path. Paths and hashes remain
 for operations and idempotency. Its directory and files are mode `0700`/`0600`.
 Never submit secrets, `.env` contents, credentials, or unrelated private data.
-Implementation agents cannot run Bash, tests, or Git; the calling agent remains
-responsible for inspecting the diff and running verification.
+Implementation agents cannot run arbitrary Bash or Git. They may run only caller-
+approved named checks through the mediated broker; the calling agent remains
+responsible for inspecting the diff and running final verification.
 Combined and raw per-job logs share a total 10 MiB budget. Normalized event
 journals default to 2 MiB and partial responses to 256 KiB. Override these with
 `AGENT_JOB_MAX_LOG_BYTES`, `AGENT_JOB_MAX_EVENT_BYTES`, and

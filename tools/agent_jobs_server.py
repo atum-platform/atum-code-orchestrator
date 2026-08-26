@@ -12,6 +12,7 @@ import review_core
 
 
 mcp = FastMCP("agent-jobs")
+MCP_MAX_WAIT_SECONDS = 10
 
 
 @mcp.tool()
@@ -103,7 +104,8 @@ async def job_submit(
         context_files=context_files, context_text=context_text,
         expected_output=expected_output, queue_timeout_seconds=queue_timeout_seconds,
         run_timeout_seconds=run_timeout_seconds, timeout_seconds=timeout_seconds,
-        max_turns=max_turns, idempotency_key=idempotency_key, label=label, owner=owner,
+        max_turns=max_turns,
+        idempotency_key=idempotency_key, label=label, owner=owner,
     )
     return json.dumps(result, ensure_ascii=False, indent=2)
 
@@ -116,9 +118,10 @@ async def job_read(
     wait_seconds: int = 0,
     event_cursor: int | None = None,
 ) -> str:
-    """Read incremental output, normalized events, and status; optionally wait 60 seconds."""
+    """Read incremental output, normalized events, and status; briefly wait for progress."""
+    bounded_wait = max(0, min(int(wait_seconds), MCP_MAX_WAIT_SECONDS))
     result = await asyncio.to_thread(
-        review_core.job_read, job_id, cursor, max_bytes, wait_seconds, event_cursor
+        review_core.job_read, job_id, cursor, max_bytes, bounded_wait, event_cursor
     )
     return json.dumps(result, ensure_ascii=False, indent=2)
 

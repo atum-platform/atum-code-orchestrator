@@ -1,0 +1,10 @@
+version: 1
+agent:
+  name: agent-jobs-read-only-reviewer
+  system_prompt_path: ./kimi_read_only_reviewer_prompt.md
+  tools:
+    - "kimi_cli.tools.file:ReadFile"
+    - "kimi_cli.tools.file:ReadMediaFile"
+    - "kimi_cli.tools.file:Glob"
+    - "kimi_cli.tools.file:Grep"
+  subagents: {}

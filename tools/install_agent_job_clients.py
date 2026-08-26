@@ -25,7 +25,11 @@ GUIDANCE_START = "<!-- AGENT_JOBS_GUIDANCE_START -->"
 GUIDANCE_END = "<!-- AGENT_JOBS_GUIDANCE_END -->"
 CODEX_ROUTING_START = "<!-- AGENT_JOBS_CODEX_ROUTING_START -->"
 CODEX_ROUTING_END = "<!-- AGENT_JOBS_CODEX_ROUTING_END -->"
+ROUTING_START = "<!-- AGENT_JOBS_ROUTING_START -->"
+ROUTING_END = "<!-- AGENT_JOBS_ROUTING_END -->"
 LEGACY_SKILL_ROOTS = (
+    # Accepted only as the old target of the shared coding-agent skill symlink.
+    # This installer never reads or writes Hermes profile configuration.
     Path.home() / ".local/share/hermes-agent-review-sidecars/skills/agent-jobs",
 )
 
@@ -38,17 +42,19 @@ delegated implementation. Use Opus first for planning, architecture, design,
 product, copy, and research. Use Kimi first for code review, then Opus only on
 provider failure or quota exhaustion. Never delegate recursively or send secrets.
 Save durable job IDs and cursors, treat `possibly_stalled` as alive but quiet,
-and leave `max_turns=0` unless a bounded turn ceiling is explicitly required.
+and omit the retired `max_turns` option entirely; run deadlines remain the
+execution bound.
 Codex owns local inspection, implementation unless delegated, tests, docs, and
 the final decision. Read the retained result before acknowledging inbox delivery.
 """,
     "Claude guidance": """## Agent Jobs
 
-Use `$agent-jobs` for durable cross-agent review and delegation. As a Claude
-caller, use Codex first for code review, planning, and implementation; use Kimi
-only as the documented fallback. Never delegate back to Claude, recurse, or send
-secrets. Run the skill's guarded CLI, retain job IDs and cursors, treat
-`possibly_stalled` as alive but quiet, and leave `max_turns=0` by default.
+Use `$agent-jobs` for durable cross-agent review and delegation. Claude keeps
+planning, architecture, design, product, copywriting, and research in-family;
+use Codex first for code review and engineering work, then Kimi as the documented
+fallback. Never delegate back to Claude, recurse, or send secrets. Run the
+skill's guarded CLI, retain job IDs and cursors, and treat
+`possibly_stalled` as alive but quiet. The retired `max_turns` option is omitted.
 Verify returned advice and changes locally before accepting them.
 """,
     "Kimi guidance": """## Agent Jobs
@@ -57,19 +63,39 @@ Use `$agent-jobs` for durable cross-agent review and delegation. As a Kimi
 caller, use Codex first for code review and Opus first for planning, design,
 product, copy, and research. Never delegate back to Kimi, recurse, or send
 secrets. Retain job IDs and cursors, treat `possibly_stalled` as alive but quiet,
-and leave `max_turns=0` by default. Verify all returned work locally.
+and omit the retired `max_turns` option. Verify all returned work locally.
 """,
 }
 
-CODEX_ROUTING_GUIDANCE = """## Codex Routing Protocol
+MIGRATABLE_MANAGED_GUIDANCE = {
+    "Claude guidance": """## Agent Jobs
+
+Use `$agent-jobs` for durable cross-agent review and delegation. As a Claude
+caller, use Codex first for code review, planning, and implementation; use Kimi
+only as the documented fallback. Never delegate back to Claude, recurse, or send
+secrets. Run the skill's guarded CLI, retain job IDs and cursors, and treat
+`possibly_stalled` as alive but quiet. The retired `max_turns` option is omitted.
+Verify returned advice and changes locally before accepting them.
+""",
+}
+
+ROUTING_GUIDANCE = """## Agent Jobs Routing Protocol
+
+For substantive multi-scope work, first produce a plan with an explicit
+`parallel MECE workstreams` section. Parallelize only mutually exclusive scopes
+with no data dependency, preserve real dependency edges, and use one
+plan-execute-assemble cycle. Use native workers for bounded work in the calling
+provider's primary domain and cross-family agent jobs for complementary review
+or judgment. Assemble, verify, and request one final cross-family review in the
+originating session.
 
 Before every cross-agent review, consultation, planning, architecture, design,
-product, copywriting, research, or delegated implementation call, use the
-agent-jobs `route_decide` tool. Also call it before spawning a separable native
-worker for implementation, exploration, or tests. Pass protocol v2, a stable
-task/session ID, and `durable_agent_jobs=true`; report `native_subagents=true`
-only when native workers are available. Pass an explicit provider/model request
-through the route intent instead of bypassing routing.
+product, copywriting, research, or delegated implementation call, use
+agent-jobs `route_decide` through MCP or the guarded CLI. Also call it before
+spawning a separable native worker. Pass protocol v2, a stable task/session ID,
+and `durable_agent_jobs=true`; report `native_subagents=true` only when the
+current coding surface can actually spawn and supervise one. Pass explicit
+provider/model requests through route intent instead of bypassing routing.
 
 When `enforced=true`, the returned lane, provider, and model supersede static
 provider-preference text elsewhere in the guidance. For `agent_jobs`, submit
@@ -84,8 +110,8 @@ the routed work completes, fails, is abandoned, is not started, or is escalated.
 Use the documented one-hop escalation flow after genuine provider failure,
 quota exhaustion, or unusable output. On a resumed task, call `route_reconcile`
 with that session's still-active native decision IDs. Routing does not launch or
-terminate workers; Codex owns lifecycle, integration, verification, and the
-final result.
+terminate workers; the originating coding surface owns lifecycle, integration,
+verification, and the final result.
 """
 
 
@@ -256,9 +282,17 @@ def merge_guidance(path: Path, name: str, suffix: str, apply: bool) -> bool:
     if start != -1:
         # Existing marked guidance is locally owned policy. Provider availability
         # overrides and team-specific routing must not be silently overwritten.
-        if name != "Codex guidance":
-            return False
-        updated = original
+        end += len(GUIDANCE_END)
+        existing = original[start:end]
+        migratable = MIGRATABLE_MANAGED_GUIDANCE.get(name)
+        old_managed = (
+            f"{GUIDANCE_START}\n{migratable.rstrip()}\n{GUIDANCE_END}"
+            if migratable else ""
+        )
+        updated = (
+            original[:start] + managed + original[end:]
+            if existing == old_managed else original
+        )
     else:
         # Adopt legacy policy verbatim; the shared skill carries portable defaults.
         import re
@@ -269,23 +303,24 @@ def merge_guidance(path: Path, name: str, suffix: str, apply: bool) -> bool:
             updated = original[:match.start()] + adopted + "\n\n" + original[match.end():].lstrip("\n")
         else:
             updated = (managed + "\n\n" + original.lstrip()) if original else managed
-    if name == "Codex guidance":
-        if original.count(CODEX_ROUTING_START) > 1 or original.count(CODEX_ROUTING_END) > 1:
-            raise ValueError(f"Duplicate Codex routing guidance markers: {path}")
-        route_start = updated.find(CODEX_ROUTING_START)
-        route_end = updated.find(CODEX_ROUTING_END)
-        if (route_start == -1) != (route_end == -1) or (
-            route_start != -1 and route_end < route_start
-        ):
-            raise ValueError(f"Malformed Codex routing guidance markers: {path}")
-        route_block = (
-            f"{CODEX_ROUTING_START}\n{CODEX_ROUTING_GUIDANCE.rstrip()}\n{CODEX_ROUTING_END}"
-        )
-        if route_start == -1:
-            updated = updated.rstrip() + "\n\n" + route_block + "\n"
-        else:
-            route_end += len(CODEX_ROUTING_END)
-            updated = updated[:route_start] + route_block + updated[route_end:]
+    route_marker_start = CODEX_ROUTING_START if name == "Codex guidance" else ROUTING_START
+    route_marker_end = CODEX_ROUTING_END if name == "Codex guidance" else ROUTING_END
+    if original.count(route_marker_start) > 1 or original.count(route_marker_end) > 1:
+        raise ValueError(f"Duplicate routing guidance markers: {path}")
+    route_start = updated.find(route_marker_start)
+    route_end = updated.find(route_marker_end)
+    if (route_start == -1) != (route_end == -1) or (
+        route_start != -1 and route_end < route_start
+    ):
+        raise ValueError(f"Malformed routing guidance markers: {path}")
+    route_block = (
+        f"{route_marker_start}\n{ROUTING_GUIDANCE.rstrip()}\n{route_marker_end}"
+    )
+    if route_start == -1:
+        updated = updated.rstrip() + "\n\n" + route_block + "\n"
+    else:
+        route_end += len(route_marker_end)
+        updated = updated[:route_start] + route_block + updated[route_end:]
     updated = updated.rstrip() + "\n"
     if updated == original:
         return False
@@ -329,6 +364,7 @@ def _paths(home: Path) -> dict[str, Path]:
         "Claude skill": home / ".claude/skills/agent-jobs",
         "Codex MCP": home / ".codex/config.toml",
         "Codex guidance": home / ".codex/AGENTS.md",
+        "Claude Code MCP": home / ".claude.json",
         "Claude guidance": home / ".claude/CLAUDE.md",
         "Claude Desktop MCP": home / "Library/Application Support/Claude/claude_desktop_config.json",
         "Kimi MCP": home / ".kimi-code/mcp.json",

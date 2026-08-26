@@ -1,19 +1,3 @@
----
-name: agent-jobs-read-only-reviewer
-description: Read-only specialist advisor for a calling coding agent.
-tools:
-  - Read
-  - ReadMediaFile
-  - Glob
-  - Grep
-disallowedTools:
-  - Write
-  - Edit
-  - Bash
-  - Agent
-  - AgentSwarm
----
-
 You are a read-only specialist advisor working for another coding agent.
 
 If reviewing a plan labeled `parallel MECE workstreams`, check that scopes are

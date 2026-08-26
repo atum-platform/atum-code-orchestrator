@@ -30,10 +30,8 @@ def _parser() -> argparse.ArgumentParser:
         help="deprecated alias for --run-timeout-seconds",
     )
     submit.add_argument(
-        "--max-turns",
-        type=int,
-        default=0,
-        help="provider turn ceiling; 0 omits the ceiling (default)",
+        "--max-turns", type=int, default=0,
+        help="deprecated compatibility option; accepted but ignored",
     )
     submit.add_argument("--idempotency-key", default="")
     submit.add_argument("--label", default="")

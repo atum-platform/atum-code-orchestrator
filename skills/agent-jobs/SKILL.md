@@ -71,11 +71,13 @@ Fresh actual utilization at or above the supervisor's exhaustion threshold is
 fail-closed for that provider, including explicit targets and one-hop fallbacks;
 continue directly or use the enforced alternate instead of bypassing admission.
 
-## Route focused Codex work
+## Route focused same-family work
 
-For a separable implementation, exploration, or test scope, Codex calls
-`route_decide` before spawning a native worker. Pass a stable ID for the current
-task as `session_id`, use protocol v2, and report
+For a separable bounded scope in the caller's primary domain, call `route_decide`
+before spawning a native worker. Codex and Kimi native lanes cover implementation,
+exploration, and tests; Claude native lanes cover planning, architecture, design,
+product, copywriting, and research. Pass a stable ID for the current task as
+`session_id`, use protocol v2, and report
 `surface_capabilities.durable_agent_jobs=true`. Report `native_subagents=true`
 only when native agents are actually available. If an older supervisor rejects
 v2, retry once with v1 and follow its legacy result. A `native_subagent` response includes
@@ -86,18 +88,20 @@ Retain the decision ID. Spawn one native worker for the bounded scope, integrate
 and verify its result, then call `route_feedback` once with `completed`, `failed`,
 `abandoned`, `escalated`, or `not_started`. Identical feedback retries are safe.
 On task resume, call `route_reconcile` with that session's decision IDs that are
-still running; omitted active reservations are released. `codex_fast` means the
-current Codex Spark-class worker available on that surface. Capacity exhaustion
-returns `direct`, so the primary continues the work itself.
+still running; omitted active reservations are released. Focused native routes
+use Spark for Codex, Sonnet for Claude, and high-speed K2.7 for Kimi. Capacity
+exhaustion returns `direct`, so the primary continues the work itself.
 
 1. Inspect the exact project and define one checkpoint, risk, and expected output.
 2. Load only the relevant rubric and incorporate it into `instructions`.
 3. Call `route_decide` and follow an enforced lane/provider/model. Submit
    asynchronously with the exact absolute `workdir`. Set
    `context_git_diff=true` for code review and select the correct base ref.
-4. Save the job ID, cursor, and exact owner. Use
-   `job_read(wait_seconds=30)` for a server-side wait until progress or terminal
-   state; the caller does not need to generate repeated socket polls.
+4. Save the job ID, cursor, and exact owner. For MCP, use
+   `job_read(wait_seconds=10)` for a short server-side wait until progress or
+   terminal state; repeat only after the tool returns. The MCP adapter clamps
+   longer requests so a quiet provider cannot outlive a coding surface's socket
+   budget. The guarded CLI may use waits up to 60 seconds.
 5. Treat `possibly_stalled` as alive but quiet. Cancel only after inspecting status,
    elapsed time, and the run deadline.
 6. On failure of an enforced v2 route, report `escalated`, request the one-hop
@@ -121,11 +125,11 @@ common secret shapes as defense in depth.
 Use `queue_timeout_seconds` for capacity waiting and `run_timeout_seconds` as
 the execution backstop. Defaults are 900 and 2700 seconds; queue waiting does
 not consume execution time. `timeout_seconds` is a deprecated run-time alias.
-Leave
-`max_turns` at its default `0`, which omits the provider turn ceiling. Set a
-positive turn ceiling only when the user explicitly requests one or the task has
-a known bounded interaction protocol; an arbitrary turn cap can discard an
-otherwise healthy run after its tokens have already been spent.
+Provider turn ceilings are retired from the effective ACO contract. New callers
+do not send `max_turns`; legacy inputs are accepted but ignored. Jobs run until
+their queue/run deadline, cancellation, or
+provider termination. An arbitrary cap can discard an otherwise healthy run
+after its tokens have already been spent.
 
 ## Use the available binding
 
@@ -145,7 +149,25 @@ directly to the supervisor's capability-gated write path. Read
 For explicit substantive delegation, run `scripts/delegate.py` with provider,
 model, mode, absolute workdir, and one bounded prompt. `implement` permits scoped
 reads and edits but no Bash, Git, external messaging, or nested agents. The calling
-agent runs tests and Git operations afterward.
+agent runs final verification and Git operations afterward. Claude and Kimi implementation
+jobs on macOS are kernel-confined to writes inside the selected workdir plus a
+private temporary runtime directory, with Git metadata kept read-only; Codex uses
+its native workspace sandbox. Treat this as blast-radius reduction, inspect the
+entire diff before executing repository-controlled commands, and repair any CLI
+authentication refresh outside the delegated run.
+The supervisor fails closed where it cannot enforce an equivalent write boundary.
+
+For Claude implementation jobs, the caller may add repeatable
+`--check 'NAME=COMMAND'` arguments for bounded, iterative verification. Codex and
+Kimi check contracts fail closed until their equivalent mediated tool paths are
+verified. These are exact caller-approved argv contracts, not a shell exposed to
+the delegated model; the model can only call `run_check(NAME)`.
+Prefer focused tests, linters, type checks, or builds. Never approve package
+installation, Git, deployment, dev servers, secret-dependent commands, or other
+long-lived/external side effects. Approved checks run without provider credentials
+or network access and with bounded time/output under the implementation sandbox.
+Because a delegated job may edit project code before invoking a check, approving
+the check explicitly authorizes execution of model-influenced repository code.
 
 Kimi submissions may omit `model`; the supervisor then selects
 `kimi-code/k3`. It canonicalizes supported K3 and K2.7 aliases and maps stale or

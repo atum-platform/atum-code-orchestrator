@@ -1,5 +1,132 @@
 # Session Log
 
+## 2026-08-24 - Cross-surface client parity
+
+- Added Claude Code's official user-scope `~/.claude.json` to the transactional
+  client installer so Claude Code receives the same read-only `agent-jobs` MCP
+  binding as Codex, Claude Desktop, and Kimi Code. Live `claude mcp list`
+  verification proved that this installed Claude version ignores MCP entries in
+  `~/.claude/settings.json`; installation therefore requires inactive Claude
+  Code sessions and preserves the full user-scope document atomically.
+- Made the plan-of-parallels protocol part of the replaceable routing guidance
+  block, eliminating cross-machine drift while preserving locally owned
+  provider policy.
+- Updated installer coverage and client documentation. Installation remains
+  native per machine; configuration files containing local credentials are
+  never copied between Macs.
+- Refreshed PR #22 by merging current `main` at
+  `63d9477607fc3f51f0d34c5761f2c8e3610b1cf0`. The merge adopts the hosted
+  Ubuntu workflow and portable launch-identity assertion from PR #23; no
+  duplicate supervisor or test fix was authored on this branch.
+- Verification after the refresh: the launch-identity and recursive-submission
+  tests pass (2/2), the supervisor integration class passes (113/113), the full
+  repository suite passes (293/293), Python compilation succeeds, and
+  `git diff --check` is clean.
+
+## 2026-08-24 - Prevent WAL fsync from starving control requests
+
+- Reproduced a 40-second direct supervisor-socket timeout during a live Kimi K3
+  smoke, proving the problem existed below MCP and provider run-time ceilings.
+- A process sample found the single asyncio control thread committing and
+  checkpointing SQLite WAL frames with `fsync` while socket requests waited.
+- Kept WAL but selected `synchronous=NORMAL` and 256-page automatic checkpoints,
+  trading only the newest queue updates on sudden power loss for bounded local
+  commit latency. Provider processes remain identity-reconciled after restart.
+- Verification: 2 focused persistence/control-plane tests pass; the full
+  292-test suite passes; `git diff --check` is clean. Post-deployment latency is
+  checked on both supervisors. The MacBook sustained 160 route-decision and
+  feedback writes with 18.14 ms p95 and 52.03 ms maximum interleaved ping
+  latency, versus the reproduced 40-second timeout. Fifty deliberately reset
+  clients added zero bytes to supervisor stderr. Both machines run the canonical
+  supervisor SHA-256 `79682cdf1db14030262e6f60d5b1c689ef86c23c3066755410a982d52213655a`.
+
+## 2026-08-24 - Preserve modern Kimi model configuration
+
+- A live MacBook smoke reached Kimi Code 0.31.1 but proved the isolated runtime
+  lacked its configured `kimi-code/k3` model declaration.
+- Modern Kimi jobs now copy the authenticated `config.toml` into the private
+  per-job home with mode `0600`, while continuing to replace MCP state and use
+  an empty Skills directory. Missing configuration fails before provider launch.
+- Verification: 3 focused modern-Kimi tests pass; the full 291-test suite
+  passes; `git diff --check` is clean. MacBook smoke job
+  `98c47bd3-2475-49cb-8c53-d592758185b6` completed on K3 with the exact retained
+  response `ACO KIMI OK`.
+
+## 2026-08-24 - Keep MCP polling below transport ceilings
+
+- Capped MCP `job_read` waits at 10 seconds while preserving the guarded CLI's
+  60-second long-poll option, so coding-surface socket ceilings cannot be
+  mistaken for Opus or supervisor failure.
+- Increased the local Unix client response margin and treated reader disconnects
+  as an expected abandoned poll instead of emitting unhandled supervisor errors.
+- Durable jobs continue independently of MCP requests; callers recover progress
+  and terminal results with the retained job ID, cursors, and owner inbox.
+- Verification: 152 focused client, MCP, and supervisor tests pass; the full
+  291-test suite passes; `git diff --check` is clean.
+
+## 2026-08-24 - Harden mediated verification after Opus review
+
+- Kept the named-check broker available only to Claude implementation jobs;
+  Codex and Kimi submissions with checks now fail closed until their equivalent
+  mediated tool paths are proven end to end.
+- Added broker signal/parent-loss cleanup plus supervisor-owned, identity-checked
+  reaping of recorded check process groups on cancellation, timeout, shutdown,
+  and restart cleanup.
+- Expanded the inner macOS profile to deny Apple Events, common launchd/script
+  escapes, and the local credential stores used by ACO providers and package
+  tooling; added broker-side contract validation and a missing Kimi MCP-config
+  guard.
+- Removed legacy idempotency-hash compatibility for submissions carrying checks,
+  so an old row cannot match a different verification contract.
+- Documented that caller-approved project checks execute model-influenced
+  repository code and that the targeted Seatbelt profile reduces blast radius
+  rather than providing a complete default-deny execution boundary.
+- Review: Opus 5 held phase 6 on orphaned check processes, unsupported Codex
+  mediation, and an unverified Kimi tool path; this checkpoint addresses each
+  release blocker before deployment.
+- Verification: 12 focused broker, delegation, confinement, and submission tests
+  pass; the full 284-test suite passes; Python compilation and `git diff --check`
+  are clean.
+
+## 2026-08-24 - Close cross-surface routing and compatibility gaps
+
+- Installed the enforced routing protocol into Codex, Claude Code, and Kimi Code
+  guidance while preserving locally owned provider policy sections.
+- Made the cooperative native reservation pool explicitly provider-neutral via
+  `AGENT_JOB_NATIVE_RESERVATIONS`, retaining the previous Codex-prefixed name as
+  a compatibility fallback and proving capacity is shared across surfaces.
+- Routed focused same-family Claude work to Sonnet and focused Kimi work to
+  high-speed K2.7, while preserving cross-family code review for every caller.
+- Restored `max_turns` as an accepted but ignored compatibility input at MCP and
+  CLI boundaries; run deadlines remain the sole effective execution ceiling.
+- Verification: 69 focused routing, client, and guarded-interface tests pass;
+  the full 279-test suite passes; `git diff --check` is clean.
+- Review: Opus 5 returned a ship verdict and confirmed the compatibility, model,
+  and cross-family-review changes. Its follow-up findings were applied: exact
+  stale Claude defaults now migrate without overwriting custom policy, the shared
+  skill describes every same-family native lane, cross-surface capacity has a
+  positive control, protocol-v1 native routing pins its Codex-only invariant, and
+  migration documentation covers the provider-neutral setting. The 50 focused
+  tests covering those corrections pass.
+
+## 2026-08-24 - Recover deployed routing changes into source control
+
+- Recovered the tracked delta from the active
+  `~/.local/share/atum-agent-jobs` runtime into the canonical repository instead
+  of leaving the running protocol as an uncommitted installation artifact.
+- Preserved the deployed same-family native-worker routing for Codex, Claude,
+  and Kimi, complementary-family durable routing, retired public provider turn
+  ceilings, updated client guidance, and MECE assembly-review instructions.
+- Reconciled stale tests and payload fixtures with the deployed contracts:
+  legacy nonzero `max_turns` input is normalized to unlimited, cross-family
+  degradation tests use code review rather than same-family planning, and MCP
+  parity no longer submits the removed field.
+- Verification: 40 focused routing/supervisor/review-core tests pass; the full
+  274-test suite passes; `git diff --check` is clean.
+- The source checkpoint is intentionally not deployed yet. Claude tool-surface
+  enforcement, supervisor consolidation, filesystem confinement, and mediated
+  commands remain separate reviewed checkpoints.
+
 ## 2026-08-13 - Use the organization Actions runner
 
 - Moved repository tests from GitHub-hosted macOS to the private organization
@@ -369,3 +496,178 @@
   the same stable command name and runs the workflow under the non-sudo
   `gha-runner` account.
 - Fork-origin pull requests remain rejected before self-hosted assignment.
+## 2026-08-24: Enforce the Claude native tool surface
+
+- Replaced permission-only Claude tool configuration with an explicit
+  `--tools` availability list plus a deny list for shell, nested-agent, network,
+  workflow, and notebook tools.
+- Read-only jobs now expose only repository inspection tools; implementation
+  jobs additionally expose file editing tools but still cannot execute commands
+  or recursively delegate.
+- Kept strict empty MCP configuration, disabled session persistence, and applied
+  safe mode to both read-only and implementation runs so hooks and other
+  customizations cannot create a separate command-execution path.
+- Verified all 120 supervisor tests pass. A live Sonnet CLI probe initialized
+  with only `Glob`, `Grep`, and `Read`, exposed no MCP servers, and returned
+  `BASH_UNAVAILABLE` when instructed to invoke Bash.
+- Opus independently confirmed the `--tools` mechanism and found follow-up gaps.
+  Removed the unsupported `LS` name, expanded defense-in-depth denials across
+  current and legacy tool names, restored the Codex read-only sandbox assertion,
+  and clarified that native CLI tool restriction does not yet confine read or
+  write paths. The optional CAO backend remains a separate policy contract.
+- After the review fixes, all 280 tests pass. A live implement-mode probe exposed
+  exactly `Edit`, `Glob`, `Grep`, `Read`, and `Write`, with no MCP servers.
+- A final isolated implement probe created the expected temporary file under
+  `acceptEdits` plus safe mode, then removed all probe artifacts. Opus's targeted
+  follow-up found no new blockers and returned a `SHIP` verdict.
+# 2026-08-24 - ACO and Hermes runtime boundary
+
+- Confirmed the live Mac mini deployments remain separate: ACO uses
+  `~/.local/share/atum-agent-jobs`, `com.atum.agent-job-supervisor`, and
+  `~/.local/state/agent-job-supervisor`; Hermes uses its own checkout, service
+  label, state directory, and profile configuration.
+- Removed ACO's legacy `bootstrap.py --with-hermes` path and the Hermes profile
+  migration utility so an ACO install cannot repoint `~/.hermes/profiles`.
+- Kept Hermes caller and wire-protocol compatibility for the independently
+  deployed Hermes supervisor. No live Hermes profile, process, service, or state
+  was changed.
+- Added regression coverage proving ACO bootstrap and client targets do not
+  manage Hermes profiles. Updated current installation and rollback docs to make
+  the ownership boundary explicit.
+- Follow-up review returned SHIP and identified a remaining runtime authorization
+  overlap. Removed Hermes-owned directories from ACO's default workspace roots,
+  pinned that exclusion in policy tests, and cleaned stale migration/runbook
+  language. Opus was attempted first as requested but failed before review with
+  Anthropic HTTP 529; the enforced one-hop Kimi K3 fallback completed the review.
+
+## 2026-08-24 - Delegated implementation write confinement
+
+- Added kernel-enforced macOS write confinement around native Claude and Kimi
+  implementation jobs. Writes are limited to the resolved submitted workdir and
+  a mode-`0700` per-job runtime directory used as `TMPDIR` and removed at job end.
+- Kept Codex on its native `workspace-write` sandbox. Rejected CAO implementation
+  and unsupported native platforms until they can enforce an equivalent boundary.
+- Added a real Seatbelt regression test that permits a workspace write while
+  denying sibling and symlink-escape writes. Existing tool restrictions remain
+  in force; this phase intentionally addresses writes, while full read isolation
+  remains constrained by subscription CLI authentication stored outside the repo.
+- Verified the actual Sonnet implementation adapter under the wrapper: `Write`
+  created the requested file inside an isolated workspace, the requested absolute
+  sibling write did not create a file, and the provider exited successfully.
+- Full verification passes all 277 unit and integration tests on macOS.
+- Opus held the first checkpoint after finding that a transient `sandbox-exec`
+  process name could defeat restart cleanup, the CAO launch choke point lacked
+  its own implementation rejection, and Kimi had not been exercised live.
+- Restart cleanup now identifies the exact process group by PID, PGID, and start
+  time rather than an executable name that changes across `exec`. The command
+  builder rejects legacy queued CAO implementation jobs before launch.
+- Runtime confinement now rejects a symlinked runtime root, removes stale runtime
+  directories at startup, protects workspace Git metadata, and keeps cleanup
+  failures from leaking in-memory scheduler state. Documentation now states the
+  remaining read, network, authentication-refresh, and workspace-config risks.
+- Kimi's first live probe failed before model invocation because it writes logs
+  beneath `~/.kimi`. Implementation jobs now redirect `KIMI_SHARE_DIR` into the
+  disposable runtime while reading the real config and credentials without write
+  access; the live probe is repeated as part of this checkpoint.
+- The retry exposed current Kimi CLI argument drift: structured output now
+  requires print mode. The adapter pairs `--print` with `--output-format
+  stream-json` so durable jobs reach model execution on the installed CLI.
+- The next startup check found that current Kimi also replaced frontmatter
+  markdown agent definitions with versioned YAML specs. Both ACO Kimi agents now
+  use native YAML definitions, separate system prompts, explicit restricted tool
+  classes, and an empty subagent registry.
+- The confined Kimi adapter now reaches provider authentication. The machine's
+  current Kimi login returns the same 401 both inside and outside ACO, and its
+  local managed-model config currently exposes K2.7 but not the preferred K3
+  alias; a successful model write probe remains blocked on external reauthentication.
+- Verified both replacement Kimi agent specs with the installed Kimi parser:
+  read-only exposes four file-inspection tools, implementation exposes six
+  inspection/editing tools, and both expose zero subagents. The repository's
+  complete 277-test suite passes under `.venv` after the review fixes.
+
+## 2026-08-24 - Mediated delegated verification
+
+- Closed the filesystem-confinement checkpoint after the requested Opus targeted
+  re-review was attempted. Anthropic returned HTTP 529 after repeated API retries
+  before reading the code; the enforced one-hop route returned the review to the
+  originating Codex session, which verified the original blockers against the
+  committed diff and closed routing feedback without weakening confinement.
+- Added durable caller-approved check contracts for explicit implementation jobs.
+  A caller may attach up to eight named argv lists; the delegated model receives
+  only `run_check(name)` and cannot submit arbitrary command text.
+- Added a thin local MCP command broker for Claude and Kimi. Checks run serially
+  in the submitted workspace under a nested macOS Seatbelt profile with network
+  denied, Git metadata read-only, sibling writes denied, provider credentials and
+  proxy variables removed, bounded output, bounded time, and process cleanup.
+- Kept arbitrary Bash, Git, package installation, deployment, dev servers,
+  external messaging, and nested delegation unavailable. The caller still owns
+  diff inspection, final verification, and all Git operations.
+- Kimi now always receives an explicit isolated MCP config, empty when no checks
+  are approved, preventing user-global MCP servers from widening its tool surface.
+- Approved argv contracts are cleared from SQLite when the provider launches;
+  only the private per-job runtime MCP config survives until job cleanup.
+- Added macOS broker tests covering unknown-name rejection, credential scrubbing,
+  workspace/Git/sibling confinement, network denial, and timeout termination,
+  plus supervisor persistence and provider-adapter tests. The complete suite now
+  passes all 281 tests under the repository `.venv`.
+- Opus's targeted follow-up could not start because Anthropic returned HTTP 529.
+  The enforced one-hop Kimi K3 review verified the remediation commit, closed
+  the orphan-process, unmediated-Codex, and unverified-Kimi blockers, and returned
+  `SHIP`. Codex recorded terminal routing feedback exactly once.
+
+## 2026-08-24 - Deployment setting retention
+
+- The reviewed release was overlaid into the fixed Mac mini install checkout
+  after preserving the prior working-tree patch under the supervisor state
+  directory. No Hermes checkout, profile, service, state, or process was changed.
+- Live deployment exposed two installer defects. Launchd needed slightly more
+  than the previous ten-second observation window even though the replacement
+  daemon started successfully, and a plain reinstall discarded existing
+  routing, quota, concurrency, and provider-binary overrides from the plist.
+- The installer now retains only its known machine deployment overrides, with
+  explicit command environment values taking precedence. Release-owned policy
+  such as approved workspace roots is still recomputed so stale authorization
+  does not survive an upgrade.
+- Launchd stop/start observation now permits 30 seconds. Regression tests cover
+  retained settings, explicit precedence, stale policy rejection, and the new
+  transition budget.
+- The Mac mini was recovered with `surface_canary`, quota routing, dynamic
+  concurrency, three configured provider slots, and the current Kimi Code binary.
+  Client bindings report current across Codex, Claude, Claude Desktop, and Kimi.
+- Focused installer tests, Python compilation, `git diff --check`, and the full
+  287-test suite pass on the Mac mini.
+
+## 2026-08-24 - MacBook deployment parity
+
+- Confirmed the MacBook supervisor queue was drained before replacement: no
+  queued, launching, running, or possibly-stalled jobs were present.
+- Preserved the prior installed checkout as a patch and untracked-file archive
+  under the MacBook supervisor state directory before applying the current
+  Mac mini release overlay.
+- Reinstalled the supervisor and all Codex, Claude, Claude Desktop, and Kimi
+  bindings. Migrated the legacy Codex-only native reservation variable to the
+  shared `AGENT_JOB_NATIVE_RESERVATIONS=3` setting while retaining the MacBook's
+  provider binary paths and other known deployment overrides.
+- The MacBook's 256-file shell limit caused false `Too many open files` failures
+  in the full suite. With a 4096-file test limit, all 298 tests passed. This is a
+  test-runner environment constraint; the launchd supervisor remained healthy.
+- Verified supervisor ping, current client bindings, `surface_canary` protocol
+  v2 routing, quota-aware provider health, dynamic three-slot configuration, and
+  terminal feedback for a no-run routing smoke decision. Both coding desktop
+  applications were restarted to reload their MCP configuration.
+
+## 2026-08-24 - Kimi CLI generation compatibility
+
+- Diagnosed four MacBook ACO failures after Kimi auto-upgraded to the Node-based
+  CLI 0.31.1. The supervisor was still passing the legacy Python CLI's
+  `--mcp-config-file` option, so jobs exited before model execution.
+- Added capability-based CLI generation detection. Legacy installations retain
+  their YAML agent, print-mode streaming, and explicit MCP arguments; modern
+  installations use Markdown tool policies and prompt-mode JSON streaming.
+- Modern jobs receive a private per-job `KIMI_CODE_HOME`, empty MCP declaration,
+  and empty Skills directory while reusing only local Kimi authentication state.
+  The runtime is removed by the existing terminal cleanup path.
+- The first launchd smoke test showed that invoking modern Kimi `--help` can
+  block behind its updater long enough to fail capability detection. Official
+  `.kimi-code/bin/kimi` installs are now identified without spawning the CLI;
+  nonstandard binary paths use the faster `--version` contract as fallback.

@@ -33,8 +33,11 @@ IDs with `list` and filter by the owner prefix used at submission.
 Terminal jobs with a non-empty owner create an at-least-once inbox delivery.
 Inbox reads are non-destructive and exact-owner scoped. Inspect the retained job
 result before acknowledging the returned delivery ID; do not assume it is the
-same identifier as the job. A server-side `read --wait-seconds`
-holds one bounded socket request and wakes on output, liveness, or terminal state.
+same identifier as the job. A server-side `read --wait-seconds` holds one bounded
+socket request and wakes on output, liveness, or terminal state. The CLI accepts
+up to 60 seconds. MCP reads are capped at 10 seconds to remain below coding-surface
+transport ceilings; a timeout or disconnected reader never cancels the durable
+provider job.
 
 Treat `job.lifecycle_status` as authoritative and `job.activity` as the current
 semantic observation. `tool_running:<name>` means a quiet provider still has an
@@ -80,12 +83,21 @@ python3 scripts/delegate.py \
   --model opus \
   --mode implement \
   --workdir /absolute/project \
-  --prompt "Implement only the scoped change. Do not commit or push."
+  --prompt "Implement only the scoped change. Run the unit check. Do not commit or push." \
+  --check 'unit=npm test -- --runInBand'
 ```
 
 The script prints `AGENT_JOB_ID` before polling. If the shell exits, recover the
 job through the guarded review CLI's `list`/`read` operations or the low-level
 `agent_job_client.py`.
+
+For Claude implementation jobs, repeat `--check 'NAME=COMMAND'` for focused
+caller-approved verification. Codex and Kimi check contracts currently fail
+closed. The delegated model chooses only a name; it cannot alter the argv. A
+check can execute project code the model just edited, so inspect that trust
+decision deliberately. Do not approve
+Git, installs, deployments, dev servers, external side effects, or commands that
+require secrets. The originating agent runs final verification itself.
 
 ## CAO Canary Operations
 

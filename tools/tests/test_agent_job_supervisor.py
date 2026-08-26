@@ -22,7 +22,165 @@ import agent_job_supervisor as supervisor_module  # noqa: E402
 from agent_job_supervisor import JobStore, Supervisor  # noqa: E402
 
 
+class KimiCliCompatibilityTest(unittest.TestCase):
+    def tearDown(self) -> None:
+        supervisor_module._kimi_cli_generation.cache_clear()
+
+    def test_official_modern_install_path_needs_no_subprocess_probe(self) -> None:
+        supervisor_module._kimi_cli_generation.cache_clear()
+        with patch.object(supervisor_module.subprocess, "run") as run:
+            generation = supervisor_module._kimi_cli_generation(
+                "/Users/example/.kimi-code/bin/kimi"
+            )
+        self.assertEqual("modern", generation)
+        run.assert_not_called()
+
+    def test_nonstandard_paths_use_version_contract(self) -> None:
+        supervisor_module._kimi_cli_generation.cache_clear()
+        with patch.object(
+            supervisor_module.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess(
+                ["/custom/kimi", "--version"], 0, stdout="kimi, version 1.49.0\n", stderr=""
+            ),
+        ) as run:
+            self.assertEqual(
+                "legacy", supervisor_module._kimi_cli_generation("/custom/kimi")
+            )
+        run.assert_called_once_with(
+            ["/custom/kimi", "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+
+class WorkspaceConfinementTest(unittest.TestCase):
+    @unittest.skipUnless(
+        sys.platform == "darwin" and supervisor_module.SANDBOX_EXEC_PATH.is_file(),
+        "macOS sandbox-exec is required",
+    )
+    def test_macos_workspace_confinement_blocks_sibling_write(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            workdir = root / "work"
+            workdir.mkdir()
+            (workdir / ".git").mkdir()
+            (workdir / "escape").symlink_to(root)
+            supervisor = Supervisor(
+                state_dir=root / "state",
+                socket_path=root / "state/supervisor.sock",
+                db_path=root / "state/jobs.sqlite3",
+                log_dir=root / "state/logs",
+                binary_finder=lambda provider: "/bin/sh",
+            )
+            job = {
+                "job_id": "00000000-0000-0000-0000-000000000001",
+                "provider": "claude",
+                "mode": "implement",
+                "workdir": str(workdir),
+            }
+            argv, _, env = supervisor._confine_implementation(
+                job,
+                [
+                    "/bin/sh", "-c",
+                    'echo inside > "$1/in"; echo git > "$1/.git/config"; '
+                    'echo outside > "$2"; echo escaped > "$1/escape/escaped"',
+                    "sh", str(workdir), str(root / "outside"),
+                ],
+                None,
+                os.environ.copy(),
+            )
+
+            result = subprocess.run(argv, cwd=workdir, env=env, check=False)
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertTrue((workdir / "in").is_file())
+            self.assertFalse((workdir / ".git/config").exists())
+            self.assertFalse((root / "outside").exists())
+            self.assertFalse((root / "escaped").exists())
+            supervisor.store.db.close()
+
+    def test_runtime_cleanup_removes_stale_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            supervisor = Supervisor(
+                state_dir=root / "state",
+                socket_path=root / "state/supervisor.sock",
+                db_path=root / "state/jobs.sqlite3",
+                log_dir=root / "state/logs",
+            )
+            stale = supervisor._job_runtime_dir("stale-job")
+            stale.mkdir()
+            (stale / "partial").write_text("stale", encoding="utf-8")
+
+            supervisor._cleanup_stale_runtime_dirs()
+
+            self.assertFalse(stale.exists())
+            self.assertEqual(0o700, stat.S_IMODE(supervisor._runtime_base().stat().st_mode))
+            supervisor.store.db.close()
+
+    def test_runtime_cleanup_reaps_recorded_check_process(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            supervisor = Supervisor(
+                state_dir=root / "state",
+                socket_path=root / "state/supervisor.sock",
+                db_path=root / "state/jobs.sqlite3",
+                log_dir=root / "state/logs",
+            )
+            runtime = supervisor._job_runtime_dir("check-job")
+            runtime.mkdir()
+            process = subprocess.Popen(["/bin/sleep", "30"], start_new_session=True)
+            process_start = subprocess.run(
+                ["/bin/ps", "-o", "lstart=", "-p", str(process.pid)],
+                check=False, capture_output=True, text=True,
+            ).stdout.strip()
+            (runtime / "check-slow.process.json").write_text(json.dumps({
+                "pid": process.pid, "process_start": process_start,
+            }), encoding="utf-8")
+
+            supervisor._cleanup_job_runtime("check-job")
+            process.wait(timeout=5)
+
+            self.assertFalse(runtime.exists())
+            self.assertIsNotNone(process.returncode)
+            supervisor.store.db.close()
+
+    def test_runtime_base_rejects_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            state = root / "state"
+            state.mkdir()
+            outside = root / "outside"
+            outside.mkdir()
+            (state / "runtime").symlink_to(outside)
+            supervisor = Supervisor(
+                state_dir=state,
+                socket_path=state / "supervisor.sock",
+                db_path=state / "jobs.sqlite3",
+                log_dir=state / "logs",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
+                supervisor._job_runtime_dir("job")
+            supervisor.store.db.close()
+
+
 class JobStoreMigrationTest(unittest.TestCase):
+    def test_wal_durability_avoids_full_sync_control_plane_stalls(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = JobStore(Path(temporary) / "jobs.sqlite3")
+            try:
+                self.assertEqual("wal", store.db.execute("PRAGMA journal_mode").fetchone()[0])
+                self.assertEqual(1, store.db.execute("PRAGMA synchronous").fetchone()[0])
+                self.assertEqual(
+                    256, store.db.execute("PRAGMA wal_autocheckpoint").fetchone()[0]
+                )
+            finally:
+                store.db.close()
+
     def test_existing_jobs_gain_nullable_separate_timeout_columns(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             store = JobStore(Path(temporary) / "jobs.sqlite3")
@@ -98,6 +256,7 @@ class JobStoreMigrationTest(unittest.TestCase):
 
     def test_invalid_native_routing_numbers_name_the_environment_variable(self) -> None:
         for name in (
+            "AGENT_JOB_NATIVE_RESERVATIONS",
             "AGENT_JOB_CODEX_NATIVE_RESERVATIONS",
             "AGENT_JOB_ROUTE_RESERVATION_SECONDS",
             "AGENT_JOB_QUOTA_STALE_SECONDS",
@@ -123,6 +282,22 @@ class JobStoreMigrationTest(unittest.TestCase):
                     state_dir=root / "state", socket_path=root / "state/socket",
                     db_path=root / "state/jobs.sqlite3", log_dir=root / "state/logs",
                 )
+
+    def test_native_reservation_limit_prefers_new_name_and_accepts_legacy_alias(self) -> None:
+        for values, expected in (
+            ({"AGENT_JOB_CODEX_NATIVE_RESERVATIONS": "4"}, 4),
+            ({"AGENT_JOB_NATIVE_RESERVATIONS": "5", "AGENT_JOB_CODEX_NATIVE_RESERVATIONS": "4"}, 5),
+        ):
+            with self.subTest(values=values), tempfile.TemporaryDirectory() as temporary, patch.dict(
+                os.environ, values, clear=True
+            ):
+                root = Path(temporary)
+                instance = Supervisor(
+                    state_dir=root / "state", socket_path=root / "state/socket",
+                    db_path=root / "state/jobs.sqlite3", log_dir=root / "state/logs",
+                )
+                self.assertEqual(expected, instance.native_reservation_limit)
+                instance.store.db.close()
 
     def test_dynamic_concurrency_requires_quota_routing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary, patch.dict(
@@ -1547,6 +1722,75 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         result = await self.wait_for(str(submitted["job_id"]), {"completed"})
         self.assertEqual("completed", result["job"]["status"])
 
+    async def test_implementation_persists_only_valid_approved_checks(self) -> None:
+        spec = self.spec("complete")
+        spec.update(
+            mode="implement",
+            implement_capability="test-capability",
+            checks=[{"name": "unit", "argv": ["npm", "test"], "timeout_seconds": 42}],
+        )
+        self.supervisor.provider_limits["claude"] = 0
+        try:
+            submitted = await self.call(spec)
+            row = self.supervisor.store.get(str(submitted["job_id"]))
+            self.assertEqual(
+                [{"name": "unit", "argv": ["npm", "test"], "timeout_seconds": 42}],
+                json.loads(row["checks_json"]),
+            )
+            self.assertEqual(["unit"], submitted["approved_checks"])
+            await self.call({"action": "cancel", "job_id": submitted["job_id"]})
+        finally:
+            self.supervisor.provider_limits["claude"] = 1
+
+        readonly = self.spec("complete")
+        readonly["checks"] = [{"name": "unit", "argv": ["npm", "test"]}]
+        with self.assertRaisesRegex(RuntimeError, "implementation jobs"):
+            await self.call(readonly)
+
+        duplicate = spec.copy()
+        duplicate["idempotency_key"] = ""
+        duplicate["checks"] = [
+            {"name": "unit", "argv": ["npm", "test"]},
+            {"name": "unit", "argv": ["npm", "run", "lint"]},
+        ]
+        with self.assertRaisesRegex(RuntimeError, "duplicate check"):
+            await self.call(duplicate)
+
+        invalid_executable = spec.copy()
+        invalid_executable["idempotency_key"] = ""
+        invalid_executable["checks"] = [{"name": "unit", "argv": ["-p", "profile"]}]
+        with self.assertRaisesRegex(RuntimeError, "executable cannot start"):
+            await self.call(invalid_executable)
+
+        for provider in ("codex", "kimi"):
+            unsupported = spec.copy()
+            unsupported.update(
+                provider=provider,
+                model="gpt-5.6-codex" if provider == "codex" else "kimi-code/k3",
+                idempotency_key="",
+            )
+            with self.assertRaisesRegex(RuntimeError, "only for Claude"):
+                await self.call(unsupported)
+
+    async def test_cao_implementation_is_rejected_without_confinement(self) -> None:
+        spec = self.spec("complete")
+        spec.update(
+            mode="implement",
+            implement_capability="test-capability",
+            owner="cao-canary:test",
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_JOB_EXECUTION_BACKEND": "native",
+                "AGENT_JOB_CAO_CANARY_PROVIDERS": "claude",
+                "AGENT_JOB_CAO_CANARY_OWNER_PREFIXES": "cao-canary:",
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "workspace-confined implementation"):
+                await self.call(spec)
+
     async def test_large_valid_prompt_crosses_socket_transport(self) -> None:
         spec = self.spec(("line with a quote: \"value\"\n" * 18_000)[:500_000])
         submitted = await self.call(spec)
@@ -1669,11 +1913,9 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         job_id = "identity-match-job"
         self.supervisor.store.create(spec, job_id, self.supervisor.log_dir / f"{job_id}.log")
         process_start = await self.supervisor._ps_field(process.pid, "lstart")
-        live_executable = await self.supervisor._ps_field(process.pid, "comm")
-        live_binary = str(Path(live_executable).resolve())
         self.supervisor.store.update(
             job_id, status="running", pid=process.pid, pgid=process.pid,
-            binary_path=live_binary, process_start=process_start,
+            binary_path="/usr/bin/transient-launch-wrapper", process_start=process_start,
         )
         await self.supervisor._cleanup_interrupted()
         process.wait(timeout=5)
@@ -1743,17 +1985,78 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
                 "prompt": "review", "max_turns": 2, "workdir": str(self.workdir),
                 "semantic_stream": 0,
             }
-            argv, stdin_text, env = self.supervisor._build_command(base)
+            with patch.object(
+                supervisor_module, "_kimi_cli_generation", return_value="legacy"
+            ):
+                argv, stdin_text, env = self.supervisor._build_command(base)
+            self.assertNotEqual(str(supervisor_module.SANDBOX_EXEC_PATH), argv[0])
             self.assertIn("--agent-file", argv)
             self.assertNotIn("--output-format", argv)
             self.assertEqual("kimi-secret", env["MOONSHOT_API_KEY"])
             self.assertNotIn("ANTHROPIC_API_KEY", env)
             self.assertIsNone(stdin_text)
-            with patch.dict(os.environ, {"AGENT_JOB_KIMI_SEMANTIC": "1"}):
+            with patch.dict(os.environ, {"AGENT_JOB_KIMI_SEMANTIC": "1"}), patch.object(
+                supervisor_module, "_kimi_cli_generation", return_value="legacy"
+            ):
                 base["semantic_stream"] = 1
                 argv, _, _ = self.supervisor._build_command(base)
+            self.assertIn("--print", argv)
             self.assertIn("--output-format", argv)
             self.assertIn("stream-json", argv)
+            modern = dict(base)
+            modern.update(
+                job_id="00000000-0000-0000-0000-000000000004",
+                checks_json="[]",
+            )
+            modern_user_home = Path(self.temp.name) / "modern-kimi-user"
+            modern_config = modern_user_home / ".kimi-code" / "config.toml"
+            modern_config.parent.mkdir(parents=True)
+            modern_config.write_text(
+                'default_model = "kimi-code/k3"\n[models."kimi-code/k3"]\n'
+                'provider = "managed:kimi-code"\nmodel = "kimi-k3"\n',
+                encoding="utf-8",
+            )
+            with patch.object(
+                supervisor_module, "_kimi_cli_generation", return_value="modern"
+            ), patch.object(supervisor_module.Path, "home", return_value=modern_user_home):
+                modern_argv, modern_stdin, modern_env = self.supervisor._build_command(modern)
+            self.assertNotIn("--print", modern_argv)
+            self.assertNotIn("--mcp-config-file", modern_argv)
+            self.assertIn("--output-format", modern_argv)
+            self.assertIn("kimi_read_only_reviewer.md", " ".join(modern_argv))
+            self.assertIn("--skills-dir", modern_argv)
+            self.assertIsNone(modern_stdin)
+            modern_home = Path(modern_env["KIMI_CODE_HOME"])
+            self.assertTrue(modern_home.is_dir())
+            self.assertEqual(
+                modern_config.read_text(encoding="utf-8"),
+                (modern_home / "config.toml").read_text(encoding="utf-8"),
+            )
+            self.assertEqual(0o600, stat.S_IMODE((modern_home / "config.toml").stat().st_mode))
+            self.assertEqual(
+                {"mcpServers": {}},
+                json.loads((modern_home / "mcp.json").read_text(encoding="utf-8")),
+            )
+            self.assertEqual("1", modern_env["KIMI_DISABLE_TELEMETRY"])
+            base.update(
+                mode="implement",
+                job_id="00000000-0000-0000-0000-000000000003",
+            )
+            if sys.platform == "darwin":
+                with patch.object(
+                    supervisor_module, "_kimi_cli_generation", return_value="legacy"
+                ):
+                    kimi_argv, _, kimi_env = self.supervisor._build_command(base)
+                self.assertEqual(str(supervisor_module.SANDBOX_EXEC_PATH), kimi_argv[0])
+                self.assertIn("kimi_implementation_agent.yaml", " ".join(kimi_argv))
+                self.assertIn("KIMI_SHARE_DIR", kimi_env)
+                self.assertTrue(Path(kimi_env["KIMI_SHARE_DIR"]).is_dir())
+            else:
+                with self.assertRaisesRegex(RuntimeError, "confinement is unavailable"), patch.object(
+                    supervisor_module, "_kimi_cli_generation", return_value="legacy"
+                ):
+                    self.supervisor._build_command(base)
+            base.update(mode="readonly")
             base.update(provider="claude", model="opus")
             argv, stdin_text, env = self.supervisor._build_command(base)
             self.assertEqual("claude-secret", env["ANTHROPIC_API_KEY"])
@@ -1765,13 +2068,59 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("--verbose", argv)
             self.assertIn("--no-session-persistence", argv)
             self.assertIn("--max-turns", argv)
+            self.assertEqual("Read,Glob,Grep", argv[argv.index("--tools") + 1])
+            self.assertEqual(
+                argv[argv.index("--tools") + 1],
+                argv[argv.index("--allowed-tools") + 1],
+            )
+            denied = argv[argv.index("--disallowed-tools") + 1].split(",")
+            for tool in (
+                "Bash", "BashOutput", "KillShell", "Agent", "Task", "Monitor",
+                "Workflow", "WebFetch", "WebSearch", "NotebookEdit",
+            ):
+                self.assertIn(tool, denied)
+            self.assertNotIn("Bash", argv[argv.index("--tools") + 1].split(","))
+            self.assertNotIn("Edit", argv[argv.index("--tools") + 1].split(","))
+            self.assertNotIn("Write", argv[argv.index("--tools") + 1].split(","))
+            self.assertIn("--strict-mcp-config", argv)
+            self.assertEqual(
+                '{"mcpServers":{}}', argv[argv.index("--mcp-config") + 1]
+            )
+            self.assertGreater(argv.index("--safe-mode"), argv.index("--mcp-config"))
             base["max_turns"] = 0
             argv, _, _ = self.supervisor._build_command(base)
             self.assertNotIn("--max-turns", argv)
-            base.update(provider="codex", model="gpt-5.6-codex")
+            base["mode"] = "implement"
+            base["job_id"] = "00000000-0000-0000-0000-000000000002"
+            base["checks_json"] = json.dumps([
+                {"name": "unit", "argv": ["npm", "test"], "timeout_seconds": 60}
+            ])
+            if sys.platform == "darwin":
+                argv, _, confined_env = self.supervisor._build_command(base)
+                self.assertEqual(str(supervisor_module.SANDBOX_EXEC_PATH), argv[0])
+                self.assertIn(supervisor_module.MACOS_WORKSPACE_WRITE_PROFILE, argv)
+                self.assertIn(f"WORKDIR={self.workdir.resolve()}", argv)
+                self.assertTrue(
+                    confined_env["TMPDIR"].startswith(str(self.supervisor.state_dir.resolve()))
+                )
+                self.assertEqual(
+                    "Read,Glob,Grep,Edit,Write,mcp__aco_checks__run_check",
+                    argv[argv.index("--tools") + 1],
+                )
+                mcp_path = Path(argv[argv.index("--mcp-config") + 1])
+                mcp_config = json.loads(mcp_path.read_text(encoding="utf-8"))
+                self.assertIn("aco_checks", mcp_config["mcpServers"])
+                self.assertIn("--safe-mode", argv)
+                self.assertNotIn("Bash", argv[argv.index("--tools") + 1].split(","))
+                self.assertIn("Agent", argv[argv.index("--disallowed-tools") + 1].split(","))
+            else:
+                with self.assertRaisesRegex(RuntimeError, "confinement is unavailable"):
+                    self.supervisor._build_command(base)
+            base.update(provider="codex", model="gpt-5.6-codex", mode="readonly")
             os.environ["AGENT_JOB_CAO_TOKEN"] = "must-not-reach-native"
             argv, stdin_text, env = self.supervisor._build_command(base)
             self.assertIn("--ignore-user-config", argv)
+            self.assertEqual("read-only", argv[argv.index("-s") + 1])
             self.assertEqual("review", stdin_text)
             self.assertNotIn("AGENT_JOB_CAO_TOKEN", env)
         finally:
@@ -1817,6 +2166,10 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("2800.0", env["AGENT_JOB_DEADLINE_EPOCH"])
         self.assertNotIn("ANTHROPIC_API_KEY", env)
 
+        job["mode"] = "implement"
+        with self.assertRaisesRegex(RuntimeError, "workspace-confined implementation"):
+            self.supervisor._build_command(job)
+
     async def test_route_decide_persists_shadow_decision_without_creating_job(self) -> None:
         decision = await self.call({
             "action": "route_decide",
@@ -1850,7 +2203,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         payload = {
             "action": "route_decide", "protocol_version": 2,
             "caller_provider": "claude", "surface": "claude-code",
-            "capability": "planning", "session_id": "claude-session",
+            "capability": "code_review", "session_id": "claude-session",
         }
 
         degraded = await self.call(payload)
@@ -2081,6 +2434,43 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("direct", second["lane"])
         self.assertEqual("none", second["reservation_status"])
 
+    async def test_native_reservation_capacity_is_shared_across_coding_surfaces(self) -> None:
+        self.supervisor.routing_mode = "surface_canary"
+        self.supervisor.native_reservation_limit = 1
+        claude_route = {
+            "action": "route_decide", "protocol_version": 2,
+            "caller_provider": "claude", "surface": "claude-code",
+            "capability": "design", "complexity": "focused", "risk": "low",
+            "scope": "single_module", "duration": "short", "durability": "session",
+            "parallelizable": True, "session_id": "claude-session",
+            "surface_capabilities": {"native_subagents": True, "durable_agent_jobs": True},
+        }
+        first = await self.call({
+            **self.codex_native_route("codex-session"), "protocol_version": 2,
+            "surface_capabilities": {"native_subagents": True, "durable_agent_jobs": True},
+        })
+        second = await self.call(claude_route)
+        self.assertEqual("native_subagent", first["lane"])
+        self.assertEqual("direct", second["lane"])
+        self.assertEqual("none", second["reservation_status"])
+
+        await self.call({
+            "action": "route_feedback", "decision_id": first["decision_id"],
+            "session_id": "codex-session", "outcome": "completed",
+        })
+        self.supervisor.native_reservation_limit = 2
+        codex, claude = await asyncio.gather(
+            self.call({
+                **self.codex_native_route("codex-control"), "protocol_version": 2,
+                "surface_capabilities": {"native_subagents": True, "durable_agent_jobs": True},
+            }),
+            self.call({**claude_route, "session_id": "claude-control"}),
+        )
+        self.assertEqual(
+            ["native_subagent", "native_subagent"],
+            [codex["lane"], claude["lane"]],
+        )
+
     async def test_route_feedback_is_idempotent_and_releases_reservation(self) -> None:
         self.supervisor.routing_mode = "codex_canary"
         decision = await self.call(self.codex_native_route("session-feedback"))
@@ -2227,10 +2617,13 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ValueError, "read-only Codex"):
                 self.supervisor.submit(codex)
 
-            claude = self.spec("review")
-            claude.update(provider="claude", model="opus", max_turns=2)
-            with self.assertRaisesRegex(ValueError, "turn ceiling"):
-                self.supervisor.submit(claude)
+    async def test_retired_turn_ceiling_is_ignored_for_legacy_submissions(self) -> None:
+        spec = self.spec("review")
+        spec.update(provider="claude", model="opus", max_turns=2)
+
+        submitted = self.supervisor.submit(spec)
+
+        self.assertEqual(0, submitted["max_turns"])
 
     async def test_submit_persists_execution_backend(self) -> None:
         with patch.dict(os.environ, {"AGENT_JOB_EXECUTION_BACKEND": "cao"}):

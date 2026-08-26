@@ -31,12 +31,14 @@ class AgentRoutingPolicyTest(unittest.TestCase):
             "surface_capabilities": {},
         }
 
-    def test_current_review_table_is_centralized(self) -> None:
+    def test_cross_family_routing_table_is_centralized(self) -> None:
         cases = {
             ("codex", "code_review"): ("kimi", "claude"),
             ("codex", "planning"): ("claude", "kimi"),
             ("hermes", "code_review"): ("kimi", "claude"),
-            ("claude", "planning"): ("codex", "kimi"),
+            ("hermes", "implementation"): ("codex", "kimi"),
+            ("claude", "code_review"): ("codex", "kimi"),
+            ("claude", "implementation"): ("codex", "kimi"),
             ("kimi", "code_review"): ("codex", "claude"),
             ("kimi", "research"): ("claude", "codex"),
         }
@@ -50,10 +52,16 @@ class AgentRoutingPolicyTest(unittest.TestCase):
                 self.assertFalse(decision["enforced"])
                 self.assertEqual("shadow", decision["mode"])
 
-    def test_current_policy_does_not_automatically_delegate_implementation(self) -> None:
-        decision = decide(self.intent("codex", "implementation"))
-        self.assertEqual("direct", decision["lane"])
-        self.assertEqual("", decision["provider"])
+    def test_primary_domain_stays_direct_without_a_native_lane(self) -> None:
+        for caller, capability in (
+            ("codex", "implementation"),
+            ("claude", "design"),
+            ("kimi", "tests"),
+        ):
+            with self.subTest(caller=caller, capability=capability):
+                decision = decide(self.intent(caller, capability))
+                self.assertEqual("direct", decision["lane"])
+                self.assertEqual("", decision["provider"])
 
     def test_explicit_provider_wins_without_recursive_delegation(self) -> None:
         intent = self.intent("codex", "planning")
@@ -195,7 +203,7 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         self.assertEqual("opus", review_decision["fallback_model_alias"])
 
     def test_v2_degrades_when_surface_cannot_execute_selected_lane(self) -> None:
-        intent = self.intent("claude", "planning")
+        intent = self.intent("claude", "implementation")
         intent.update(protocol_version=2, surface_capabilities={})
 
         decision = decide(intent, "surface_canary")
@@ -206,7 +214,7 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         self.assertEqual("", decision["provider"])
 
     def test_surface_canary_enforces_v2_durable_route(self) -> None:
-        intent = self.intent("claude", "planning")
+        intent = self.intent("claude", "implementation")
         intent.update(
             protocol_version=2,
             surface_capabilities={"durable_agent_jobs": True},
@@ -219,10 +227,11 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         self.assertEqual("agent_jobs", decision["lane"])
         self.assertEqual("codex", decision["provider"])
 
-    def test_surface_matrix_rejects_unsupported_native_claim(self) -> None:
-        intent = self.intent("claude", "implementation")
+    def test_claude_code_routes_bounded_design_to_native_worker(self) -> None:
+        intent = self.intent("claude", "design")
         intent.update(
-            protocol_version=2, complexity="focused", durability="session",
+            protocol_version=2, complexity="focused", scope="single_module",
+            duration="short", durability="session",
             session_id="task", surface_capabilities={
                 "durable_agent_jobs": True, "native_subagents": True,
             },
@@ -230,11 +239,44 @@ class AgentRoutingPolicyTest(unittest.TestCase):
 
         decision = decide(intent, "surface_canary")
 
+        self.assertTrue(decision["effective_surface_capabilities"]["native_subagents"])
+        self.assertEqual("native_subagent", decision["lane"])
+        self.assertEqual("claude", decision["provider"])
+        self.assertEqual("sonnet", decision["model_alias"])
+        self.assertEqual("general-purpose", decision["worker_profile"])
+
+    def test_claude_desktop_rejects_unsupported_native_claim(self) -> None:
+        intent = self.intent("claude", "design")
+        intent.update(
+            protocol_version=2, surface="claude-desktop", complexity="focused",
+            durability="session", session_id="task",
+            surface_capabilities={"native_subagents": True},
+        )
+
+        decision = decide(intent, "surface_canary")
+
         self.assertFalse(decision["effective_surface_capabilities"]["native_subagents"])
         self.assertEqual("direct", decision["lane"])
 
+    def test_kimi_code_routes_bounded_engineering_to_native_worker(self) -> None:
+        intent = self.intent("kimi", "implementation")
+        intent.update(
+            protocol_version=2, complexity="focused", scope="single_module",
+            duration="short", durability="session", session_id="task",
+            surface_capabilities={
+                "durable_agent_jobs": True, "native_subagents": True,
+            },
+        )
+
+        decision = decide(intent, "surface_canary")
+
+        self.assertEqual("native_subagent", decision["lane"])
+        self.assertEqual("kimi", decision["provider"])
+        self.assertEqual("kimi-code/kimi-for-coding-highspeed", decision["model_alias"])
+        self.assertEqual("general-purpose", decision["worker_profile"])
+
     def test_surface_must_belong_to_caller(self) -> None:
-        intent = self.intent("claude", "planning")
+        intent = self.intent("claude", "implementation")
         intent["surface"] = "codex"
         with self.assertRaisesRegex(ValueError, "does not belong"):
             decide(intent)
@@ -250,7 +292,7 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         self.assertEqual("shadow", decision["mode"])
 
     def test_v2_codex_target_uses_concrete_model(self) -> None:
-        intent = self.intent("claude", "planning")
+        intent = self.intent("claude", "code_review")
         intent.update(
             protocol_version=2,
             surface_capabilities={"durable_agent_jobs": True},
@@ -258,6 +300,27 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         decision = decide(intent, "surface_canary")
         self.assertEqual("codex", decision["provider"])
         self.assertEqual("gpt-5.6-sol", decision["model_alias"])
+
+    def test_code_review_remains_cross_family_for_every_coding_surface(self) -> None:
+        for caller, expected_provider in (
+            ("codex", "kimi"), ("claude", "codex"), ("kimi", "codex")
+        ):
+            with self.subTest(caller=caller):
+                intent = self.intent(caller, "code_review")
+                intent.update(
+                    protocol_version=2,
+                    complexity="focused",
+                    risk="low",
+                    duration="short",
+                    durability="session",
+                    session_id=f"{caller}-review",
+                    surface_capabilities={
+                        "durable_agent_jobs": True, "native_subagents": True,
+                    },
+                )
+                decision = decide(intent, "surface_canary")
+                self.assertEqual("agent_jobs", decision["lane"])
+                self.assertEqual(expected_provider, decision["provider"])
 
     def test_recursive_direct_route_has_no_model_alias(self) -> None:
         intent = self.intent("codex", "planning")

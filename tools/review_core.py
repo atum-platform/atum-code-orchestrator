@@ -296,6 +296,8 @@ def job_submit(
     label: str = "",
     owner: str = "",
 ) -> dict[str, Any]:
+    # Accepted for one compatibility window; run deadlines are the only ceiling.
+    del max_turns
     cwd = safe_workdir(workdir)
     prompt = build_review_prompt(
         provider, instructions, workdir=cwd, context_git_diff=context_git_diff,
@@ -307,7 +309,7 @@ def job_submit(
         provider=provider, model=model, mode="readonly", workdir=str(cwd), prompt=prompt,
         queue_timeout_seconds=queue_timeout_seconds,
         run_timeout_seconds=(timeout_seconds if timeout_seconds is not None else run_timeout_seconds),
-        max_turns=max_turns, owner=effective_owner,
+        owner=effective_owner,
         idempotency_key=idempotency_key,
     )
 
