@@ -671,3 +671,11 @@
   block behind its updater long enough to fail capability detection. Official
   `.kimi-code/bin/kimi` installs are now identified without spawning the CLI;
   nonstandard binary paths use the faster `--version` contract as fallback.
+# 2026-08-28 - Adopt CI lifecycle policy v1
+
+- Adopted `atum-platform/atum-code` policy `ci-policy/v1` for the bounded
+  Python verification workflow.
+- Superseded pull-request runs cancel within the workflow, while `main` runs
+  remain serialized. Explicit PR transitions include draft/ready changes.
+- Pinned GitHub Actions dependencies and added weekly Actions Dependabot.
+- Verify with `actionlint`, local unit tests, and exact-head hosted checks.
