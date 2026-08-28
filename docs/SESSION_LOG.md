@@ -679,3 +679,13 @@
   remain serialized. Explicit PR transitions include draft/ready changes.
 - Pinned GitHub Actions dependencies and added weekly Actions Dependabot.
 - Verify with `actionlint`, local unit tests, and exact-head hosted checks.
+
+## 2026-08-28 - Reconcile GitHub Actions v7 Dependabot stack
+
+- Merged the pinned `actions/checkout` v7.0.1 update first.
+- Refreshed the adjacent `actions/setup-python` v7.0.0 branch onto that new
+  `main`; Dependabot's automatic branch rewrite preserved both pinned SHA
+  updates and removed the earlier same-line conflict.
+- The workflow continues to use GitHub-hosted Ubuntu and Python 3.11 with the
+  same permissions and test commands. YAML parsing, Python compilation, and all
+  293 unit tests pass; fresh exact-head hosted CI remains the merge gate.
