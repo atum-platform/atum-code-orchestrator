@@ -689,3 +689,15 @@
 - The workflow continues to use GitHub-hosted Ubuntu and Python 3.11 with the
   same permissions and test commands. YAML parsing, Python compilation, and all
   293 unit tests pass; fresh exact-head hosted CI remains the merge gate.
+
+## 2026-08-30 - Public-release metadata readiness
+
+- Audited the repository's full Git history, workflows, settings, issues, and
+  comments for credentials, private runtime state, and unsafe public triggers.
+  No high-confidence secrets or public-triggered privileged execution paths
+  were found.
+- Corrected the clone URL to the repository's current `atum-platform` owner.
+- Preserved the upstream Hermes Agent copyright and added the copyright notice
+  for the Atum modifications and original components under the same MIT terms.
+- Verified the documentation-only change with the complete unit-test suite and
+  exact-head GitHub-hosted CI before changing repository visibility.

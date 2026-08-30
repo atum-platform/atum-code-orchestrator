@@ -26,7 +26,7 @@ repoints Hermes profiles.
 Clone to the stable path on each Mac, then bootstrap locally:
 
 ```bash
-git clone https://github.com/anka-ventures-labs/atum-code-orchestrator.git \
+git clone https://github.com/atum-platform/atum-code-orchestrator.git \
   ~/.local/share/atum-agent-jobs
 cd ~/.local/share/atum-agent-jobs
 python3 bootstrap.py
@@ -75,3 +75,4 @@ For an existing installation, follow the [migration and rollback runbook](docs/M
 instead of restarting a supervisor with active jobs.
 
 The extracted supervisor code retains the upstream Hermes Agent MIT license.
+See [LICENSE](LICENSE) for the upstream and Atum copyright notices.
