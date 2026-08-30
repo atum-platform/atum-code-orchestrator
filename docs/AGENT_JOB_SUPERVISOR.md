@@ -154,10 +154,11 @@ authentication boundary against another process running as the same user.
 limit shared by all coding surfaces (default 3). The legacy
 `AGENT_JOB_CODEX_NATIVE_RESERVATIONS` name remains an accepted fallback during
 the compatibility window. `AGENT_JOB_ROUTE_RESERVATION_SECONDS` controls TTL
-(default 900, bounded to 30-86400). The client installer declares a `spark-worker`
-Codex role backed by `clients/codex/spark-worker.toml`; Claude Code and Kimi Code
+(default 900, bounded to 30-86400). The client installer declares a `codex-worker`
+Codex role backed by `clients/codex/codex-worker.toml`; Claude Code and Kimi Code
 use their native general-purpose worker interfaces. Focused native routing uses
-Spark for Codex, Sonnet for Claude, and high-speed K2.7 for Kimi. The installer
+GPT-5.6 Terra with high reasoning for Codex, Sonnet for Claude, and high-speed
+K2.7 for Kimi. The installer
 sets the stable Codex `agents.max_threads` machine ceiling to three when the user
 has not already chosen one. Feedback is idempotent, reconciliation is
 session-scoped, and status reports
@@ -166,6 +167,11 @@ or reconciled decisions without feedback intentionally lower that rate because
 it measures whether callers returned, not transport delivery reliability. Both
 jobs and inactive route decisions use the configured retention window; active
 reservations are retained until feedback, reconciliation, or TTL expiry.
+
+The Codex route returns both the Terra model alias and the `codex-worker`
+profile. The profile carries `model_reasoning_effort = "high"`; cooperating
+Codex callers must spawn the returned profile rather than reconstructing a
+worker from the model alias alone.
 
 ### Quota broker
 

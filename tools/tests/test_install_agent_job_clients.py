@@ -213,9 +213,55 @@ class ClientInstallerTest(unittest.TestCase):
         self.assertIn("startup_timeout_sec = 30.0", result)
         self.assertIn("tool_timeout_sec = 120.0", result)
         self.assertIn("max_threads = 3", result)
-        self.assertIn("[agents.spark-worker]", result)
-        self.assertIn(str(installer.CODEX_SPARK_WORKER), result)
+        self.assertIn("[agents.codex-worker]", result)
+        self.assertIn(str(installer.CODEX_WORKER), result)
         self.assertFalse(installer.merge_codex_config(path, "second", True, self.root))
+
+    def test_codex_toml_merge_migrates_installer_owned_spark_worker(self) -> None:
+        path = self.root / "config.toml"
+        path.write_text(
+            '[agents.spark-worker]\n'
+            f'description = "{installer.LEGACY_CODEX_SPARK_DESCRIPTION}"\n'
+            'config_file = "/relocated/clients/codex/spark-worker.toml"\n',
+            encoding="utf-8",
+        )
+        self.assertTrue(installer.merge_codex_config(path, "test", True, self.root))
+        result = path.read_text(encoding="utf-8")
+        self.assertNotIn("[agents.spark-worker]", result)
+        self.assertIn("[agents.codex-worker]", result)
+        self.assertFalse(installer.merge_codex_config(path, "second", True, self.root))
+
+    def test_codex_toml_merge_preserves_custom_spark_worker(self) -> None:
+        path = self.root / "config.toml"
+        path.write_text(
+            '[agents.spark-worker]\nconfig_file = "/custom/worker.toml"\n',
+            encoding="utf-8",
+        )
+        self.assertTrue(installer.merge_codex_config(path, "test", True, self.root))
+        result = path.read_text(encoding="utf-8")
+        self.assertIn("[agents.spark-worker]", result)
+        self.assertIn('/custom/worker.toml', result)
+        self.assertIn("[agents.codex-worker]", result)
+
+    def test_codex_toml_merge_preserves_spark_worker_with_custom_keys(self) -> None:
+        path = self.root / "config.toml"
+        path.write_text(
+            '[agents.spark-worker]\n'
+            f'description = "{installer.LEGACY_CODEX_SPARK_DESCRIPTION}"\n'
+            f'config_file = "{installer.LEGACY_CODEX_SPARK_WORKER}"\n'
+            'custom_setting = "keep"\n',
+            encoding="utf-8",
+        )
+        self.assertTrue(installer.merge_codex_config(path, "test", True, self.root))
+        result = path.read_text(encoding="utf-8")
+        self.assertIn("[agents.spark-worker]", result)
+        self.assertIn('custom_setting = "keep"', result)
+        self.assertIn("[agents.codex-worker]", result)
+
+    def test_codex_worker_profile_pins_terra_high_reasoning(self) -> None:
+        profile = installer.CODEX_WORKER.read_text(encoding="utf-8")
+        self.assertIn('model = "gpt-5.6-terra"', profile)
+        self.assertIn('model_reasoning_effort = "high"', profile)
 
     def test_codex_toml_merge_preserves_existing_timeouts_and_env(self) -> None:
         path = self.root / "config.toml"

@@ -19,8 +19,12 @@ deployment.
 All coding surfaces receive a separate installer-owned routing block. This block
 may be updated without replacing customized provider guidance. The installer
 also migrates its exact previous Claude default while preserving any customized
-managed section. It adds the `spark-worker` role and a three-thread Codex native
-machine ceiling only when no ceiling is already configured.
+managed section. It adds the `codex-worker` role and a three-thread Codex native
+machine ceiling only when no ceiling is already configured. A legacy
+`spark-worker` entry is removed during upgrade only when its description,
+configuration path shape, and keys match the installer-owned role. Relocated
+installer-owned entries are recognized; entries with custom keys or values are
+preserved.
 
 The shared native reservation setting is `AGENT_JOB_NATIVE_RESERVATIONS`. The
 legacy `AGENT_JOB_CODEX_NATIVE_RESERVATIONS` name remains a fallback for one

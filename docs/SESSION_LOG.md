@@ -701,3 +701,23 @@
   for the Atum modifications and original components under the same MIT terms.
 - Verified the documentation-only change with the complete unit-test suite and
   exact-head GitHub-hosted CI before changing repository visibility.
+
+## 2026-08-30 - Replace the Codex Spark native lane
+
+- Confirmed that Spark was used only for focused same-family Codex native
+  workers; Claude Code used Sonnet, Kimi Code used high-speed K2.7, and neither
+  Claude Desktop nor Hermes exposed a native-subagent lane.
+- Replaced the installer-managed `spark-worker` profile with `codex-worker`,
+  backed by GPT-5.6 Terra at high reasoning. This preserves bounded parallel
+  Codex work without assigning it to the less capable Spark model.
+- Added a conservative installer migration that removes only the exact
+  installer-owned legacy Spark entry and preserves any user-customized role
+  with the same name. The migration recognizes a relocated stable checkout and
+  preserves roles containing custom keys.
+- Bumped the routing and capability-matrix version to `2026-08-30.1`; updated
+  routing tests, installer tests, operational documentation, and the shared
+  skill contract for deployment to both Macs.
+- Verification: all 71 focused routing, quota-broker, and installer tests pass.
+  The 297-test local suite produced one unrelated cleanup-race failure under
+  load; that exact supervisor test passed immediately in isolation. Exact-head
+  hosted CI remains the merge gate.
