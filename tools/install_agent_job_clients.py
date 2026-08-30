@@ -19,7 +19,11 @@ from agent_job_policy import allowed_roots_value
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SERVER_PATH = REPO_ROOT / "tools" / "agent_jobs_server.py"
 SKILL_SOURCE = REPO_ROOT / "skills" / "agent-jobs"
-CODEX_SPARK_WORKER = REPO_ROOT / "clients" / "codex" / "spark-worker.toml"
+CODEX_WORKER = REPO_ROOT / "clients" / "codex" / "codex-worker.toml"
+LEGACY_CODEX_SPARK_WORKER = REPO_ROOT / "clients" / "codex" / "spark-worker.toml"
+LEGACY_CODEX_SPARK_DESCRIPTION = (
+    "Fast Codex worker for one focused implementation, exploration, or test scope."
+)
 PYTHON_PATH = REPO_ROOT / ".venv" / "bin" / "python"
 GUIDANCE_START = "<!-- AGENT_JOBS_GUIDANCE_START -->"
 GUIDANCE_END = "<!-- AGENT_JOBS_GUIDANCE_END -->"
@@ -248,12 +252,36 @@ def merge_codex_config(path: Path, suffix: str, apply: bool, home: Path | None =
             features.pop("multi_agent_v2")
     if "max_threads" not in agents:
         agents["max_threads"] = misplaced_limit if misplaced_limit is not None else 3
-    role = agents.get("spark-worker") or tomlkit.table()
-    role["description"] = (
-        "Fast Codex worker for one focused implementation, exploration, or test scope."
+    legacy_role = agents.get("spark-worker")
+    legacy_keys = set(legacy_role.keys()) if hasattr(legacy_role, "keys") else set()
+    legacy_config = legacy_role.get("config_file") if hasattr(legacy_role, "get") else ""
+    legacy_description = (
+        legacy_role.get("description") if hasattr(legacy_role, "get") else ""
     )
-    role["config_file"] = str(CODEX_SPARK_WORKER)
-    agents["spark-worker"] = role
+    legacy_path = Path(str(legacy_config)) if legacy_config else None
+    legacy_path_matches = bool(
+        legacy_path
+        and (
+            legacy_path == LEGACY_CODEX_SPARK_WORKER
+            or (
+                legacy_path.name == "spark-worker.toml"
+                and legacy_path.parent.name == "codex"
+                and legacy_path.parent.parent.name == "clients"
+            )
+        )
+    )
+    if (
+        legacy_description == LEGACY_CODEX_SPARK_DESCRIPTION
+        and legacy_path_matches
+        and legacy_keys <= {"description", "config_file"}
+    ):
+        agents.pop("spark-worker")
+    role = agents.get("codex-worker") or tomlkit.table()
+    role["description"] = (
+        "Strong Codex worker for one focused implementation, exploration, or test scope."
+    )
+    role["config_file"] = str(CODEX_WORKER)
+    agents["codex-worker"] = role
     updated = tomlkit.dumps(document)
     if managed_current == desired and has_timeouts and updated == original:
         return False
@@ -383,7 +411,7 @@ def _operation(name: str, path: Path, suffix: str, apply: bool, home: Path) -> b
 
 
 def _validate_runtime() -> None:
-    for path in (PYTHON_PATH, SERVER_PATH, SKILL_SOURCE / "SKILL.md"):
+    for path in (PYTHON_PATH, SERVER_PATH, SKILL_SOURCE / "SKILL.md", CODEX_WORKER):
         if not path.is_file():
             raise FileNotFoundError(f"Required agent-jobs runtime path is missing: {path}")
 

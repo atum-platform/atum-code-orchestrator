@@ -7,8 +7,8 @@ from typing import Any
 
 PROTOCOL_VERSION = 2
 SUPPORTED_PROTOCOL_VERSIONS = {1, 2}
-POLICY_VERSION = "2026-08-15.1"
-CAPABILITY_MATRIX_VERSION = "2026-08-15.1"
+POLICY_VERSION = "2026-08-30.1"
+CAPABILITY_MATRIX_VERSION = "2026-08-30.1"
 ROUTING_MODES = {"shadow", "codex_canary", "surface_canary"}
 
 PROVIDERS = {"codex", "claude", "kimi", "hermes"}
@@ -40,7 +40,7 @@ PROVIDER_CAPABILITY_MATRIX = {
     "codex": {
         "deep_model": "gpt-5.6-sol",
         "standard_model": "gpt-5.6-sol",
-        "fast_model": "gpt-5.3-codex-spark",
+        "fast_model": "gpt-5.6-terra",
         "strengths": ["implementation", "tests", "exploration", "code_review"],
     },
     "claude": {
@@ -83,7 +83,7 @@ NATIVE_CAPABILITIES = {
     "hermes": set(),
 }
 NATIVE_WORKER_PROFILES = {
-    "codex": "spark-worker",
+    "codex": "codex-worker",
     "claude": "general-purpose",
     "kimi": "general-purpose",
 }

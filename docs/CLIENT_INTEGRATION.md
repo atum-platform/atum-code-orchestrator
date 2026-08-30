@@ -127,8 +127,9 @@ research; Kimi native lanes cover implementation, exploration, and tests. Work
 outside the caller family's primary domain routes cross-family, and code review
 always routes cross-family. V2 selects Opus
 for Claude's deep/review/thinking work and K3 for Kimi review or standard/deep
-work. Codex targets use concrete GPT-5.6 Sol, with Spark reserved for focused
-native work. Focused Claude native work uses Sonnet and focused Kimi native work
+work. Codex targets use concrete GPT-5.6 Sol, with GPT-5.6 Terra at high
+reasoning reserved for focused native work. Focused Claude native work uses
+Sonnet and focused Kimi native work
 uses high-speed K2.7; Fable remains explicit-only.
 
 Native admission and persistence occur in one SQLite `BEGIN IMMEDIATE`

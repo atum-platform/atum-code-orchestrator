@@ -89,7 +89,8 @@ and verify its result, then call `route_feedback` once with `completed`, `failed
 `abandoned`, `escalated`, or `not_started`. Identical feedback retries are safe.
 On task resume, call `route_reconcile` with that session's decision IDs that are
 still running; omitted active reservations are released. Focused native routes
-use Spark for Codex, Sonnet for Claude, and high-speed K2.7 for Kimi. Capacity
+use Terra with high reasoning for Codex, Sonnet for Claude, and high-speed K2.7
+for Kimi. Capacity
 exhaustion returns `direct`, so the primary continues the work itself.
 
 1. Inspect the exact project and define one checkpoint, risk, and expected output.

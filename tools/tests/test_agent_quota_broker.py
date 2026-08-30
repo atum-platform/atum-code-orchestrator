@@ -216,7 +216,7 @@ class AgentQuotaBrokerTest(unittest.TestCase):
     def test_exhausted_native_worker_degrades_to_direct(self) -> None:
         decision = {
             "lane": "native_subagent", "provider": "codex",
-            "model_alias": "gpt-5.3-codex-spark", "worker_profile": "spark-worker",
+            "model_alias": "gpt-5.6-terra", "worker_profile": "codex-worker",
             "fallback_provider": "", "fallback_model_alias": "",
             "reasons": ["native"],
         }
