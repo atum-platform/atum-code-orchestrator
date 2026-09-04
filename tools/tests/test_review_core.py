@@ -81,7 +81,7 @@ class ReviewCoreTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("readonly", kwargs["mode"])
         self.assertEqual("checkpoint-kimi", kwargs["idempotency_key"])
         self.assertEqual(900, kwargs["queue_timeout_seconds"])
-        self.assertEqual(2700, kwargs["run_timeout_seconds"])
+        self.assertEqual(5400, kwargs["run_timeout_seconds"])
         self.assertNotIn("implement_capability", kwargs)
 
     async def test_mcp_surface_has_only_guarded_generic_tools(self) -> None:
