@@ -1,5 +1,20 @@
 # Session Log
 
+## 2026-09-04 - Extend durable review execution window
+
+- Raised the default provider run deadline from 45 to 90 minutes across the
+  supervisor, MCP, guarded CLI, review core, and delegation entry points for
+  Claude, Kimi, and Codex jobs. Explicit shorter per-job overrides remain valid.
+- Directed callers to retain that shared default for substantive reviews and to
+  shorten it only for genuinely bounded work with a concrete operational reason.
+- Kept the 15-minute queue budget and five-minute soft-stall observation
+  unchanged. Semantic and process liveness continue to mark quiet jobs as
+  `possibly_stalled` without terminating them; cancellation or the run deadline
+  remains the terminal backstop.
+- Motivation: a live Kimi assembly review reached the former 2700-second ceiling
+  while still emitting progress, losing the result after the inference cost had
+  already been incurred.
+
 ## 2026-08-24 - Cross-surface client parity
 
 - Added Claude Code's official user-scope `~/.claude.json` to the transactional

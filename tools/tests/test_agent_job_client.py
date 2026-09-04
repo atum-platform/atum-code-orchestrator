@@ -24,7 +24,7 @@ class AgentJobClientParserTest(unittest.TestCase):
             "--workdir", "/tmp", "--prompt", "review",
         ]))
         self.assertEqual(900, args["queue_timeout_seconds"])
-        self.assertEqual(2700, args["run_timeout_seconds"])
+        self.assertEqual(5400, args["run_timeout_seconds"])
         self.assertIsNone(args["timeout_seconds"])
 
     def test_event_cursor_is_omitted_for_legacy_reads(self) -> None:

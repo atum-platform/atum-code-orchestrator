@@ -124,8 +124,11 @@ material. Context files must be inside `workdir`; the guarded interface redacts
 common secret shapes as defense in depth.
 
 Use `queue_timeout_seconds` for capacity waiting and `run_timeout_seconds` as
-the execution backstop. Defaults are 900 and 2700 seconds; queue waiting does
+the execution backstop. Defaults are 900 and 5400 seconds; queue waiting does
 not consume execution time. `timeout_seconds` is a deprecated run-time alias.
+Use the shared 5400-second run default for every provider. Do not lower it for a
+substantive review merely because the result is expected sooner; choose a shorter
+deadline only for a genuinely bounded job with a concrete operational reason.
 Provider turn ceilings are retired from the effective ACO contract. New callers
 do not send `max_turns`; legacy inputs are accepted but ignored. Jobs run until
 their queue/run deadline, cancellation, or

@@ -289,7 +289,7 @@ def job_submit(
     context_text: str = "",
     expected_output: str = "",
     queue_timeout_seconds: int = 900,
-    run_timeout_seconds: int = 2700,
+    run_timeout_seconds: int = 5400,
     timeout_seconds: int | None = None,
     max_turns: int = 0,
     idempotency_key: str = "",

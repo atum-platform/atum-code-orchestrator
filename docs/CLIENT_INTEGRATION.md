@@ -82,8 +82,12 @@ socket reader is sized for that complete JSON request, so prompts larger than th
 former 400 KB ceiling are accepted end to end rather than only by one layer.
 
 `job_submit` accepts independent `queue_timeout_seconds` and
-`run_timeout_seconds`, defaulting to 900 and 2700 seconds. Queue time starts at
+`run_timeout_seconds`, defaulting to 900 and 5400 seconds. Queue time starts at
 durable submission; run time starts only after the provider process launches.
+Clients should retain the 5400-second run default across providers for
+substantive reviews. A shorter explicit deadline is reserved for genuinely
+bounded jobs with a concrete operational reason, not merely an expectation that
+the provider will answer quickly.
 The deprecated `timeout_seconds` parameter remains an alias for the run budget
 for mixed-version callers. Status exposes both budgets, their deadlines, and
 `timeout_semantics`; clients should distinguish `queue_timeout` capacity failure

@@ -67,7 +67,7 @@ only. This standalone repository does not ship those mode-heavy MCP servers.
    delivery. Reads redeliver until that exact owner acknowledges it.
 
 New jobs default to a 15-minute `queue_timeout_seconds` budget measured from
-submission and a 45-minute `run_timeout_seconds` budget measured from provider
+submission and a 90-minute `run_timeout_seconds` budget measured from provider
 launch. Both accept 30 seconds through two hours. The deprecated
 `timeout_seconds` input remains an alias for the run budget. Existing rows that
 predate the split retain their original submit-relative shared deadline and

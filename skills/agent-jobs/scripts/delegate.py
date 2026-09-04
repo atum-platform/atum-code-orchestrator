@@ -32,7 +32,7 @@ def main() -> int:
     parser.add_argument("--workdir", required=True)
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--queue-timeout-seconds", type=int, default=900)
-    parser.add_argument("--run-timeout-seconds", type=int, default=2700)
+    parser.add_argument("--run-timeout-seconds", type=int, default=5400)
     parser.add_argument(
         "--timeout-seconds", type=int,
         help="deprecated alias for --run-timeout-seconds",
