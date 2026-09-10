@@ -51,6 +51,10 @@ MAX_PARTIAL_RESPONSE_BYTES = int(
     os.environ.get("AGENT_JOB_MAX_PARTIAL_RESPONSE_BYTES", str(256 * 1024))
 )
 JOB_RETENTION_SECONDS = int(os.environ.get("AGENT_JOB_RETENTION_SECONDS", str(14 * 24 * 3600)))
+# Shutdown must finish inside the launchd ExitTimeOut, otherwise launchd sends
+# SIGKILL part-way through and the remaining jobs never reach a terminal row.
+# Leaves room for _terminate's own SIGTERM grace, and stays under ExitTimeOut.
+SHUTDOWN_GRACE_SECONDS = float(os.environ.get("AGENT_JOB_SHUTDOWN_GRACE_SECONDS", "15"))
 MIN_TIMEOUT_SECONDS = 30
 MAX_TIMEOUT_SECONDS = 7200
 DEFAULT_QUEUE_TIMEOUT_SECONDS = 15 * 60
@@ -116,6 +120,20 @@ class AlreadyRunning(RuntimeError):
 
 def _now() -> float:
     return time.time()
+
+
+def _lifecycle(event: str, **fields: Any) -> None:
+    """Record one daemon lifecycle line on stderr.
+
+    launchd captures stderr, so these lines are the only durable evidence of why
+    the supervisor started or stopped. A restart used to leave nothing behind at
+    all, which made the 2026-09-04 outage undiagnosable after the fact.
+    """
+    record = {"ts": round(_now(), 3), "pid": os.getpid(), "event": event, **fields}
+    try:
+        print(json.dumps(record, sort_keys=True, default=str), file=sys.stderr, flush=True)
+    except Exception:
+        pass
 
 
 def _queue_deadline(job: dict[str, Any]) -> float:
@@ -922,15 +940,21 @@ class JobStore:
             rows = self.db.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,))
         return [dict(row) for row in rows]
 
-    def reconcile(self) -> list[dict[str, Any]]:
+    def _interrupt_in_flight(self, failure_kind: str, message: str) -> list[dict[str, Any]]:
+        """Give every in-flight job a terminal row in a single commit.
+
+        This is the caller-visible half of restart and shutdown handling, so it
+        stays free of subprocess probes and sleeps: a poller must never find a
+        job still 'running' once the supervisor owning it is gone.
+        """
         interrupted = self.running()
         now = _now()
         self.db.execute(
-            """UPDATE jobs SET status = 'interrupted', failure_kind = 'supervisor_restart',
-               message = 'Supervisor restarted while the job was running', prompt = '', checks_json = '[]',
+            """UPDATE jobs SET status = 'interrupted', failure_kind = ?,
+               message = ?, prompt = '', checks_json = '[]',
                finished_at = ?, updated_at = ?
                WHERE status IN ('launching','running')""",
-            (now, now),
+            (failure_kind, message, now, now),
         )
         self.db.execute(
             """INSERT OR IGNORE INTO deliveries (delivery_id, job_id, owner, created_at)
@@ -940,6 +964,21 @@ class JobStore:
         )
         self.db.commit()
         return interrupted
+
+    def reconcile(self) -> list[dict[str, Any]]:
+        return self._interrupt_in_flight(
+            "supervisor_restart", "Supervisor restarted while the job was running"
+        )
+
+    def interrupt_for_shutdown(self) -> list[dict[str, Any]]:
+        """Mark in-flight jobs terminal before shutdown does anything slow.
+
+        Recorded up front so the rows survive even when the platform kills the
+        process before each job's own handler has run.
+        """
+        return self._interrupt_in_flight(
+            "supervisor_shutdown", "Supervisor stopped while the job was running"
+        )
 
     def inbox(
         self, owner: str, limit: int = 20, ack_delivery_ids: list[str] | None = None
@@ -1953,8 +1992,15 @@ class Supervisor:
                 continue
             await asyncio.sleep(0.25)
 
-    async def _cleanup_interrupted(self) -> None:
-        for job in self.store.reconcile():
+    def _reconcile_interrupted(self) -> list[dict[str, Any]]:
+        """Record the terminal state of jobs a previous supervisor left running.
+
+        Deliberately synchronous and quick. `serve` runs this before binding so
+        no caller can observe a job that is still 'running' with nothing behind
+        it; the orphaned processes themselves are reaped once the socket is up.
+        """
+        jobs = self.store.reconcile()
+        for job in jobs:
             try:
                 self._record_event(job["job_id"], "job_terminal", {
                     "status": "interrupted",
@@ -1965,32 +2011,48 @@ class Supervisor:
                 self._signal_change(job["job_id"])
             finally:
                 self._forget_job_state(job["job_id"])
-            pgid = job.get("pgid")
-            if not pgid:
-                continue
-            pid = int(job.get("pid") or 0)
-            try:
-                process_start = await self._ps_field(pid, "lstart")
-                live_pgid = await self._ps_field(pid, "pgid")
-            except (OSError, ValueError):
-                continue
-            if (
-                not process_start
-                or process_start != str(job.get("process_start") or "")
-                or int(live_pgid or 0) != int(pgid)
-            ):
-                self.store.update(job["job_id"], message="Restart cleanup skipped: process identity did not match")
-                continue
-            try:
-                os.killpg(int(pgid), signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                continue
-            await asyncio.sleep(1)
-            try:
-                os.killpg(int(pgid), 0)
-                os.killpg(int(pgid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+        return jobs
+
+    async def _reap_orphaned_job(self, job: dict[str, Any]) -> None:
+        pgid = job.get("pgid")
+        if not pgid:
+            return
+        pid = int(job.get("pid") or 0)
+        try:
+            process_start = await self._ps_field(pid, "lstart")
+            live_pgid = await self._ps_field(pid, "pgid")
+        except (OSError, ValueError):
+            return
+        if (
+            not process_start
+            or process_start != str(job.get("process_start") or "")
+            or int(live_pgid or 0) != int(pgid)
+        ):
+            self.store.update(job["job_id"], message="Restart cleanup skipped: process identity did not match")
+            return
+        try:
+            os.killpg(int(pgid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            return
+        await asyncio.sleep(1)
+        try:
+            os.killpg(int(pgid), 0)
+            os.killpg(int(pgid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+    async def _reap_orphaned_jobs(self, jobs: list[dict[str, Any]]) -> None:
+        """Kill provider processes a previous supervisor left behind.
+
+        Reaped concurrently: each job costs two `ps` probes plus a one second
+        grace period, which used to be paid serially before the socket existed.
+        """
+        await asyncio.gather(
+            *(self._reap_orphaned_job(job) for job in jobs), return_exceptions=True
+        )
+
+    async def _cleanup_interrupted(self) -> None:
+        await self._reap_orphaned_jobs(self._reconcile_interrupted())
 
     def submit(self, payload: dict[str, Any]) -> dict[str, Any]:
         if int(payload.get("caller_depth") or 0) > 0:
@@ -2469,15 +2531,18 @@ class Supervisor:
         try:
             writer.write((_json(response) + "\n").encode("utf-8"))
             await writer.drain()
-        except (BrokenPipeError, ConnectionResetError):
+        except OSError:
             # MCP and shell callers may abandon a bounded long-poll. The durable
-            # job and retained result remain available to the next request.
+            # job and retained result remain available to the next request. Any
+            # write failure against a gone peer is caught here, not just the
+            # reset and broken-pipe cases: an abandoned connection must never
+            # surface as an unhandled error in the connection callback.
             pass
         finally:
-            writer.close()
             try:
+                writer.close()
                 await writer.wait_closed()
-            except (BrokenPipeError, ConnectionResetError):
+            except OSError:
                 pass
 
     async def serve(self) -> None:
@@ -2487,7 +2552,7 @@ class Supervisor:
             fcntl.flock(self._lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise AlreadyRunning("Another agent job supervisor already owns the state directory") from exc
-        await self._cleanup_interrupted()
+        orphaned = self._reconcile_interrupted()
         self._cleanup_stale_runtime_dirs()
         if self.socket_path.exists():
             self.socket_path.unlink()
@@ -2495,23 +2560,41 @@ class Supervisor:
             self.handle, path=str(self.socket_path), limit=(2 * MAX_PROMPT_BYTES) + 64_000
         )
         os.chmod(self.socket_path, stat.S_IRUSR | stat.S_IWUSR)
+        _lifecycle(
+            "supervisor_started",
+            socket=str(self.socket_path),
+            reconciled_jobs=len(orphaned),
+        )
+        # Reaping costs a grace period per orphan, so it runs behind the bound
+        # socket: the rows it belongs to are already terminal.
+        reaper = asyncio.create_task(self._reap_orphaned_jobs(orphaned))
         scheduler = asyncio.create_task(self._scheduler())
         try:
             async with server:
                 await server.serve_forever()
         finally:
             self._stopping = True
+            in_flight = self.store.interrupt_for_shutdown()
+            _lifecycle("supervisor_stopping", in_flight_jobs=len(in_flight))
+            reaper.cancel()
             scheduler.cancel()
-            await asyncio.gather(scheduler, return_exceptions=True)
+            await asyncio.gather(reaper, scheduler, return_exceptions=True)
             for task in list(self.tasks.values()):
                 task.cancel()
-            await asyncio.gather(*self.tasks.values(), return_exceptions=True)
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*self.tasks.values(), return_exceptions=True),
+                    timeout=SHUTDOWN_GRACE_SECONDS,
+                )
+            except (asyncio.TimeoutError, TimeoutError):
+                _lifecycle("supervisor_shutdown_timeout", grace=SHUTDOWN_GRACE_SECONDS)
             if self.socket_path.exists():
                 self.socket_path.unlink()
             if self._lock_handle is not None:
                 fcntl.flock(self._lock_handle.fileno(), fcntl.LOCK_UN)
                 self._lock_handle.close()
                 self._lock_handle = None
+            _lifecycle("supervisor_stopped")
 
 
 async def _run_supervisor() -> None:
@@ -2539,7 +2622,9 @@ def main() -> int:
     except KeyboardInterrupt:
         return 0
     except AlreadyRunning as exc:
-        print(str(exc), file=sys.stderr)
+        # KeepAlive relaunches this service, so a lock conflict would otherwise
+        # loop silently. One line per attempt makes the holder discoverable.
+        _lifecycle("supervisor_already_running", error=str(exc))
         return 75
     except (RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
