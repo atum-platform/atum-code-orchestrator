@@ -131,6 +131,40 @@ class SupervisorInstallerTest(unittest.TestCase):
         socket_request.assert_not_called()
         run.assert_not_called()
 
+    def _installed_plist(self, temp_dir: str) -> dict[str, object]:
+        root = Path(temp_dir)
+        plist_path = root / "service.plist"
+        with patch.object(installer, "PLIST_PATH", plist_path), \
+             patch.object(installer, "STATE_DIR", root / "state"), \
+             patch.object(installer, "IMPLEMENT_TOKEN_PATH", root / "state" / "implement.token"), \
+             patch.object(installer, "SERVICE_TRANSITION_POLLS", 1), \
+             patch.object(installer, "_socket_request", return_value=None), \
+             patch.object(installer, "_run"):
+            with self.assertRaises(RuntimeError):
+                # Readiness polling needs a live socket; the plist is already
+                # written by the time that check fails.
+                installer.install()
+        with plist_path.open("rb") as handle:
+            return plistlib.load(handle)
+
+    def test_service_restarts_after_a_clean_signal_shutdown(self) -> None:
+        # A SIGTERM'd supervisor exits 0. {"SuccessfulExit": False} told launchd
+        # to leave it down, which is what turned the 2026-09-04 signal into an
+        # outage lasting until a human restarted the service.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            payload = self._installed_plist(temp_dir)
+        self.assertIs(True, payload["KeepAlive"])
+
+    def test_service_exit_timeout_exceeds_supervisor_shutdown_budget(self) -> None:
+        sys.path.insert(0, str(TOOLS_DIR))
+        import agent_job_supervisor  # noqa: PLC0415
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            payload = self._installed_plist(temp_dir)
+        self.assertGreater(
+            int(payload["ExitTimeOut"]), agent_job_supervisor.SHUTDOWN_GRACE_SECONDS
+        )
+
     def test_active_job_check_fails_closed_on_unresponsive_supervisor(self) -> None:
         with patch.object(installer, "_socket_request", return_value=None):
             with self.assertRaisesRegex(RuntimeError, "Cannot verify active jobs"):

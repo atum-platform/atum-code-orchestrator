@@ -201,8 +201,14 @@ def install() -> None:
         "Label": LABEL,
         "ProgramArguments": [sys.executable, str(SUPERVISOR), "serve"],
         "RunAtLoad": True,
-        "KeepAlive": {"SuccessfulExit": False},
-        "ThrottleInterval": 5,
+        # Unconditional: a SIGTERM'd supervisor exits 0, and {"SuccessfulExit":
+        # False} told launchd to leave it down. On 2026-09-04 that turned one
+        # signal into an outage that lasted until somebody restarted it by hand.
+        "KeepAlive": True,
+        "ThrottleInterval": 10,
+        # Graceful shutdown terminates each provider child before exiting. The
+        # 5s default cut that short, so launchd SIGKILLed mid-shutdown.
+        "ExitTimeOut": 30,
         "ProcessType": "Background",
         "Umask": 0o077,
         "EnvironmentVariables": environment,

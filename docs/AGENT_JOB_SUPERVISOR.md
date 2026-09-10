@@ -60,9 +60,13 @@ only. This standalone repository does not ship those mode-heavy MCP servers.
    server-side and wakes without repeated client sockets.
 6. Cancellation sends `SIGTERM` to the process group, waits ten seconds, then
    sends `SIGKILL` if necessary.
-7. On daemon restart, previously running jobs are marked `interrupted`. A process
-   group is terminated only when PID, PGID, process start time, and resolved
-   executable all exactly match the recorded identity.
+7. On daemon restart, previously running jobs are marked `interrupted` before the
+   socket is bound, so no caller can observe a job the daemon no longer owns.
+   Their orphaned process groups are then reaped behind the bound socket, in
+   parallel, because each costs two `ps` probes and a grace period; startup
+   latency no longer scales with the number of interrupted jobs. A process group
+   is terminated only when PID, PGID, process start time, and resolved executable
+   all exactly match the recorded identity.
 8. Every terminal transition with a non-empty owner creates one durable inbox
    delivery. Reads redeliver until that exact owner acknowledges it.
 
@@ -96,6 +100,28 @@ The LaunchAgent label is `com.atum.agent-job-supervisor`. Runtime state is kept
 under `~/.local/state/agent-job-supervisor` with user-only permissions.
 The Hermes cluster uses a different checkout, LaunchAgent label, and state
 directory; ACO installation does not manage it.
+
+### Service restart policy
+
+`KeepAlive` is unconditionally true. A supervisor that is signalled exits zero,
+and the earlier `{"SuccessfulExit": false}` setting told launchd to treat that as
+intentional and leave the service down until somebody restarted it by hand. Any
+change that makes a clean exit mean "stay down" reintroduces the 2026-09-04
+outage, so the installer asserts this in tests.
+
+`ExitTimeOut` is 30 seconds and must stay above the daemon's own
+`AGENT_JOB_SHUTDOWN_GRACE_SECONDS` (15 by default), which bounds how long
+shutdown waits for provider children. Below it, launchd sends SIGKILL part-way
+through shutdown. A lock conflict exits 75 and logs
+`supervisor_already_running`; with `KeepAlive` on, launchd retries it every
+`ThrottleInterval`, which is the intended takeover behaviour when a previous
+instance is still releasing the state directory.
+
+The daemon writes one JSON lifecycle line per start and stop to
+`supervisor.stderr.log` (`supervisor_started` with the reconciled job count,
+`supervisor_stopping`, `supervisor_shutdown_timeout`, `supervisor_stopped`). These
+lines are the only durable evidence of a restart: launchd does not persist
+LaunchAgent exit records at any level the unified log retains.
 
 ## Operations
 
@@ -365,6 +391,17 @@ means the selected provider/backend does not have a semantic response adapter.
 - `failed`: queue timeout, launch error, provider non-zero exit, or run timeout.
 - `cancelled`: caller requested cancellation.
 - `interrupted`: the supervisor stopped or restarted during execution.
+  `failure_kind` distinguishes the two: `supervisor_shutdown` is written by the
+  daemon that owned the job as it stops, `supervisor_restart` by the next daemon
+  for jobs whose owner died without recording anything.
+
+A job's provider process does not survive a daemon restart: it is a child of the
+daemon and is reaped on the way down, or identity-checked and killed by the next
+startup. The durable guarantee is the record, not the process. Every in-flight
+job therefore receives its terminal row in one commit before shutdown does any
+slow work, so a caller polling across a restart always sees an outcome instead of
+a job that no longer exists. Queued jobs are unaffected and run once a daemon is
+back.
 
 The SQLite database contains prompts only while jobs are queued; prompts are
 cleared after provider launch and on every terminal path. Paths and hashes remain

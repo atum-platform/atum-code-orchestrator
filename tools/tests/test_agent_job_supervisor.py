@@ -1855,6 +1855,128 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         await self.call({"action": "cancel", "job_id": submitted["job_id"]})
         await self.wait_for(str(submitted["job_id"]), {"cancelled"})
 
+    async def test_write_failure_to_an_abandoned_caller_is_contained(self) -> None:
+        # A failed response write used to be able to surface as an unhandled
+        # error in the connection callback. Callers abandon bounded long polls
+        # routinely, so every write failure against a gone peer stays contained.
+        class GoneReader:
+            async def readline(self) -> bytes:
+                return json.dumps({"action": "ping"}).encode("utf-8") + b"\n"
+
+        class GoneWriter:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def write(self, data: bytes) -> None:
+                return None
+
+            async def drain(self) -> None:
+                raise OSError(54, "Connection reset by peer")
+
+            def close(self) -> None:
+                self.closed = True
+
+            async def wait_closed(self) -> None:
+                raise OSError(57, "Socket is not connected")
+
+        writer = GoneWriter()
+        await self.supervisor.handle(GoneReader(), writer)
+        self.assertTrue(writer.closed)
+
+    async def test_restart_binds_socket_before_reaping_orphaned_processes(self) -> None:
+        # Reaping costs a grace period per orphan and used to run before the
+        # socket existed, so a restart with jobs in flight made the supervisor
+        # unreachable for as long as the reaping took.
+        spec = self.spec("slow")
+        submitted = await self.call(spec)
+        job_id = str(submitted["job_id"])
+        await self.wait_for(job_id, {"running"})
+        self.server_task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await self.server_task
+        # Restore the row a hard kill would have left behind: terminal recording
+        # never ran, so the job is still 'running' with a live process.
+        self.supervisor.store.update(job_id, status="running", finished_at=None)
+
+        reaping = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocked_reap(jobs: list[dict[str, object]]) -> None:
+            reaping.set()
+            await release.wait()
+
+        with patch.object(self.supervisor, "_reap_orphaned_jobs", blocked_reap):
+            self.server_task = asyncio.create_task(self.supervisor.serve())
+            try:
+                await asyncio.wait_for(reaping.wait(), timeout=5)
+                answer = await asyncio.wait_for(self.call({"action": "ping"}), timeout=5)
+                self.assertEqual(os.getpid(), answer["pid"])
+                # The caller sees an outcome while the reaping is still pending.
+                self.assertEqual("interrupted", self.supervisor.store.get(job_id)["status"])
+            finally:
+                release.set()
+
+    async def test_shutdown_records_terminal_state_for_in_flight_jobs(self) -> None:
+        # A signal shutdown must leave no job in a non-terminal state: a caller
+        # polling across the restart has to see an outcome rather than a job
+        # that the supervisor no longer knows anything about.
+        spec = self.spec("slow")
+        spec["owner"] = "codex:shutdown-test"
+        submitted = await self.call(spec)
+        job_id = str(submitted["job_id"])
+        await self.wait_for(job_id, {"running"})
+
+        self.server_task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await self.server_task
+
+        job = self.supervisor.store.get(job_id)
+        self.assertEqual("interrupted", job["status"])
+        self.assertEqual("supervisor_shutdown", job["failure_kind"])
+        self.assertIsNotNone(job["finished_at"])
+        inbox = self.supervisor.store.inbox("codex:shutdown-test")
+        self.assertEqual([job_id], [item["job_id"] for item in inbox])
+
+    async def test_shutdown_records_terminal_state_before_terminating_children(self) -> None:
+        # The terminal row is committed up front, so it survives even when the
+        # platform kills the process before the per-job handlers finish.
+        spec = self.spec("slow")
+        submitted = await self.call(spec)
+        job_id = str(submitted["job_id"])
+        await self.wait_for(job_id, {"running"})
+        observed: list[str] = []
+        original = self.supervisor._terminate
+
+        async def recording_terminate(proc: object) -> None:
+            observed.append(self.supervisor.store.get(job_id)["status"])
+            await original(proc)
+
+        with patch.object(self.supervisor, "_terminate", recording_terminate):
+            self.server_task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await self.server_task
+
+        self.assertEqual(["interrupted"], observed)
+
+    async def test_shutdown_finishes_within_the_platform_exit_budget(self) -> None:
+        # launchd SIGKILLs the service once ExitTimeOut passes. Shutdown has to
+        # stay inside its own grace period so it is never cut short mid-write.
+        spec = self.spec("slow")
+        submitted = await self.call(spec)
+        await self.wait_for(str(submitted["job_id"]), {"running"})
+
+        async def never_exits(proc: object) -> None:
+            await asyncio.sleep(3600)
+
+        started = time.monotonic()
+        with patch.object(supervisor_module, "SHUTDOWN_GRACE_SECONDS", .5), \
+             patch.object(self.supervisor, "_terminate", never_exits):
+            self.server_task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await self.server_task
+        self.assertLess(time.monotonic() - started, 30)
+        self.assertFalse(self.supervisor.socket_path.exists())
+
     async def test_prune_removes_delivery_with_terminal_job(self) -> None:
         spec = self.spec("complete")
         spec["owner"] = "codex:prune-test"

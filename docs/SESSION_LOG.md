@@ -736,3 +736,34 @@
   The 297-test local suite produced one unrelated cleanup-race failure under
   load; that exact supervisor test passed immediately in isolation. Exact-head
   hosted CI remains the merge gate.
+
+## 2026-09-10 - Supervisor restart availability
+
+- Investigated the 2026-09-04 14:49:54 supervisor stop. The daemon did not
+  crash: job `1b580fc5` carries `interrupted` / `supervisor_shutdown`, a
+  `failure_kind` only the signal-driven shutdown path writes, and no traceback
+  was written that day.
+- The reported symptoms were mostly not defects. Job `ff197c35` was never lost;
+  it stayed queued across the restart and completed with exit code 0. Startup
+  was never slow either: binding over the real database measures 0.454 s.
+- The actual cause was the LaunchAgent. A signalled supervisor exits 0, and
+  `KeepAlive = {"SuccessfulExit": false}` told launchd to leave it down, so one
+  signal became an outage lasting until a manual restart. `KeepAlive` is now
+  unconditionally true, with `ExitTimeOut` 30s above the daemon's own 15s
+  shutdown budget so graceful shutdown is not SIGKILLed part-way through.
+- Shutdown now commits terminal rows for in-flight jobs before doing anything
+  slow, and restart recovery marks jobs `interrupted` before binding while
+  reaping their orphaned process groups behind the bound socket, in parallel.
+- Added daemon lifecycle logging. The supervisor previously recorded nothing
+  across a restart, which is why this incident had to be reconstructed from job
+  rows and file mtimes; launchd does not persist LaunchAgent exit records at a
+  level the unified log retains.
+- Hardened abandoned-caller response writes to `OSError`, covering the older
+  `client_connected_cb` `ConnectionResetError` path regardless of its role here.
+- Full suite passes, 304 tests. Both new restart regressions were confirmed to
+  fail against the previous behaviour, one reproducing the incident's own
+  `[Errno 2] No such file or directory`. Details in
+  `docs/session-logs/2026-09-10-supervisor-restart-availability.md`.
+- Reinstalled the LaunchAgent once the queue drained, then verified recovery by
+  sending the daemon the same `SIGTERM`: it came back in about three seconds,
+  with the stop and start both recorded in `supervisor.stderr.log`.
