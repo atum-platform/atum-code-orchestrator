@@ -1338,11 +1338,28 @@ class Supervisor:
         config_target = home / "config.toml"
         shutil.copyfile(config_source, config_target)
         os.chmod(config_target, 0o600)
+        # Copy, never symlink. Implementation jobs run under a sandbox profile
+        # that permits writes only beneath WORKDIR and RUNTIME_DIR, and the
+        # Kimi CLI takes an OAuth refresh lock inside its own `oauth/` dir the
+        # first time an access token expires (~20 min in). A symlink pointing
+        # back to ~/.kimi-code puts that write outside the allowed set, so the
+        # provider dies with EPERM mid-run. A copy lives in RUNTIME_DIR and is
+        # writable; the cost is that a token refreshed inside the sandbox does
+        # not persist back to the real home, which is correct for a job-scoped
+        # credential anyway.
         for name in ("credentials", "oauth", "device_id"):
             target = source / name
-            link = home / name
-            if target.exists() and not link.exists():
-                link.symlink_to(target, target_is_directory=target.is_dir())
+            staged = home / name
+            if not target.exists() or staged.exists():
+                continue
+            if target.is_dir():
+                shutil.copytree(target, staged, symlinks=False)
+                os.chmod(staged, 0o700)
+                for child in staged.rglob("*"):
+                    os.chmod(child, 0o700 if child.is_dir() else 0o600)
+            else:
+                shutil.copyfile(target, staged)
+                os.chmod(staged, 0o600)
         checks = json.loads(str(job.get("checks_json") or "[]"))
         mcp_source = (
             self._prepare_check_mcp(runtime, job)

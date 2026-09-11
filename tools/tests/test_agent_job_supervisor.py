@@ -148,6 +148,50 @@ class WorkspaceConfinementTest(unittest.TestCase):
             self.assertIsNotNone(process.returncode)
             supervisor.store.db.close()
 
+    def test_modern_kimi_runtime_stages_writable_credential_copies(self) -> None:
+        # Kimi takes its OAuth refresh lock inside `oauth/` about twenty minutes
+        # into a job. Symlinks back to ~/.kimi-code put that write outside the
+        # implementation sandbox, so the provider died with EPERM mid-run. Every
+        # credential is staged as a private copy inside the job runtime instead.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            source = root / "home" / ".kimi-code"
+            (source / "oauth").mkdir(parents=True)
+            (source / "config.toml").write_text("[kimi]\n", encoding="utf-8")
+            (source / "credentials").write_text("token\n", encoding="utf-8")
+            (source / "oauth" / "kimi-code.json").write_text("{}\n", encoding="utf-8")
+            (source / "device_id").write_text("device\n", encoding="utf-8")
+            state = root / "state"
+            state.mkdir()
+            supervisor = Supervisor(
+                state_dir=state,
+                socket_path=state / "supervisor.sock",
+                db_path=state / "jobs.sqlite3",
+                log_dir=state / "logs",
+            )
+            try:
+                runtime = supervisor._job_runtime_dir("job")
+                runtime.mkdir(mode=0o700)
+                with patch.dict(os.environ, {"HOME": str(root / "home")}):
+                    home, _ = supervisor._prepare_modern_kimi_runtime(
+                        runtime, {"mode": "implement", "checks_json": "[]"}
+                    )
+
+                for name in ("credentials", "oauth", "device_id"):
+                    staged = home / name
+                    self.assertFalse(staged.is_symlink(), name)
+                    self.assertTrue(staged.resolve().is_relative_to(runtime), name)
+                self.assertEqual(0o700, stat.S_IMODE((home / "oauth").stat().st_mode))
+                self.assertEqual(
+                    0o600, stat.S_IMODE((home / "oauth" / "kimi-code.json").stat().st_mode)
+                )
+                self.assertEqual(0o600, stat.S_IMODE((home / "credentials").stat().st_mode))
+                # The refresh lock lands in the staged copy, never in the source.
+                (home / "oauth" / "kimi-code.lock").write_text("", encoding="utf-8")
+                self.assertFalse((source / "oauth" / "kimi-code.lock").exists())
+            finally:
+                supervisor.store.db.close()
+
     def test_runtime_base_rejects_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
