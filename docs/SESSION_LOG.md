@@ -767,3 +767,22 @@
 - Reinstalled the LaunchAgent once the queue drained, then verified recovery by
   sending the daemon the same `SIGTERM`: it came back in about three seconds,
   with the stop and start both recorded in `supervisor.stderr.log`.
+
+## 2026-09-11 - Stage Kimi credentials as copies
+
+- Kimi implement job `2782f1c3` failed at 21.0 minutes with
+  `Unable to prepare OAuth refresh lock for "kimi-code": EPERM`. The current
+  Kimi CLI takes its refresh lock inside `oauth/` when the access token first
+  expires, and the supervisor had symlinked that directory back to
+  `~/.kimi-code`, outside the implementation sandbox.
+- `credentials`, `oauth`, and `device_id` are now staged into the per-job
+  `KIMI_CODE_HOME` as private copies. The change was made directly in the
+  deployed checkout on 2026-09-10 and never reached `main`, so any deployment
+  from `main` would have reintroduced the failure; this entry records it.
+- Since the daemon loaded it, every Kimi implement job has completed, including
+  three that ran past the refresh point (21.1, 29.3, and 43.5 minutes).
+- Added a regression test that fails against the symlink version. Full suite
+  passes, 305 tests.
+- A token refreshed inside a job is not written back to `~/.kimi-code`. If Kimi
+  rotates refresh tokens on use, the durable login would need a manual re-login;
+  that has not been observed.

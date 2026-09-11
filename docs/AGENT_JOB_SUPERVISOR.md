@@ -327,9 +327,20 @@ implementation until it can provide the same enforceable contract.
 
 Kimi implementation jobs set `KIMI_SHARE_DIR` to a disposable directory under
 the per-job runtime so logs and sessions do not require writes to `~/.kimi`.
-The real config and credentials remain readable for subscription authentication
-but are not writable through the sandbox; token refresh that requires durable
-credential rotation therefore fails closed and must be repaired outside the job.
+For the legacy CLI, the real config and credentials remain readable for
+subscription authentication but are not writable through the sandbox; token
+refresh that requires durable credential rotation therefore fails closed and
+must be repaired outside the job.
+
+The current CLI instead receives `credentials`, `oauth`, and `device_id` in its
+per-job `KIMI_CODE_HOME` as private copies (`0600` files, `0700` directories),
+never symlinks. It takes an OAuth refresh lock inside `oauth/` when the access
+token first expires, roughly twenty minutes into a job. Through a symlink that
+write lands in `~/.kimi-code`, outside the sandbox, and the provider dies with
+`EPERM`. Against copies the refresh succeeds inside the runtime and is discarded
+with it: a refreshed token is never written back to `~/.kimi-code`. Should Kimi
+start rotating refresh tokens on use, the durable login would be left holding a
+revoked token and would need a manual re-login.
 
 This checkpoint reduces delegated write blast radius; it is not a complete
 security boundary. A provider still has network access for inference and can
