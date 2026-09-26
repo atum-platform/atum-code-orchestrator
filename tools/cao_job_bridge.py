@@ -16,7 +16,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
-PROVIDERS = {"claude": "claude_code", "kimi": "kimi_cli", "codex": "codex"}
+PROVIDERS = {"claude": "claude_code", "codex": "codex"}
 TERMINAL = {"completed", "error"}
 POLL_RETRIES = 5
 MAX_REQUEST_TIMEOUT = 8.0

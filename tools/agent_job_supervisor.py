@@ -65,25 +65,6 @@ IMPLEMENT_TOKEN_PATH = Path(
     os.environ.get("AGENT_JOB_IMPLEMENT_TOKEN_FILE", str(STATE_DIR / "implement.token"))
 ).expanduser()
 MODEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
-KIMI_DEFAULT_MODEL = "kimi-code/k3"
-KIMI_K27_MODEL = "kimi-code/kimi-for-coding"
-KIMI_MODEL_ALIASES = {
-    "k3": KIMI_DEFAULT_MODEL,
-    "kimi-k3": KIMI_DEFAULT_MODEL,
-    "kimi-code/k3": KIMI_DEFAULT_MODEL,
-    "k3-1m": KIMI_DEFAULT_MODEL,
-    "kimi-k3-1m": KIMI_DEFAULT_MODEL,
-    "kimi-code/k3-1m": KIMI_DEFAULT_MODEL,
-    "k3-256k": "kimi-code/k3-256k",
-    "kimi-k3-256k": "kimi-code/k3-256k",
-    "kimi-code/k3-256k": "kimi-code/k3-256k",
-    "k2.7": KIMI_K27_MODEL,
-    "kimi-k2.7": KIMI_K27_MODEL,
-    "kimi-for-coding": KIMI_K27_MODEL,
-    "kimi-code/kimi-for-coding": KIMI_K27_MODEL,
-    "kimi-for-coding-highspeed": "kimi-code/kimi-for-coding-highspeed",
-    "kimi-code/kimi-for-coding-highspeed": "kimi-code/kimi-for-coding-highspeed",
-}
 OPENCODE_DEFAULT_MODEL = "opencode-go/muse-spark-1.3-contributor"
 # Go meters usage against the subscription allowance. Any other OpenCode
 # provider, such as pay-as-you-go Zen, would bill per token on the same key.
@@ -128,14 +109,12 @@ SAFE_ENV_KEYS = {
 }
 CAO_ENV_KEYS = {"AGENT_JOB_CAO_URL", "AGENT_JOB_CAO_TOKEN", "AGENT_JOB_CAO_LAUNCH_TIMEOUT"}
 CLAUDE_AUTH_KEYS = {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}
-KIMI_AUTH_KEYS = {"KIMI_API_KEY", "KIMI_CN_API_KEY", "MOONSHOT_API_KEY", "MOONSHOT_API_BASE"}
 OPENCODE_AUTH_KEYS = {"OPENCODE_API_KEY"}
 PROVIDER_AUTH_KEYS = {
-    "claude": CLAUDE_AUTH_KEYS, "kimi": KIMI_AUTH_KEYS, "codex": set(),
-    "opencode": OPENCODE_AUTH_KEYS,
+    "claude": CLAUDE_AUTH_KEYS, "codex": set(), "opencode": OPENCODE_AUTH_KEYS,
 }
-ALL_PROVIDER_AUTH_KEYS = CLAUDE_AUTH_KEYS | KIMI_AUTH_KEYS | OPENCODE_AUTH_KEYS
-SEMANTIC_PROVIDERS = {"claude", "codex", "kimi", "opencode"}
+ALL_PROVIDER_AUTH_KEYS = CLAUDE_AUTH_KEYS | OPENCODE_AUTH_KEYS
+SEMANTIC_PROVIDERS = {"claude", "codex", "opencode"}
 SEMANTIC_LIVENESS_PROVIDERS = {"claude", "codex"}
 DYNAMIC_HEALTH_REFRESH_SECONDS = 15
 NATIVE_FEEDBACK_JOIN_GATE = 0.95
@@ -221,36 +200,6 @@ def _boolean_env(name: str, default: bool = False) -> bool:
     raise ValueError(f"{name} must be a boolean, got {raw!r}")
 
 
-def _kimi_semantic_enabled() -> bool:
-    return os.environ.get("AGENT_JOB_KIMI_SEMANTIC", "1").strip().lower() not in {
-        "0", "false", "no", "off",
-    }
-
-
-@functools.lru_cache(maxsize=8)
-def _kimi_cli_generation(binary: str) -> str:
-    """Distinguish the legacy Python CLI from the current Node CLI."""
-    path = Path(binary).expanduser().resolve()
-    if ".kimi-code" in path.parts:
-        return "modern"
-    try:
-        result = subprocess.run(
-            [binary, "--version"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise RuntimeError(f"Unable to inspect Kimi CLI capabilities: {exc}") from exc
-    version_text = f"{result.stdout}\n{result.stderr}".strip()
-    if result.returncode == 0 and version_text.startswith("kimi, version "):
-        return "legacy"
-    if result.returncode == 0 and re.fullmatch(r"\d+\.\d+\.\d+(?:[-+].*)?", version_text):
-        return "modern"
-    raise RuntimeError("Installed Kimi CLI exposes an unsupported command-line contract")
-
-
 @functools.lru_cache(maxsize=8)
 def _opencode_cli_generation(binary: str) -> str:
     """Accept only the verified 1.x `opencode run --format json` contract."""
@@ -300,16 +249,7 @@ def _normalize_model(provider: str, requested_model: str) -> tuple[str, str]:
     model = requested_model.strip()
     if provider == "opencode":
         return _normalize_opencode_model(model), ""
-    if provider != "kimi":
-        return model, ""
-    if not model or model.lower() in {"auto", "default", "kimi"}:
-        return os.environ.get("AGENT_JOB_KIMI_DEFAULT_MODEL", KIMI_DEFAULT_MODEL), ""
-    normalized = KIMI_MODEL_ALIASES.get(model.lower())
-    if normalized:
-        return normalized, ""
-    return KIMI_K27_MODEL, (
-        f"Unrecognized or legacy Kimi model alias '{model}' normalized to {KIMI_K27_MODEL}"
-    )
+    return model, ""
 
 
 def _normalize_checks(raw: Any, mode: str, provider: str) -> list[dict[str, Any]]:
@@ -390,7 +330,6 @@ def _find_binary(provider: str) -> str:
     env_name = f"AGENT_JOB_{provider.upper()}_BIN"
     known = {
         "claude": ["~/.local/bin/claude", "/opt/homebrew/bin/claude"],
-        "kimi": ["~/.kimi-code/bin/kimi", "/opt/homebrew/bin/kimi"],
         "codex": ["/opt/homebrew/bin/codex", "~/.local/bin/codex"],
         "opencode": ["/opt/homebrew/bin/opencode", "~/.opencode/bin/opencode"],
     }
@@ -438,8 +377,6 @@ def _provider_env(provider: str) -> dict[str, str]:
         env.pop(key, None)
     env["AGENT_JOB_DEPTH"] = str(int(inherited.get("AGENT_JOB_DEPTH", "0") or 0) + 1)
     env["AGENT_JOB_PROVIDER"] = provider
-    if provider == "kimi":
-        env["KIMI_CODE_EXPERIMENTAL_FLAG"] = "1"
     return env
 
 
@@ -448,7 +385,6 @@ def _cao_bridge_env(provider: str) -> dict[str, str]:
     env = _provider_env(provider)
     for key in ALL_PROVIDER_AUTH_KEYS:
         env.pop(key, None)
-    env.pop("KIMI_CODE_EXPERIMENTAL_FLAG", None)
     for key in CAO_ENV_KEYS:
         if os.environ.get(key):
             env[key] = os.environ[key]
@@ -1483,40 +1419,6 @@ class Supervisor:
             # implement mode receives only the explicit built-in edit tools above.
             argv.append("--safe-mode")
             return self._confine_implementation(job, argv, prompt, _provider_env(provider))
-        if provider == "kimi":
-            generation = _kimi_cli_generation(binary)
-            suffix = "yaml" if generation == "legacy" else "md"
-            agent_name = (
-                f"kimi_read_only_reviewer.{suffix}"
-                if mode == "readonly" else
-                f"kimi_implementation_agent.{suffix}"
-            )
-            agent_path = SERVER_DIR / agent_name
-            if not agent_path.is_file():
-                raise RuntimeError(f"Kimi agent definition is missing: {agent_path}")
-            argv = [binary, "--model", model, "--agent-file", str(agent_path)]
-            env = _provider_env(provider)
-            if generation == "legacy":
-                empty_mcp_path = SERVER_DIR / "empty_mcp.json"
-                if not empty_mcp_path.is_file():
-                    raise RuntimeError(f"Kimi empty MCP configuration is missing: {empty_mcp_path}")
-                argv.extend(["--mcp-config-file", str(empty_mcp_path)])
-                kimi_config = Path.home() / ".kimi" / "config.toml"
-                if mode == "implement" and kimi_config.is_file():
-                    argv.extend(["--config-file", str(kimi_config)])
-                if job.get("semantic_stream"):
-                    argv.append("--print")
-            else:
-                runtime = self._job_runtime_dir(str(job["job_id"]))
-                runtime.mkdir(parents=True, mode=0o700, exist_ok=True)
-                modern_home, empty_skills = self._prepare_modern_kimi_runtime(runtime, job)
-                env["KIMI_CODE_HOME"] = str(modern_home)
-                env["KIMI_DISABLE_TELEMETRY"] = "1"
-                argv.extend(["--skills-dir", str(empty_skills)])
-            if job.get("semantic_stream"):
-                argv.extend(["--output-format", "stream-json"])
-            argv.extend(["--prompt", prompt])
-            return self._confine_implementation(job, argv, None, env)
         if provider == "opencode":
             if mode != "readonly":
                 raise RuntimeError(
@@ -1623,64 +1525,6 @@ class Supervisor:
             finally:
                 record_path.unlink(missing_ok=True)
 
-    def _prepare_kimi_runtime(self, runtime: Path) -> Path:
-        share = runtime / "kimi-share"
-        share.mkdir(mode=0o700, exist_ok=True)
-        source = Path.home() / ".kimi"
-        for name in ("credentials", "device_id"):
-            target = source / name
-            link = share / name
-            if target.exists() and not link.exists():
-                link.symlink_to(target, target_is_directory=target.is_dir())
-        return share
-
-    def _prepare_modern_kimi_runtime(
-        self, runtime: Path, job: dict[str, Any]
-    ) -> tuple[Path, Path]:
-        home = runtime / "kimi-code-home"
-        home.mkdir(mode=0o700, exist_ok=True)
-        source = Path.home() / ".kimi-code"
-        config_source = source / "config.toml"
-        if not config_source.is_file():
-            raise RuntimeError(f"Modern Kimi configuration is missing: {config_source}")
-        config_target = home / "config.toml"
-        shutil.copyfile(config_source, config_target)
-        os.chmod(config_target, 0o600)
-        # Copy, never symlink. Implementation jobs run under a sandbox profile
-        # that permits writes only beneath WORKDIR and RUNTIME_DIR, and the
-        # Kimi CLI takes an OAuth refresh lock inside its own `oauth/` dir the
-        # first time an access token expires (~20 min in). A symlink pointing
-        # back to ~/.kimi-code puts that write outside the allowed set, so the
-        # provider dies with EPERM mid-run. A copy lives in RUNTIME_DIR and is
-        # writable; the cost is that a token refreshed inside the sandbox does
-        # not persist back to the real home, which is correct for a job-scoped
-        # credential anyway.
-        for name in ("credentials", "oauth", "device_id"):
-            target = source / name
-            staged = home / name
-            if not target.exists() or staged.exists():
-                continue
-            if target.is_dir():
-                shutil.copytree(target, staged, symlinks=False)
-                os.chmod(staged, 0o700)
-                for child in staged.rglob("*"):
-                    os.chmod(child, 0o700 if child.is_dir() else 0o600)
-            else:
-                shutil.copyfile(target, staged)
-                os.chmod(staged, 0o600)
-        checks = json.loads(str(job.get("checks_json") or "[]"))
-        mcp_source = (
-            self._prepare_check_mcp(runtime, job)
-            if job["mode"] == "implement" and checks else
-            SERVER_DIR / "empty_mcp.json"
-        )
-        if not mcp_source.is_file():
-            raise RuntimeError(f"Kimi MCP configuration is missing: {mcp_source}")
-        shutil.copyfile(mcp_source, home / "mcp.json")
-        empty_skills = runtime / "empty-skills"
-        empty_skills.mkdir(mode=0o700, exist_ok=True)
-        return home, empty_skills
-
     def _prepare_check_mcp(self, runtime: Path, job: dict[str, Any]) -> Path:
         checks_json = str(job.get("checks_json") or "[]")
         config_path = runtime / "checks-mcp.json"
@@ -1718,13 +1562,10 @@ class Supervisor:
         os.chmod(runtime, 0o700)
         confined_env = dict(env)
         confined_env["TMPDIR"] = f"{runtime}{os.sep}"
-        if job["provider"] == "kimi":
-            confined_env["KIMI_SHARE_DIR"] = str(self._prepare_kimi_runtime(runtime))
         git_meta = workdir / ".git"
         mcp_config = self._prepare_check_mcp(runtime, job)
-        config_flag = "--mcp-config" if job["provider"] == "claude" else "--mcp-config-file"
-        if config_flag in argv:
-            config_index = argv.index(config_flag) + 1
+        if "--mcp-config" in argv:
+            config_index = argv.index("--mcp-config") + 1
             argv[config_index] = str(mcp_config)
         confined_argv = [
             str(SANDBOX_EXEC_PATH),
@@ -1827,7 +1668,7 @@ class Supervisor:
 
     def _private_semantic_stdout(self, job: dict[str, Any]) -> bool:
         return (
-            job.get("provider") in {"claude", "kimi", "opencode"}
+            job.get("provider") in {"claude", "opencode"}
             and self._semantic_adapter_active(job)
         )
 
@@ -2311,6 +2152,14 @@ class Supervisor:
                             "Queue timeout reached before a provider slot became available",
                         )
                         continue
+                    if provider not in effective_limits:
+                        # Queued before an upgrade removed its provider; failing it
+                        # keeps the lookup below from stalling every later job.
+                        self._finish_job(
+                            job_id, "failed", "launch_error",
+                            f"Provider {provider} is no longer supported; resubmit to a supported provider",
+                        )
+                        continue
                     if job_id in self.tasks or active[provider] >= effective_limits[provider]:
                         continue
                     if not self.store.claim(job_id):
@@ -2465,7 +2314,6 @@ class Supervisor:
             "semantic_stream": int(
                 execution_backend == "native"
                 and provider in SEMANTIC_PROVIDERS
-                and (provider != "kimi" or _kimi_semantic_enabled())
             ),
             "idempotency_key": str(payload.get("idempotency_key") or "")[:200],
             "checks_json": _json(checks),

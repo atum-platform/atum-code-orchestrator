@@ -4,15 +4,8 @@ The agent job supervisor owns long-running Claude Code, Codex, and OpenCode CLI
 processes independently of the Codex, Claude, OpenCode, or Hermes session that
 submitted them. It replaces caller-bound subprocess waits with durable job IDs.
 
-Kimi is no longer a routing or CLI target (Kimi K3 is reached through OpenCode
-Go); the Kimi launch code described next is dormant until its removal.
-Kimi execution negotiates the installed CLI contract at launch. The legacy
-Python CLI uses YAML agents, print-mode JSON streaming, and an explicit empty
-MCP file. The current Node CLI uses Markdown agents, prompt-mode JSON streaming,
-an isolated per-job `KIMI_CODE_HOME`, a private copy of the authenticated model
-configuration, and an empty Skills directory. MCP configuration is replaced with
-the job-scoped declaration. This keeps automatic Kimi upgrades from silently
-leaving the supervisor on retired flags without inheriting user MCPs or skills.
+Kimi was removed as a provider on 2026-09-26. Kimi K3 is reached through
+OpenCode Go instead; see [OpenCode provider](#opencode-provider).
 
 ## Architecture
 
@@ -79,7 +72,9 @@ launch. Both accept 30 seconds through two hours. The deprecated
 `timeout_seconds` input remains an alias for the run budget. Existing rows that
 predate the split retain their original submit-relative shared deadline and
 report `timeout_semantics=legacy_shared`; new rows report `separate` plus
-`queue_deadline_at` and, after launch, `run_deadline_at`.
+`queue_deadline_at` and, after launch, `run_deadline_at`. A job still queued
+for a provider that a later release removed fails at once with `launch_error`
+rather than holding up the jobs queued behind it.
 
 Silence does not automatically kill a job. `lifecycle_status` is the persisted
 authority; `activity` reports `starting`, `streaming`, `reasoning`,
@@ -125,8 +120,8 @@ the launcher scripts seen so far (an untracked checkout wrapper and a
 
 Supply credentials through `AGENT_JOB_PROFILE_ENV`, not a launcher wrapper.
 Claude jobs receive only `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
-`ANTHROPIC_TOKEN`, and `CLAUDE_CODE_OAUTH_TOKEN` from it, and Kimi jobs only the
-Kimi keys. Launching the real binary also keeps each job's `binary_path`
+`ANTHROPIC_TOKEN`, and `CLAUDE_CODE_OAUTH_TOKEN` from it, and OpenCode jobs only
+`OPENCODE_API_KEY`. Launching the real binary also keeps each job's `binary_path`
 accurate; through a wrapper the probe usually recorded the transient shell
 (`/bash`) rather than the Claude release that ran.
 
@@ -392,10 +387,7 @@ possible mixed response loss, the result is marked partial and delegation client
 print a warning without exposing the omitted terminal text. Claude stream-prefix
 tracking is bounded to 256 blocks and 1 MiB per block; exceeding either bound
 suppresses snapshot recovery for that message to avoid duplicate answer text.
-Kimi runs with
-`stream-json`; its assistant records are incremental message chunks, while tool
-calls and results are reduced to names, IDs, and byte counts. Malformed Claude
-and Kimi records retain only byte count and digest.
+Malformed Claude and OpenCode records retain only byte count and digest.
 Raw bounded logs remain private operational evidence under the user-only state
 directory and are not returned through normal semantic job reads.
 
@@ -417,23 +409,6 @@ removed after normal termination or on the next supervisor start. Codex continue
 its native `workspace-write` sandbox. If the required platform sandbox is not
 available, implementation fails closed. The optional CAO backend is rejected for
 implementation until it can provide the same enforceable contract.
-
-Kimi implementation jobs set `KIMI_SHARE_DIR` to a disposable directory under
-the per-job runtime so logs and sessions do not require writes to `~/.kimi`.
-For the legacy CLI, the real config and credentials remain readable for
-subscription authentication but are not writable through the sandbox; token
-refresh that requires durable credential rotation therefore fails closed and
-must be repaired outside the job.
-
-The current CLI instead receives `credentials`, `oauth`, and `device_id` in its
-per-job `KIMI_CODE_HOME` as private copies (`0600` files, `0700` directories),
-never symlinks. It takes an OAuth refresh lock inside `oauth/` when the access
-token first expires, roughly twenty minutes into a job. Through a symlink that
-write lands in `~/.kimi-code`, outside the sandbox, and the provider dies with
-`EPERM`. Against copies the refresh succeeds inside the runtime and is discarded
-with it: a refreshed token is never written back to `~/.kimi-code`. Should Kimi
-start rotating refresh tokens on use, the durable login would be left holding a
-revoked token and would need a manual re-login.
 
 This checkpoint reduces delegated write blast radius; it is not a complete
 security boundary. A provider still has network access for inference and can
@@ -467,9 +442,6 @@ servers, commands requiring secrets, or untrusted code. The macOS profile is
 targeted blast-radius reduction, not a default-deny execution sandbox: it blocks
 network, Apple Events, common launchd/script escapes, sensitive credential reads,
 out-of-workspace writes, and Git writes, but callers must still inspect the diff.
-Kimi always receives an explicit MCP config that replaces its user-level
-`~/.kimi-code/mcp.json` registration; its normal subscription config remains
-available for authentication and model selection.
 
 Reads advance the normalized stream with the opaque byte `event_cursor`. On
 terminal failure, cancellation, or interruption, `partial_response` and
@@ -528,12 +500,10 @@ journal reaches its byte budget. A normalization/storage failure disables
 semantic decoding for that job but raw stdout drainage and capture continue.
 Native Claude and OpenCode stdout is retained only in the mode-`0600` raw file for
 local diagnostics; ordinary reads do not expose it or mirror it into the
-combined log. Set `AGENT_JOB_KIMI_SEMANTIC=0` in the LaunchAgent environment and
-restart to restore Kimi's prior text argv, public stdout, and adapter-unavailable
-contract for newly submitted jobs as an emergency rollback. Each job persists
-its `semantic_stream` selection at submission, so toggling the kill switch never
-reinterprets retained or already queued jobs and cannot expose their structured
-stdout.
+combined log. Each job persists its `semantic_stream` selection at submission,
+so later configuration changes never reinterpret retained or already queued
+jobs and cannot expose their structured stdout. CAO-bridged jobs have no
+semantic adapter; their stdout stays readable as plain output.
 
 ## Verification
 

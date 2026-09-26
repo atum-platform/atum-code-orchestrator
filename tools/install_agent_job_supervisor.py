@@ -35,8 +35,6 @@ PERSISTED_OVERRIDE_NAMES = (
     "AGENT_JOB_CAO_CANARY_OWNER_PREFIXES",
     "AGENT_JOB_CLAUDE_CONCURRENCY",
     "AGENT_JOB_CODEX_CONCURRENCY",
-    "AGENT_JOB_KIMI_CONCURRENCY",
-    "AGENT_JOB_KIMI_DEFAULT_MODEL",
     "AGENT_JOB_OPENCODE_BIN",
     "AGENT_JOB_OPENCODE_CONCURRENCY",
     "AGENT_JOB_OPENCODE_DEFAULT_MODEL",
@@ -177,14 +175,13 @@ def _service_environment() -> dict[str, str]:
         "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
         "__CF_USER_TEXT_ENCODING": os.environ.get("__CF_USER_TEXT_ENCODING", "0x1F5:0x0:0x0"),
         "LANG": os.environ.get("LANG", "en_US.UTF-8"),
-        "PATH": os.pathsep.join((str(home / ".local/bin"), str(home / ".kimi-code/bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin")),
+        "PATH": os.pathsep.join((str(home / ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin")),
         "AGENT_JOB_STATE_DIR": str(STATE_DIR),
         "AGENT_JOB_ALLOW_IMPLEMENT": "1",
         "AGENT_JOB_IMPLEMENT_TOKEN_FILE": str(IMPLEMENT_TOKEN_PATH),
         "AGENT_JOB_ALLOWED_ROOTS": os.environ.get(
             "AGENT_JOB_ALLOWED_ROOTS", allowed_roots_value(),
         ),
-        "AGENT_JOB_KIMI_BIN": _provider_binary("AGENT_JOB_KIMI_BIN", "kimi", (home / ".kimi-code/bin/kimi",), existing),
         "AGENT_JOB_CODEX_BIN": _provider_binary("AGENT_JOB_CODEX_BIN", "codex", (home / ".local/bin/codex", Path("/opt/homebrew/bin/codex")), existing),
     }
     claude_binary = _claude_binary(existing, profile_env)
