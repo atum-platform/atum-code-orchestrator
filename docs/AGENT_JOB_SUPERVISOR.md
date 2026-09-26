@@ -1,9 +1,11 @@
 # Agent Job Supervisor
 
-The agent job supervisor owns long-running Claude Code, Codex, and Kimi Code CLI
-processes independently of the Codex, Claude, or Hermes session that submitted
-them. It replaces caller-bound subprocess waits with durable job IDs.
+The agent job supervisor owns long-running Claude Code, Codex, and OpenCode CLI
+processes independently of the Codex, Claude, OpenCode, or Hermes session that
+submitted them. It replaces caller-bound subprocess waits with durable job IDs.
 
+Kimi is no longer a routing or CLI target (Kimi K3 is reached through OpenCode
+Go); the Kimi launch code described next is dormant until its removal.
 Kimi execution negotiates the installed CLI contract at launch. The legacy
 Python CLI uses YAML agents, print-mode JSON streaming, and an explicit empty
 MCP file. The current Node CLI uses Markdown agents, prompt-mode JSON streaming,

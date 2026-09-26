@@ -26,7 +26,7 @@ from agent_job_client import cancel, parse_check_spec, read, submit  # noqa: E40
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", choices=("claude", "kimi", "codex"), required=True)
+    parser.add_argument("--provider", choices=("claude", "codex"), required=True)
     parser.add_argument("--model", default="")
     parser.add_argument("--mode", choices=("implement", "readonly"), required=True)
     parser.add_argument("--workdir", required=True)
@@ -46,8 +46,8 @@ def main() -> int:
         help="caller-approved check in NAME=COMMAND form; repeatable",
     )
     args = parser.parse_args()
-    if args.provider != "kimi" and not args.model:
-        parser.error("--model is required unless --provider=kimi")
+    if not args.model:
+        parser.error("--model is required")
     if args.checks and args.provider != "claude":
         parser.error("--check is currently supported only with --provider=claude")
     workdir = Path(args.workdir).expanduser().resolve()

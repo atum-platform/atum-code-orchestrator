@@ -22,7 +22,7 @@ class DelegateClientTest(unittest.TestCase):
         spec.loader.exec_module(module)
         with tempfile.TemporaryDirectory() as root, patch.object(
             sys, "argv", [
-                "delegate.py", "--provider", "kimi", "--model", "kimi-code/k3",
+                "delegate.py", "--provider", "codex", "--model", "gpt-5.6-sol",
                 "--mode", "implement", "--workdir", root, "--prompt", "change",
                 "--check", "unit=npm test",
             ],
@@ -34,7 +34,7 @@ class DelegateClientTest(unittest.TestCase):
         self.assertEqual(2, raised.exception.code)
         self.assertIn("supported only with --provider=claude", stderr.getvalue())
 
-    def test_kimi_semantic_job_prints_events_and_terminal_remainder(self) -> None:
+    def test_semantic_job_prints_events_and_terminal_remainder(self) -> None:
         spec = importlib.util.spec_from_file_location("agent_job_delegate_test", SCRIPT)
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
@@ -52,10 +52,10 @@ class DelegateClientTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root, patch.dict(
             os.environ, {"AGENT_JOB_DEPTH": "0"}
         ), patch.object(
-            module, "submit", return_value={"job_id": "kimi-job"}
+            module, "submit", return_value={"job_id": "codex-job"}
         ), patch.object(module, "read", return_value=terminal), patch.object(
             sys, "argv", [
-                "delegate.py", "--provider", "kimi", "--model", "kimi-code/k3",
+                "delegate.py", "--provider", "codex", "--model", "gpt-5.6-sol",
                 "--mode", "readonly", "--workdir", root, "--prompt", "review",
             ]
         ):
@@ -66,7 +66,7 @@ class DelegateClientTest(unittest.TestCase):
 
         self.assertEqual(0, return_code)
         self.assertEqual("partial answer", stdout.getvalue())
-        self.assertIn("AGENT_JOB_ID=kimi-job", stderr.getvalue())
+        self.assertIn("AGENT_JOB_ID=codex-job", stderr.getvalue())
 
     def test_suspected_response_loss_is_visible_on_stderr(self) -> None:
         spec = importlib.util.spec_from_file_location("agent_job_delegate_warning_test", SCRIPT)

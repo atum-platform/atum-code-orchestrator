@@ -58,17 +58,17 @@ class ClientInstallerTest(unittest.TestCase):
     def test_guidance_markers_replace_only_managed_section(self) -> None:
         path = self.root / "AGENTS.md"
         path.write_text("# Existing\n\nKeep this.\n", encoding="utf-8")
-        self.assertTrue(installer.merge_kimi_guidance(path, "test", True))
+        self.assertTrue(installer.merge_guidance(path, "OpenCode guidance", "test", True))
         first = path.read_text(encoding="utf-8")
         self.assertIn("Keep this.", first)
         self.assertIn(installer.GUIDANCE_START, first)
-        self.assertFalse(installer.merge_kimi_guidance(path, "second", True))
+        self.assertFalse(installer.merge_guidance(path, "OpenCode guidance", "second", True))
 
     def test_malformed_guidance_markers_fail_closed(self) -> None:
         path = self.root / "AGENTS.md"
         path.write_text(installer.GUIDANCE_START, encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "Malformed"):
-            installer.merge_kimi_guidance(path, "test", False)
+            installer.merge_guidance(path, "OpenCode guidance", "test", False)
 
     def test_duplicate_guidance_markers_fail_closed(self) -> None:
         path = self.root / "AGENTS.md"
@@ -78,20 +78,20 @@ class ClientInstallerTest(unittest.TestCase):
             encoding="utf-8",
         )
         with self.assertRaisesRegex(ValueError, "Duplicate"):
-            installer.merge_kimi_guidance(path, "test", False)
+            installer.merge_guidance(path, "OpenCode guidance", "test", False)
 
     def test_locally_owned_non_codex_policy_is_preserved_and_routing_added(self) -> None:
         path = self.root / "AGENTS.md"
         original = f"{installer.GUIDANCE_START}\nCustom policy.\n{installer.GUIDANCE_END}"
         path.write_text(original, encoding="utf-8")
 
-        self.assertTrue(installer.merge_guidance(path, "Kimi guidance", "test", True))
+        self.assertTrue(installer.merge_guidance(path, "OpenCode guidance", "test", True))
         result = path.read_text(encoding="utf-8")
         self.assertIn(original, result)
         self.assertIn(installer.ROUTING_START, result)
         self.assertIn("route_decide", result)
         self.assertTrue(path.with_name("AGENTS.md.bak.agent-jobs-test").exists())
-        self.assertFalse(installer.merge_guidance(path, "Kimi guidance", "second", True))
+        self.assertFalse(installer.merge_guidance(path, "OpenCode guidance", "second", True))
 
     def test_known_stale_managed_policies_are_migrated(self) -> None:
         for name, filename in (("Claude guidance", "CLAUDE.md"), ("Codex guidance", "AGENTS.md")):
@@ -148,18 +148,18 @@ class ClientInstallerTest(unittest.TestCase):
     def test_apply_rolls_back_all_prior_targets_on_failure(self) -> None:
         home = self.root / "home"
         paths = installer._paths(home)
-        for name in ("Claude Code MCP", "Claude Desktop MCP", "Kimi MCP", "Kimi guidance"):
+        for name in ("Claude Code MCP", "Claude Desktop MCP", "OpenCode MCP", "OpenCode guidance"):
             path = paths[name]
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("{}\n" if "MCP" in name else "# Existing\n", encoding="utf-8")
         originals = {name: path.read_bytes() for name, path in paths.items() if path.exists()}
         changes = {name: True for name in paths}
         real_operation = installer._operation
-        def fail_on_kimi(name, *args):
-            if name == "Kimi guidance":
+        def fail_on_opencode(name, *args):
+            if name == "OpenCode guidance":
                 raise OSError("synthetic")
             return real_operation(name, *args)
-        with patch.object(installer, "_operation", side_effect=fail_on_kimi):
+        with patch.object(installer, "_operation", side_effect=fail_on_opencode):
             with self.assertRaisesRegex(OSError, "synthetic"):
                 installer.apply_changes(home, changes, "rollback")
         self.assertFalse(paths["shared skill"].exists())
@@ -172,11 +172,11 @@ class ClientInstallerTest(unittest.TestCase):
         paths = installer._paths(home)
         changes = {name: True for name in paths}
         real_operation = installer._operation
-        def fail_on_kimi(name, *args):
-            if name == "Kimi guidance":
+        def fail_on_opencode(name, *args):
+            if name == "OpenCode guidance":
                 raise OSError("synthetic")
             return real_operation(name, *args)
-        with patch.object(installer, "_operation", side_effect=fail_on_kimi):
+        with patch.object(installer, "_operation", side_effect=fail_on_opencode):
             with self.assertRaisesRegex(OSError, "synthetic"):
                 installer.apply_changes(home, changes, "fresh-rollback")
         for path in paths.values():
@@ -344,8 +344,8 @@ class ClientInstallerTest(unittest.TestCase):
         self.assertIn("job_submit", routing)
         self.assertIn("route_feedback", routing)
 
-    def test_claude_and_kimi_receive_generic_routing_protocol(self) -> None:
-        for name in ("Claude guidance", "Kimi guidance"):
+    def test_claude_and_opencode_receive_generic_routing_protocol(self) -> None:
+        for name in ("Claude guidance", "OpenCode guidance"):
             with self.subTest(name=name):
                 path = self.root / name.replace(" ", "-")
                 self.assertTrue(installer.merge_guidance(path, name, "test", True))
@@ -374,6 +374,42 @@ class ClientInstallerTest(unittest.TestCase):
         self.assertEqual(1, result.count(installer.GUIDANCE_START))
         self.assertEqual(1, result.count(installer.CODEX_ROUTING_START))
 
+
+    def test_opencode_config_gets_mcp_and_guidance_without_losing_settings(self) -> None:
+        home = self.root / "oc-home"
+        path = installer._opencode_config_path(home)
+        self.assertEqual("opencode.json", path.name)
+        path.parent.mkdir(parents=True)
+        path = path.with_name("opencode.jsonc")
+        path.write_text(json.dumps({"$schema": "x", "theme": "dark", "instructions": ["team.md"]}), encoding="utf-8")
+        self.assertEqual(path, installer._opencode_config_path(home))
+
+        self.assertTrue(installer.merge_opencode_config(path, "test", True, home))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        server = data["mcp"]["agent-jobs"]
+        self.assertEqual("local", server["type"])
+        self.assertEqual([str(installer.PYTHON_PATH), str(installer.SERVER_PATH)], server["command"])
+        self.assertIn("AGENT_JOB_ALLOWED_ROOTS", server["environment"])
+        self.assertTrue(server["enabled"])
+        self.assertEqual("dark", data["theme"])
+        self.assertEqual(["team.md", str(home.resolve() / installer.OPENCODE_GUIDANCE)], data["instructions"])
+        self.assertFalse(installer.merge_opencode_config(path, "second", True, home))
+
+        server["enabled"] = False
+        path.write_text(json.dumps(data), encoding="utf-8")
+        self.assertFalse(installer.merge_opencode_config(path, "third", True, home))
+        self.assertFalse(json.loads(path.read_text(encoding="utf-8"))["mcp"]["agent-jobs"]["enabled"])
+
+    def test_opencode_config_with_comments_fails_closed(self) -> None:
+        path = self.root / "opencode.jsonc"
+        path.write_text('{\n  // keep me\n  "theme": "dark"\n}\n', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "not plain JSON"):
+            installer.merge_opencode_config(path, "test", False, self.root)
+
+    def test_kimi_code_is_no_longer_a_managed_surface(self) -> None:
+        names = set(installer._paths(self.root / "home"))
+        self.assertFalse({name for name in names if "Kimi" in name})
+        self.assertNotIn("Kimi guidance", installer.GUIDANCE)
 
 if __name__ == "__main__":
     unittest.main()

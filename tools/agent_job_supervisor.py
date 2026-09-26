@@ -254,9 +254,13 @@ def _kimi_cli_generation(binary: str) -> str:
 @functools.lru_cache(maxsize=8)
 def _opencode_cli_generation(binary: str) -> str:
     """Accept only the verified 1.x `opencode run --format json` contract."""
+    # A cold start of the 145 MB binary under launchd's background priority once
+    # exceeded 10 s, so the probe is patient; it never checks for updates.
+    environment = {**os.environ, "OPENCODE_DISABLE_AUTOUPDATE": "1"}
     try:
         result = subprocess.run(
-            [binary, "--version"], check=False, capture_output=True, text=True, timeout=10,
+            [binary, "--version"], check=False, capture_output=True, text=True,
+            timeout=60, stdin=subprocess.DEVNULL, env=environment,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeError(f"Unable to inspect OpenCode CLI capabilities: {exc}") from exc

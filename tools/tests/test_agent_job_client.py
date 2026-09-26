@@ -20,7 +20,7 @@ class AgentJobClientParserTest(unittest.TestCase):
 
     def test_submit_has_separate_queue_and_run_timeout_defaults(self) -> None:
         args = vars(_parser().parse_args([
-            "submit", "--provider", "kimi", "--mode", "readonly",
+            "submit", "--provider", "opencode", "--mode", "readonly",
             "--workdir", "/tmp", "--prompt", "review",
         ]))
         self.assertEqual(900, args["queue_timeout_seconds"])

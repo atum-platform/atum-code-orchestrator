@@ -46,23 +46,22 @@ the name contract. `idle_unknown` means the process
 is alive but has produced no semantic progress past the soft threshold. Terminal
 reads include `partial_response` plus `partial_result_state` (`complete`,
 `partial`, `truncated`, `none`, or `unavailable`), so inspect retained output
-before retrying a failed or cancelled run. For native Claude and Kimi, the partial
-response is top-level assistant-visible text emitted in order and may stop
+before retrying a failed or cancelled run. For native Claude and OpenCode, the
+partial response is top-level assistant-visible text emitted in order and may stop
 mid-answer; it deliberately excludes subagent text and the duplicate terminal
-result. Kimi emits complete message chunks rather than token deltas, so text
-buffered inside an interrupted provider step may not have reached the stream.
+result. OpenCode emits complete text parts rather than token deltas, so text
+inside an interrupted step may not have reached the stream.
 Their raw stream JSON is not returned to ordinary callers, so retain and
 advance `event_cursor`. `unavailable` means that provider/backend does not expose a semantic
 response artifact; use the retained raw output instead.
 `journal_truncated=true` means normalized events reached their independent byte
 budget even though raw output capture may have continued.
 
-Detailed semantic activity is available for native Codex, Claude, and Kimi jobs.
+Detailed semantic activity is available for native Codex, Claude, and OpenCode jobs.
 Claude provider waits and concurrent open tools are explicit. A provider wait
 that exceeds the soft threshold becomes `idle_unknown`; it never hides a hung
-request until the run deadline. Kimi still uses output-byte liveness because
-its JSON stream has no tool-start boundary; public stderr tool progress provides
-that transport signal but is not promoted into semantic event content. CAO
+request until the run deadline. OpenCode uses output-byte liveness because its
+JSON stream reports tools only when they finish. CAO
 compatibility jobs also use output-byte liveness, so their
 `waiting_on_provider` state does not carry the same structured evidence.
 
@@ -92,7 +91,7 @@ job through the guarded review CLI's `list`/`read` operations or the low-level
 `agent_job_client.py`.
 
 For Claude implementation jobs, repeat `--check 'NAME=COMMAND'` for focused
-caller-approved verification. Codex and Kimi check contracts currently fail
+caller-approved verification. Codex check contracts currently fail
 closed. The delegated model chooses only a name; it cannot alter the argv. A
 check can execute project code the model just edited, so inspect that trust
 decision deliberately. Do not approve

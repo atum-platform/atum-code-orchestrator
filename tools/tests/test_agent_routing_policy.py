@@ -17,7 +17,7 @@ class AgentRoutingPolicyTest(unittest.TestCase):
     def intent(self, caller: str, capability: str) -> dict[str, object]:
         surfaces = {
             "codex": "codex", "claude": "claude-code",
-            "kimi": "kimi-code", "hermes": "hermes",
+            "kimi": "kimi-code", "hermes": "hermes", "opencode": "opencode",
         }
         return {
             "protocol_version": 1,
@@ -68,11 +68,11 @@ class AgentRoutingPolicyTest(unittest.TestCase):
 
     def test_explicit_provider_wins_without_recursive_delegation(self) -> None:
         intent = self.intent("codex", "planning")
-        intent["explicit_provider"] = "kimi"
-        intent["explicit_model"] = "kimi-code/k3"
+        intent["explicit_provider"] = "opencode"
+        intent["explicit_model"] = "opencode-go/kimi-k3"
         decision = decide(intent)
-        self.assertEqual("kimi", decision["provider"])
-        self.assertEqual("kimi-code/k3", decision["model_alias"])
+        self.assertEqual("opencode", decision["provider"])
+        self.assertEqual("opencode-go/kimi-k3", decision["model_alias"])
 
         intent["explicit_provider"] = "codex"
         decision = decide(intent)
@@ -163,11 +163,11 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         )
         self.assertEqual("direct", same_provider["lane"])
 
-        intent.update(explicit_provider="kimi", explicit_model="kimi-code/k3")
+        intent.update(explicit_provider="opencode", explicit_model="opencode-go/kimi-k3")
         different_provider = apply_one_hop_escalation(
             decide(intent, "surface_canary"), {"provider": "claude"}, {},
         )
-        self.assertEqual("kimi", different_provider["provider"])
+        self.assertEqual("opencode", different_provider["provider"])
 
     def test_native_worker_escalation_degrades_to_direct(self) -> None:
         decision = {
@@ -402,3 +402,22 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         self.assertEqual(1, decision["protocol_version"])
         self.assertEqual("opencode", decision["provider"])
         self.assertEqual("default", decision["model_alias"])
+
+
+    def test_opencode_callers_route_cross_family_and_never_to_themselves(self) -> None:
+        for capability, expected in (
+            ("code_review", ("codex", "claude")),
+            ("planning", ("claude", "codex")),
+            ("implementation", ("codex", "")),
+        ):
+            with self.subTest(capability=capability):
+                decision = decide(self.intent("opencode", capability))
+                self.assertEqual(expected, (decision["provider"], decision["fallback_provider"]))
+        recursive = self.intent("opencode", "code_review")
+        recursive.update(
+            protocol_version=2, explicit_provider="opencode",
+            surface_capabilities={"durable_agent_jobs": True},
+        )
+        decision = decide(recursive, "surface_canary")
+        self.assertTrue(decision["enforced"])
+        self.assertEqual("direct", decision["lane"])

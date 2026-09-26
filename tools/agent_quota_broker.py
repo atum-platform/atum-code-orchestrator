@@ -39,9 +39,13 @@ RATE_LIMIT_PATTERNS = {
         re.IGNORECASE,
     ),
     # Scanned against OpenCode's JSON error messages only, never tool output.
+    # Only usage, period, or credit wording counts: "context limit" or "output
+    # token limit" errors are request-shape failures, not quota.
     "opencode": re.compile(
-        r"(?:rate[ -]?limit(?:ed| reached| exceeded)?|usage[ -]?limit(?:s)?(?: reached| exceeded)?|"
-        r"reached (?:your )?(?:\w+ )?(?:usage )?limit|"
+        r"(?:rate[ -]?limit(?:ed| reached| exceeded)?|usage[ -]?limits?(?: reached| exceeded)?|"
+        r"reached (?:your )?(?:(?:5-hour|five-hour|rolling|daily|weekly|monthly) )?(?:usage )?limit\b|"
+        r"(?:5-hour|five-hour|rolling|daily|weekly|monthly) limit (?:reached|exceeded)|"
+        r"insufficient (?:balance|credits?)|credit balance is too low|"
         r"quota (?:exceeded|exhausted|reached)|too many requests|\b429\b)",
         re.IGNORECASE,
     ),
@@ -86,11 +90,15 @@ def _latest_windows(path: Path) -> list[dict[str, Any]]:
     return windows if isinstance(windows, list) else []
 
 
+# CodexBar names history files by its own provider id.
+CODEXBAR_PROVIDER_IDS = {"opencode": "opencodego"}
+
+
 def read_codexbar_history(provider: str, now: float) -> dict[str, Any] | None:
     history_dir = Path(
         os.environ.get("AGENT_JOB_QUOTA_HISTORY_DIR", str(DEFAULT_HISTORY_DIR))
     ).expanduser()
-    windows = _latest_windows(history_dir / f"{provider}.json")
+    windows = _latest_windows(history_dir / f"{CODEXBAR_PROVIDER_IDS.get(provider, provider)}.json")
     samples: list[dict[str, Any]] = []
     for window in windows:
         if not isinstance(window, dict):

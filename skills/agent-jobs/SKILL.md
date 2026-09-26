@@ -25,7 +25,7 @@ The supervisor exposes a versioned `route_decide` protocol. Follow its lane only
 when `enforced=true`; `mode=shadow` is telemetry and creates no reservation.
 In `codex_canary`, decisions are enforced for Codex callers on the Codex surface,
 including Codex routes to Claude or OpenCode. `surface_canary` extends v2 enforcement
-to supported Claude and Kimi coding surfaces. The table below remains the
+to supported Claude and OpenCode coding surfaces. The table below remains the
 fail-open policy for shadow responses or supervisor outage.
 
 Call `route_decide` before every cross-agent `job_submit`, not only before native
@@ -44,12 +44,13 @@ Default routing by caller:
 |---|---|---|
 | Codex or Hermes | OpenCode, then Opus on provider failure | Opus, then OpenCode on provider failure |
 | Claude | Codex, then OpenCode on provider failure | In-family: native Claude worker or direct |
-| Kimi | Codex, then Opus on provider failure | Opus, then Codex on provider failure |
+| OpenCode | Codex, then Opus on provider failure | Opus, then Codex on provider failure |
 
 OpenCode runs the supervisor's configured default model, currently Muse Spark
 (Meta) on the OpenCode Go subscription, so it is a different family from every
-caller. It is read-only: engineering work has no automatic fallback. The `kimi`
-provider is a legacy target accepted only when explicitly requested.
+caller. It is read-only: engineering work has no automatic fallback. As a
+caller, OpenCode passes `caller_provider=opencode` and never routes to itself,
+because its own model family varies.
 
 An explicit user model/provider request overrides these defaults. A fallback is
 for provider failure, quota exhaustion, or unusable output, not disagreement.
@@ -79,7 +80,7 @@ continue directly or use the enforced alternate instead of bypassing admission.
 ## Route focused same-family work
 
 For a separable bounded scope in the caller's primary domain, call `route_decide`
-before spawning a native worker. Codex and Kimi native lanes cover implementation,
+before spawning a native worker. Codex native lanes cover implementation,
 exploration, and tests; Claude native lanes cover planning, architecture, design,
 product, copywriting, and research. Pass a stable ID for the current task as
 `session_id`, use protocol v2, and report
@@ -94,8 +95,7 @@ and verify its result, then call `route_feedback` once with `completed`, `failed
 `abandoned`, `escalated`, or `not_started`. Identical feedback retries are safe.
 On task resume, call `route_reconcile` with that session's decision IDs that are
 still running; omitted active reservations are released. Focused native routes
-use Terra with high reasoning for Codex, Sonnet for Claude, and high-speed K2.7
-for Kimi. Capacity
+use Terra with high reasoning for Codex and Sonnet for Claude. Capacity
 exhaustion returns `direct`, so the primary continues the work itself.
 
 1. Inspect the exact project and define one checkpoint, risk, and expected output.
@@ -148,6 +148,8 @@ after its tokens have already been spent.
 - **Claude or a shell-only session:** run `scripts/review.py` with the equivalent
   `route-decide`, `route-feedback`, `route-reconcile`, `route-status`, `submit`,
   `read`, `list`, `cancel`, or `inbox` arguments.
+- **OpenCode:** call the same tools from the `agent-jobs` MCP server, passing
+  `caller_provider=opencode` and `surface=opencode`.
 
 Both review bindings use the same safety core. Explicit implementation goes
 directly to the supervisor's capability-gated write path. Read
@@ -158,7 +160,7 @@ directly to the supervisor's capability-gated write path. Read
 For explicit substantive delegation, run `scripts/delegate.py` with provider,
 model, mode, absolute workdir, and one bounded prompt. `implement` permits scoped
 reads and edits but no Bash, Git, external messaging, or nested agents. The calling
-agent runs final verification and Git operations afterward. Claude and Kimi implementation
+agent runs final verification and Git operations afterward. Claude implementation
 jobs on macOS are kernel-confined to writes inside the selected workdir plus a
 private temporary runtime directory, with Git metadata kept read-only; Codex uses
 its native workspace sandbox. Treat this as blast-radius reduction, inspect the
@@ -167,9 +169,8 @@ authentication refresh outside the delegated run.
 The supervisor fails closed where it cannot enforce an equivalent write boundary.
 
 For Claude implementation jobs, the caller may add repeatable
-`--check 'NAME=COMMAND'` arguments for bounded, iterative verification. Codex and
-Kimi check contracts fail closed until their equivalent mediated tool paths are
-verified. These are exact caller-approved argv contracts, not a shell exposed to
+`--check 'NAME=COMMAND'` arguments for bounded, iterative verification. Codex
+check contracts fail closed until an equivalent mediated tool path is verified. These are exact caller-approved argv contracts, not a shell exposed to
 the delegated model; the model can only call `run_check(NAME)`.
 Prefer focused tests, linters, type checks, or builds. Never approve package
 installation, Git, deployment, dev servers, secret-dependent commands, or other
@@ -185,11 +186,7 @@ never draw pay-as-you-go credits. An explicit OpenCode model from the caller's o
 family, including a `default` that resolves to one, routes `direct`, because it
 would not be a cross-family review.
 
-Kimi submissions may omit `model`; the supervisor then selects
-`kimi-code/k3`. It canonicalizes supported K3 and K2.7 aliases and maps stale or
-unknown Kimi aliases to `kimi-code/kimi-for-coding` (K2.7), recording both the
-requested and effective model. Explicit Claude and Codex jobs still require a
-model.
+Explicit Claude and Codex jobs still require a model.
 
 Use these canonical model aliases:
 
@@ -200,7 +197,6 @@ Use these canonical model aliases:
   for cross-family review, planning, and research consultation.
 - OpenCode `opencode-go/kimi-k3`: Kimi K3 on Go; its allowance is small, so request
   it only when K3 specifically matters.
-- Kimi `kimi-code/*`: legacy direct Kimi Code models, explicit requests only.
 - Codex: pass the currently configured Codex model when another caller requests it.
 
 After completion, inspect the complete diff, reject unrelated changes, run focused

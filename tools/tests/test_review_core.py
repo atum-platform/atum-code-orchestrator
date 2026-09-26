@@ -73,13 +73,13 @@ class ReviewCoreTest(unittest.IsolatedAsyncioTestCase):
     async def test_submit_is_structurally_readonly_and_forwards_idempotency(self) -> None:
         with patch.object(review_core, "submit", return_value={"job_id": "same"}) as mocked:
             result = review_core.job_submit(
-                provider="kimi", model="kimi-code/k3", instructions="review",
-                workdir=str(self.workdir), idempotency_key="checkpoint-kimi",
+                provider="opencode", model="default", instructions="review",
+                workdir=str(self.workdir), idempotency_key="checkpoint-opencode",
             )
         self.assertEqual("same", result["job_id"])
         kwargs = mocked.call_args.kwargs
         self.assertEqual("readonly", kwargs["mode"])
-        self.assertEqual("checkpoint-kimi", kwargs["idempotency_key"])
+        self.assertEqual("checkpoint-opencode", kwargs["idempotency_key"])
         self.assertEqual(900, kwargs["queue_timeout_seconds"])
         self.assertEqual(5400, kwargs["run_timeout_seconds"])
         self.assertNotIn("implement_capability", kwargs)

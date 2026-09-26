@@ -276,9 +276,13 @@ class OpenCodeProviderTest(unittest.TestCase):
             completed = subprocess.CompletedProcess([], 0, stdout=output, stderr="")
             with self.subTest(output=output), patch.object(
                 supervisor_module.subprocess, "run", return_value=completed,
-            ):
+            ) as run:
                 if accepted:
                     self.assertEqual("v1", generation("/opt/homebrew/bin/opencode"))
+                    # Patient enough for a cold start, and never an update check.
+                    self.assertEqual(60, run.call_args.kwargs["timeout"])
+                    self.assertEqual("1", run.call_args.kwargs["env"]["OPENCODE_DISABLE_AUTOUPDATE"])
+                    self.assertIs(subprocess.DEVNULL, run.call_args.kwargs["stdin"])
                 else:
                     with self.assertRaisesRegex(RuntimeError, "unverified"):
                         generation("/opt/homebrew/bin/opencode")

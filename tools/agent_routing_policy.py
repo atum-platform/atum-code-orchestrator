@@ -7,12 +7,12 @@ from typing import Any
 
 PROTOCOL_VERSION = 2
 SUPPORTED_PROTOCOL_VERSIONS = {1, 2}
-POLICY_VERSION = "2026-09-26.1"
-CAPABILITY_MATRIX_VERSION = "2026-09-26.1"
+POLICY_VERSION = "2026-09-26.2"
+CAPABILITY_MATRIX_VERSION = "2026-09-26.2"
 ROUTING_MODES = {"shadow", "codex_canary", "surface_canary"}
 
-PROVIDERS = {"codex", "claude", "kimi", "hermes"}
-SURFACES = {"codex", "claude-code", "claude-desktop", "kimi-code", "hermes"}
+PROVIDERS = {"codex", "claude", "kimi", "opencode", "hermes"}
+SURFACES = {"codex", "claude-code", "claude-desktop", "kimi-code", "opencode", "hermes"}
 CAPABILITIES = {
     "implementation", "code_review", "planning", "architecture", "design",
     "product", "copywriting", "research", "exploration", "tests",
@@ -22,9 +22,9 @@ RISKS = {"low", "medium", "high"}
 SCOPES = {"local", "single_module", "cross_module", "repo"}
 DURATIONS = {"short", "medium", "long"}
 DURABILITIES = {"session", "durable"}
-# `kimi` stays an explicit-only target for one compatibility window; default
-# routing sends every former Kimi slot to OpenCode.
-TARGET_PROVIDERS = {"codex", "claude", "kimi", "opencode"}
+# Kimi is no longer a target: every former Kimi slot routes to OpenCode, which
+# also serves Kimi K3 through the Go subscription.
+TARGET_PROVIDERS = {"codex", "claude", "opencode"}
 MAX_INTENT_BYTES = 16 * 1024
 ESCALATION_REASONS = {
     "provider_failure", "rate_limit", "unusable_output", "scope_growth",
@@ -95,12 +95,15 @@ SURFACE_CAPABILITY_MATRIX = {
     "claude-code": {"durable_agent_jobs", "native_subagents"},
     "claude-desktop": {"durable_agent_jobs"},
     "kimi-code": {"durable_agent_jobs", "native_subagents"},
+    "opencode": {"durable_agent_jobs"},
     "hermes": {"durable_agent_jobs"},
 }
 CALLER_SURFACES = {
     "codex": {"codex"},
     "claude": {"claude-code", "claude-desktop"},
     "kimi": {"kimi-code"},
+    # An OpenCode caller may run any model family, so it never routes to itself.
+    "opencode": {"opencode"},
     "hermes": {"hermes"},
 }
 
@@ -112,6 +115,7 @@ NATIVE_CAPABILITIES = {
     "codex": ENGINEERING_CAPABILITIES,
     "claude": THINKING_CAPABILITIES,
     "kimi": ENGINEERING_CAPABILITIES,
+    "opencode": set(),
     "hermes": set(),
 }
 NATIVE_WORKER_PROFILES = {
@@ -145,13 +149,13 @@ def _default_targets(caller: str, capability: str) -> tuple[str, str]:
     if capability in ENGINEERING_CAPABILITIES:
         # OpenCode runs read-only until workspace-confined implementation is
         # verified, so engineering work has no automatic fallback.
-        if caller in {"claude", "hermes"}:
+        if caller in {"claude", "hermes", "opencode"}:
             return "codex", ""
         return "", ""
     if capability in THINKING_CAPABILITIES:
         if caller in {"codex", "hermes"}:
             return "claude", "opencode"
-        if caller == "kimi":
+        if caller in {"kimi", "opencode"}:
             return "claude", "codex"
         return "", ""
     return "", ""
@@ -323,7 +327,7 @@ def decide(intent: dict[str, Any], routing_mode: str = "shadow") -> dict[str, An
     surface_canary = (
         routing_mode == "surface_canary"
         and intent["protocol_version"] == 2
-        and surface in {"codex", "claude-code", "claude-desktop", "kimi-code"}
+        and surface in {"codex", "claude-code", "claude-desktop", "kimi-code", "opencode"}
     )
     canary = codex_canary or surface_canary
     mode = routing_mode if canary else "shadow"
