@@ -865,3 +865,11 @@
 - Verification: 328 tests pass; the new guard and privacy tests fail without
   their fixes. OpenCode review HOLD on the privacy gap, fixed.
 - Details: `docs/session-logs/2026-09-26-remove-kimi-provider.md`.
+
+## 2026-09-26 - Keep ACO credentials out of approved checks
+
+- Approved checks can no longer read the supervisor state directory (OpenCode
+  key file, implementation token, job database, logs), credential profile files,
+  OpenCode's data directory, or `~/.kimi-code`. The job's runtime directory stays
+  readable.
+- Details: `docs/session-logs/2026-09-26-check-sandbox-credentials.md`.

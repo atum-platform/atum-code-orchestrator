@@ -58,6 +58,35 @@ def _load_contract() -> tuple[Path, Path, dict[str, dict[str, Any]]]:
 
 
 WORKDIR, RUNTIME, CHECKS = _load_contract()
+
+
+def _load_read_denials() -> list[Path]:
+    """Credential paths the supervisor names beyond the fixed profile list."""
+    paths = json.loads(os.environ.get("ACO_CHECKS_DENY_READ", "[]"))
+    if not isinstance(paths, list) or not all(
+        isinstance(path, str) and os.path.isabs(path) for path in paths
+    ):
+        raise RuntimeError("Approved-check read denials must be absolute paths")
+    return [Path(path) for path in paths]
+
+
+DENY_READ = _load_read_denials()
+
+
+def _sandbox_profile() -> tuple[str, list[str]]:
+    rules = [
+        f'(deny file-read* (subpath (param "DENY_{index}")))'
+        for index in range(len(DENY_READ))
+    ]
+    # The job runtime lives inside the denied supervisor state directory;
+    # later rules win, so this keeps the check's own TMPDIR readable.
+    rules.append('(allow file-read* (subpath (param "RUNTIME_DIR")))')
+    params = [
+        argument
+        for index, path in enumerate(DENY_READ)
+        for argument in ("-D", f"DENY_{index}={path}")
+    ]
+    return PROFILE + "\n".join(rules) + "\n", params
 RUN_LOCK = threading.Lock()
 PROCESS_LOCK = threading.Lock()
 ACTIVE_PROCESS: subprocess.Popen[bytes] | None = None
@@ -128,8 +157,9 @@ def _run(name: str) -> dict[str, Any]:
         return {"ok": False, "error": "Unknown check name", "available": sorted(CHECKS)}
     stdout_path = RUNTIME / f"check-{name}.stdout"
     stderr_path = RUNTIME / f"check-{name}.stderr"
+    profile, denial_params = _sandbox_profile()
     argv = [
-        str(SANDBOX_EXEC), "-p", PROFILE,
+        str(SANDBOX_EXEC), "-p", profile,
         "-D", f"WORKDIR={WORKDIR}",
         "-D", f"RUNTIME_DIR={RUNTIME}",
         "-D", f"GIT_META={WORKDIR / '.git'}",
@@ -144,6 +174,7 @@ def _run(name: str) -> dict[str, Any]:
         "-D", f"NETRC={Path.home() / '.netrc'}",
         "-D", f"NPMRC={Path.home() / '.npmrc'}",
         "-D", f"KEYCHAINS_DIR={Path.home() / 'Library' / 'Keychains'}",
+        *denial_params,
         *check["argv"],
     ]
     timeout = max(5, min(int(check["timeout_seconds"]), MAX_TIMEOUT_SECONDS))

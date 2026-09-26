@@ -15,11 +15,15 @@ import uuid
 SCRIPT = Path(__file__).resolve().parents[1] / "agent_job_check_server.py"
 
 
-def load_broker(workdir: Path, runtime: Path, checks: list[dict[str, object]]):
+def load_broker(
+    workdir: Path, runtime: Path, checks: list[dict[str, object]],
+    deny_read: list[str] | None = None,
+):
     with patch.dict(os.environ, {
         "ACO_CHECKS_WORKDIR": str(workdir),
         "ACO_CHECKS_RUNTIME": str(runtime),
         "ACO_CHECKS_JSON": json.dumps(checks),
+        "ACO_CHECKS_DENY_READ": json.dumps(deny_read or []),
     }):
         spec = importlib.util.spec_from_file_location(f"check_broker_{uuid.uuid4().hex}", SCRIPT)
         assert spec is not None and spec.loader is not None
@@ -72,6 +76,43 @@ class ApprovedCheckBrokerTest(unittest.TestCase):
             self.assertTrue((workdir / "inside").exists())
             self.assertFalse((workdir / ".git/config").exists())
             self.assertFalse((root / "outside").exists())
+
+    def test_named_credentials_are_unreadable_but_runtime_stays_usable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            state = root / "state"
+            runtime = state / "runtime" / "job"
+            workdir = root / "work"
+            runtime.mkdir(parents=True)
+            workdir.mkdir()
+            (state / "opencode.env").write_text("OPENCODE_API_KEY=state-secret\n")
+            profile = root / "profile.env"
+            profile.write_text("ANTHROPIC_API_KEY=profile-secret\n")
+            command = (
+                f'cat "{state}/opencode.env" "{profile}"; '
+                f'echo runtime-ok > "{runtime}/probe"; cat "{runtime}/probe"; '
+                'echo work-ok > seen; cat seen'
+            )
+            broker = load_broker(
+                workdir, runtime,
+                [{"name": "probe", "argv": ["/bin/sh", "-c", command], "timeout_seconds": 5}],
+                deny_read=[str(state), str(profile)],
+            )
+
+            result = broker._run("probe")
+
+            output = f"{result['stdout']}{result['stderr']}"
+            self.assertNotIn("secret", output)
+            self.assertIn("runtime-ok", result["stdout"])
+            self.assertIn("work-ok", result["stdout"])
+
+    def test_relative_read_denials_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "work").mkdir()
+            (root / "runtime").mkdir()
+            with self.assertRaisesRegex(RuntimeError, "absolute paths"):
+                load_broker(root / "work", root / "runtime", [], deny_read=["relative/state"])
 
     def test_network_and_timeout_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

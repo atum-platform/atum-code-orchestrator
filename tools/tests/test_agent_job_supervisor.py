@@ -2252,6 +2252,14 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
                 mcp_path = Path(argv[argv.index("--mcp-config") + 1])
                 mcp_config = json.loads(mcp_path.read_text(encoding="utf-8"))
                 self.assertIn("aco_checks", mcp_config["mcpServers"])
+                denials = json.loads(
+                    mcp_config["mcpServers"]["aco_checks"]["env"]["ACO_CHECKS_DENY_READ"]
+                )
+                # The state directory holds the OpenCode key and implementation token.
+                self.assertIn(str(self.supervisor.state_dir.resolve()), denials)
+                self.assertIn(str(profile.resolve()), denials)
+                self.assertIn(str((Path.home() / ".local/share/opencode").resolve()), denials)
+                self.assertTrue(mcp_path.resolve().is_relative_to(self.supervisor.state_dir.resolve()))
                 self.assertIn("--safe-mode", argv)
                 self.assertNotIn("Bash", argv[argv.index("--tools") + 1].split(","))
                 self.assertIn("Agent", argv[argv.index("--disallowed-tools") + 1].split(","))
