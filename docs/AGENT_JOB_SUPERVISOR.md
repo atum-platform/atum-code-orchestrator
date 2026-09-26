@@ -131,8 +131,9 @@ accurate; through a wrapper the probe usually recorded the transient shell
 
 ### OpenCode provider
 
-OpenCode replaces Kimi as the default review target. Jobs are read-only;
-`implement` jobs and workdirs outside a Git work tree fail at submission.
+OpenCode replaces Kimi as the default review target. Jobs are read-only:
+`implement` jobs and the CAO backend are refused at submission, and a workdir
+outside a Git work tree fails at launch.
 
 - **CLI contract.** Only the verified 1.x `opencode run --format json` interface
   is accepted, checked with `--version` per resolved binary. The binary resolves
@@ -144,11 +145,13 @@ OpenCode replaces Kimi as the default review target. Jobs are read-only;
   clone of the workdir's Git-visible files (`git ls-files --cached --others
   --exclude-standard`). It omits `opencode.json`, `opencode.jsonc`, and
   `.opencode/`, from which OpenCode loads plugins and MCP servers without a trust
-  prompt; `.env` files other than examples; key, keystore, and credential files;
-  paths under secret-store directories; and symlinks. The copy is not a Git
+  prompt; `.env` and `.envrc` files other than examples, samples, and templates;
+  key, keystore, credential, and Terraform variable or state files; `.kube`,
+  `.docker`, and other secret-store directories; and symlinks. The copy is not a Git
   repository, so OpenCode's config discovery stops at its root. At most 50,000
-  files are staged, on a worker thread so a large repository cannot stall the
-  control socket.
+  files are staged. Staging and teardown run on worker threads so a large
+  repository cannot stall the control socket, and launch refuses to fall back to
+  the real workdir if the copy is missing.
 - **Private home.** `HOME`, `TMPDIR`, and all four XDG directories point into
   `runtime/<job>/opencode-home`, so no user config, plugins, sessions, or
   `~/.claude` guidance load, and temporary tool output is deleted with the job.
@@ -156,7 +159,8 @@ OpenCode replaces Kimi as the default review target. Jobs are read-only;
   are off, `--pure` skips external plugins, and language servers and formatters
   are disabled because they can start repository-local binaries.
 - **Permissions.** `OPENCODE_PERMISSION` and the job's `aco-review` agent deny
-  everything except read, glob, grep, and list, and deny reads of `.env` files.
+  everything except read, glob, grep, and list, and deny reads of `.env` files
+  other than examples, samples, and templates.
   OpenCode applies the last matching rule, and no rule is `ask`; headless `run`
   rejects any permission request it receives regardless.
 - **Credentials.** `OPENCODE_API_KEY` comes from `AGENT_JOB_PROFILE_ENV`, which
@@ -170,7 +174,8 @@ OpenCode replaces Kimi as the default review target. Jobs are read-only;
   `small_model` is pinned to the job's model, because titles and compaction
   otherwise call a separate small model. A default from the OpenAI or
   Anthropic family is refused so default reviews stay cross-family, and routing
-  sends an explicit OpenCode model from the caller's own family `direct`. Muse
+  sends an explicit OpenCode model from the caller's own family `direct`,
+  resolving a requested `default` to the configured model first. Muse
   Spark Contributor trains on prompts and completions, so Go serves it only after
   the workspace's Privacy settings allow paid endpoints that train on request
   data; otherwise the job fails with an upstream error naming that setting. Until

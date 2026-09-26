@@ -36,7 +36,8 @@ LEGACY_MODEL_ALIASES = {
     "codex": "codex_standard",
     "claude": "claude_deep",
     "kimi": "kimi_standard",
-    "opencode": "opencode_default",
+    # The supervisor resolves "default" to AGENT_JOB_OPENCODE_DEFAULT_MODEL.
+    "opencode": "default",
 }
 
 # OpenCode is a harness over many model families, so cross-family routing keys

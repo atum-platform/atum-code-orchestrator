@@ -169,7 +169,11 @@ class OpenCodeProviderTest(unittest.TestCase):
         self._write(".opencode/plugin/run.js", "export const P = async () => ({})\n")
         self._write(".env", "OPENAI_API_KEY=not-for-review\n")
         self._write(".env.example", "OPENAI_API_KEY=\n")
+        self._write(".env.sample", "OPENAI_API_KEY=\n")
+        self._write(".envrc", "export OPENAI_API_KEY=not-for-review\n")
         self._write("deploy/server.pem")
+        self._write("infra/prod.tfvars")
+        self._write(".kube/config")
         self._write("secrets/token.txt")
         (self.workdir / "link").symlink_to("/etc/hosts")
 
@@ -188,7 +192,7 @@ class OpenCodeProviderTest(unittest.TestCase):
         present = sorted(
             str(path.relative_to(staged)) for path in staged.rglob("*") if path.is_file()
         )
-        self.assertEqual([".env.example", ".gitignore", "src/app.py"], present)
+        self.assertEqual([".env.example", ".env.sample", ".gitignore", "src/app.py"], present)
         self.assertFalse((staged / "link").exists())
         home = runtime / "opencode-home"
         self.assertEqual(str(home), env["HOME"])
@@ -214,6 +218,10 @@ class OpenCodeProviderTest(unittest.TestCase):
         ):
             self.assertEqual("1", env[flag])
         self.assertNotIn("OPENCODE_AUTO_SHARE", env)
+
+    def test_launch_refuses_the_real_workdir_without_a_staged_copy(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "refusing the real workdir"):
+            self.supervisor._launch_cwd(self._job(job_id="00000000-0000-0000-0000-00000000000d"))
 
     def test_review_permissions_leave_no_ask_rules(self) -> None:
         def actions(value: object) -> list[str]:
@@ -286,11 +294,15 @@ class OpenCodeProviderTest(unittest.TestCase):
             json.dumps({"type": "error", "error": {"name": "APIError", "data": {
                 "message": "Go usage limit reached; resets in 3 hours", "statusCode": 429,
             }}}, separators=(",", ":")),
+            json.dumps({"type": "error", "error": {"type": "provider.auth", "message": "denied", "status": 403}}),
         ]) + "\n", encoding="utf-8")
 
         messages = supervisor_module._opencode_error_messages(stdout)
 
-        self.assertEqual(["Go usage limit reached; resets in 3 hours (status 429)"], messages)
+        self.assertEqual(
+            ["Go usage limit reached; resets in 3 hours (status 429)", "denied (status 403)"], messages
+        )
+        messages = messages[:1]
         limited, until, _ = rate_limit_cooldown("opencode", "\n".join(messages), 1000.0)
         self.assertTrue(limited)
         self.assertEqual(1000.0 + 3 * 3600, until)
@@ -2738,6 +2750,32 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("default", decision["model_alias"])
         self.assertEqual("claude", decision["fallback_provider"])
         self.assertEqual("opus", decision["fallback_model_alias"])
+
+    async def test_opencode_submissions_fail_closed_before_queueing(self) -> None:
+        self.supervisor.provider_limits["opencode"] = 1
+        base = {**self.spec("review"), "provider": "opencode", "model": "default"}
+        with self.assertRaisesRegex(RuntimeError, "read-only"):
+            await self.call({**base, "mode": "implement", "implement_capability": "test-capability"})
+        with patch.dict(os.environ, {"AGENT_JOB_CAO_PROVIDERS": "opencode"}):
+            with self.assertRaisesRegex(RuntimeError, "native backend"):
+                await self.call(base)
+
+    async def test_explicit_opencode_default_resolves_its_family_before_routing(self) -> None:
+        self.supervisor.routing_mode = "surface_canary"
+        intent = {
+            "action": "route_decide", "protocol_version": 2,
+            "caller_provider": "kimi", "surface": "kimi-code", "capability": "code_review",
+            "explicit_provider": "opencode", "surface_capabilities": {"durable_agent_jobs": True},
+        }
+        with patch.dict(os.environ, {"AGENT_JOB_OPENCODE_DEFAULT_MODEL": "opencode-go/kimi-k3"}):
+            same_family = await self.call(intent)
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AGENT_JOB_OPENCODE_DEFAULT_MODEL", None)
+            cross_family = await self.call(intent)
+
+        self.assertEqual("direct", same_family["lane"])
+        self.assertEqual("agent_jobs", cross_family["lane"])
+        self.assertEqual("opencode-go/muse-spark-1.3-contributor", cross_family["model_alias"])
 
     async def test_quota_broker_rebalances_default_but_not_explicit_route(self) -> None:
         now = time.time()

@@ -96,15 +96,24 @@ OPENCODE_EXCLUDED_DEFAULT_FAMILIES = {"openai", "anthropic"}
 # sub-agents, skills, and questions. Later rules win in OpenCode.
 OPENCODE_REVIEW_PERMISSION = {
     "*": "deny",
-    "read": {"*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow"},
+    "read": {
+        "*": "allow", "*.env": "deny", "*.env.*": "deny",
+        "*.env.example": "allow", "*.env.sample": "allow", "*.env.template": "allow",
+    },
     "glob": "allow",
     "grep": "allow",
     "list": "allow",
 }
 OPENCODE_EXCLUDED_NAMES = {"opencode.json", "opencode.jsonc", ".opencode", ".git"}
-SECRET_FILE_NAMES = {".netrc", ".npmrc", ".pypirc"}
+SECRET_DIR_NAMES = {".kube", ".docker"}
+SECRET_FILE_NAMES = {
+    ".netrc", ".npmrc", ".pypirc", ".envrc", ".pgpass", ".git-credentials", ".htpasswd",
+}
 SECRET_FILE_PREFIXES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")
-SECRET_FILE_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".keystore", ".jks")
+SECRET_FILE_SUFFIXES = (
+    ".pem", ".key", ".p8", ".p12", ".pfx", ".keystore", ".jks",
+    ".tfvars", ".tfstate", ".tfstate.backup",
+)
 MAX_OPENCODE_STAGED_FILES = 50_000
 TERMINAL_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
 SEMANTIC_PROGRESS_KINDS = {
@@ -456,13 +465,15 @@ def _opencode_error_messages(path: Path) -> list[str]:
         return []
     messages: list[str] = []
     for line in tail.splitlines():
-        if '"type":"error"' not in line:
+        if '"error"' not in line:
             continue
         try:
             record = json.loads(line)
         except json.JSONDecodeError:
             continue
-        error = record.get("error") if isinstance(record, dict) else None
+        if not isinstance(record, dict) or record.get("type") != "error":
+            continue
+        error = record.get("error")
         if not isinstance(error, dict):
             continue
         data = error.get("data") if isinstance(error.get("data"), dict) else {}
@@ -495,7 +506,7 @@ def _clone_file(source: Path, target: Path) -> None:
 
 
 def _is_secret_path(relative: Path) -> bool:
-    if any(part.lower() in SENSITIVE_PATH_PARTS for part in relative.parts):
+    if any(part.lower() in SENSITIVE_PATH_PARTS | SECRET_DIR_NAMES for part in relative.parts):
         return True
     name = relative.name.lower()
     if name == ".env" or (
@@ -1534,10 +1545,11 @@ class Supervisor:
 
     def _launch_cwd(self, job: dict[str, Any]) -> str:
         """OpenCode runs inside its staged copy, never the real workdir."""
-        if job.get("provider") == "opencode" and job.get("execution_backend", "native") != "cao":
+        if job.get("provider") == "opencode":
             workspace = self._job_runtime_dir(str(job["job_id"])) / "workspace"
-            if workspace.is_dir():
-                return str(workspace)
+            if not workspace.is_dir():
+                raise RuntimeError("OpenCode staged workspace is missing; refusing the real workdir")
+            return str(workspace)
         return str(job["workdir"])
 
     def _runtime_base(self) -> Path:
@@ -2257,8 +2269,11 @@ class Supervisor:
                 await self._terminate(proc)
             self._finish_job(job_id, "failed", "launch_error", str(exc))
         finally:
-            self._cleanup_job_runtime(job_id)
-            self.change_events.pop(job_id, None)
+            try:
+                # Off the event loop: a staged OpenCode copy can hold 50,000 files.
+                await asyncio.to_thread(self._cleanup_job_runtime, job_id)
+            finally:
+                self.change_events.pop(job_id, None)
             self.processes.pop(job_id, None)
             self.tasks.pop(job_id, None)
             self.log_locks.pop(job_id, None)
@@ -2408,7 +2423,8 @@ class Supervisor:
                 raise ValueError(
                     "OpenCode jobs are read-only until workspace-confined implementation is verified"
                 )
-            _require_git_workdir(workdir)
+            if execution_backend == "cao":
+                raise ValueError("OpenCode jobs require the native backend; the CAO bridge cannot isolate them")
         legacy_timeout = payload.get("timeout_seconds")
         requested_run_timeout = payload.get("run_timeout_seconds")
         run_timeout = max(MIN_TIMEOUT_SECONDS, min(
@@ -2483,6 +2499,13 @@ class Supervisor:
         if len(_json(intent).encode("utf-8")) > MAX_INTENT_BYTES:
             raise ValueError(f"Routing intent exceeds {MAX_INTENT_BYTES} UTF-8 bytes")
         canonical_intent = normalize_intent(intent)
+        if (
+            canonical_intent["explicit_provider"] == "opencode"
+            and canonical_intent["explicit_model"].lower() in {"", "auto", "default", "opencode"}
+        ):
+            # The configured default decides the family, so resolve it before
+            # the same-family check rather than letting "default" pass as unknown.
+            canonical_intent["explicit_model"] = _normalize_opencode_model("")
         if canonical_intent["escalation_evidence"]:
             clean_evidence, _ = redact(
                 canonical_intent["escalation_evidence"]

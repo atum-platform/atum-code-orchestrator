@@ -78,11 +78,22 @@ CLI, in disposable repositories under a throwaway home:
   only the source file, and the run ended with exit 1 and a parsed error event.
   Without a key the cause was `ProviderModelNotFoundError`, because OpenCode only
   activates the Go provider when `OPENCODE_API_KEY` is present.
-- Cross-family review was unavailable: the enforced route chose Kimi, whose job
-  `67402053` failed with the same subscription 403, and the one-hop escalation
-  returned `direct` because Codex was quota-exhausted. A direct adversarial
-  review found the small-model billing path, LSP/formatter execution, temporary
-  file residue, and event-loop blocking above; each is fixed and covered.
+- The routed cross-family review was unavailable: the enforced route chose
+  Kimi, whose job `67402053` failed with the same subscription 403, and the
+  one-hop escalation returned `direct` because Codex was quota-exhausted. A direct
+  adversarial review found the small-model billing path, LSP/formatter
+  execution, temporary file residue, and event-loop blocking; each is fixed and
+  covered.
+- Once the Go key was available, Kimi K3 (Moonshot) reviewed the branch through
+  this provider's own launch path: 406 s, about US$1.37 of the Kimi K3
+  allowance, 25 reads and 9 greps, all inside the staged copy, plus 2 `bash`
+  attempts that OpenCode rejected as unavailable tools. Verdict SHIP, with
+  findings now fixed and tested: the protocol-v1 `opencode_default` alias the
+  supervisor rejected; an explicit `default` from a Kimi caller escaping the
+  same-family check when the default is Kimi K3; missing secret patterns and
+  unreadable staged `.env.sample`/`.env.template` files; a git probe and runtime
+  teardown on the event loop; an OpenCode job accepted for the CAO backend; and
+  a silent fallback to the real workdir.
 - Authenticated Go runs, with the key materialized from Infisical
   (`Infrastructure`/`dev`/`OPENCODE_GO_API_KEY`) into an owner-only env file
   once the owner named the secret:

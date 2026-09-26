@@ -396,3 +396,9 @@ class AgentRoutingPolicyTest(unittest.TestCase):
                 intent = self.intent(caller, "code_review")
                 intent.update(explicit_provider="opencode", explicit_model=model)
                 self.assertEqual(lane, decide(intent)["lane"])
+
+    def test_v1_opencode_routes_return_a_model_the_supervisor_accepts(self) -> None:
+        decision = decide(self.intent("codex", "code_review"))
+        self.assertEqual(1, decision["protocol_version"])
+        self.assertEqual("opencode", decision["provider"])
+        self.assertEqual("default", decision["model_alias"])

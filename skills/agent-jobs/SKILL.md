@@ -182,7 +182,8 @@ OpenCode submissions may omit `model` or pass `default`; the supervisor then
 selects `AGENT_JOB_OPENCODE_DEFAULT_MODEL`. OpenCode is read-only, and explicit
 models must use an allowed provider prefix (`opencode-go/` by default) so jobs
 never draw pay-as-you-go credits. An explicit OpenCode model from the caller's own
-family routes `direct`, because it would not be a cross-family review.
+family, including a `default` that resolves to one, routes `direct`, because it
+would not be a cross-family review.
 
 Kimi submissions may omit `model`; the supervisor then selects
 `kimi-code/k3`. It canonicalizes supported K3 and K2.7 aliases and maps stale or
