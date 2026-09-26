@@ -83,9 +83,17 @@ CLI, in disposable repositories under a throwaway home:
   returned `direct` because Codex was quota-exhausted. A direct adversarial
   review found the small-model billing path, LSP/formatter execution, temporary
   file residue, and event-loop blocking above; each is fixed and covered.
-- Not yet verified: an authenticated Go review. The agent session was not
-  permitted to read secrets from Infisical, so the key must be materialized by an
-  operator (see `docs/MIGRATION.md`).
+- Authenticated Go runs, with the key materialized from Infisical
+  (`Infrastructure`/`dev`/`OPENCODE_GO_API_KEY`) into an owner-only env file
+  once the owner named the secret:
+  - `opencode-go/muse-spark-1.3-contributor` failed with "This Go model trains on
+    request data. Allow paid endpoints that train on request data in your
+    workspace's Privacy settings", an account consent setting the agent did not
+    change.
+  - `opencode-go/kimi-k3` completed in 6.6 s with exit 0 and the event sequence
+    `step_start, tool_use, step_finish, step_start, text, step_finish`; it found
+    the planted bug for about US$0.017. That transcript is now the decoder fixture
+    `tools/tests/fixtures/opencode-1.18.32-run.jsonl`.
 
 ## Follow-ups
 

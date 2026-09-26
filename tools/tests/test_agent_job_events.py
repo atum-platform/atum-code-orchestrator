@@ -853,5 +853,27 @@ class ProviderEventDecoderTest(unittest.TestCase):
             "error_name": "APIError", "status_code": 429, "retryable": False,
         }, events[4]["payload"])
 
+    def test_real_opencode_transcript_decodes_without_tool_content(self) -> None:
+        # Captured from OpenCode 1.18.32 `run --format json` on the Go subscription.
+        fixture = Path(__file__).with_name("fixtures") / "opencode-1.18.32-run.jsonl"
+        raw = fixture.read_bytes()
+        tool = next(
+            json.loads(line)["part"]["state"]
+            for line in raw.decode().splitlines()
+            if json.loads(line)["type"] == "tool_use"
+        )
+        decoder = ProviderEventDecoder("opencode")
+        events = decoder.feed(raw[:500]) + decoder.feed(raw[500:]) + decoder.finish()
+
+        self.assertEqual(
+            ["progress", "tool_finished", "usage", "progress", "message_delta", "usage"],
+            [event["kind"] for event in events],
+        )
+        self.assertIn("a - b", events[4]["payload"]["text"])
+        self.assertEqual("stop", events[5]["payload"]["reason"])
+        journal = json.dumps(events)
+        self.assertNotIn(tool["input"]["filePath"], journal)
+        self.assertNotIn(tool["output"], journal)
+
 if __name__ == "__main__":
     unittest.main()

@@ -835,8 +835,9 @@
   `opencode-go/muse-spark-1.3-contributor`, Meta) inside a sealed, staged copy of
   the repository with a private home and deny-by-default permissions. Models are
   limited to `opencode-go/` so the key cannot draw pay-as-you-go credits.
-- Verification: 330 tests pass; a real-CLI run on a hostile repository executed
-  neither its plugin nor its MCP server. An authenticated Go review is pending an
-  operator-materialized key.
+- Verification: 331 tests pass; a real-CLI run on a hostile repository executed
+  neither its plugin nor its MCP server; an authenticated Go run with Kimi K3
+  completed. Muse Spark Contributor additionally needs the workspace's
+  training-endpoint privacy opt-in.
 - Details, spike evidence, and follow-ups:
   `docs/session-logs/2026-09-26-opencode-provider.md`.

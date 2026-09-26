@@ -123,6 +123,12 @@ OpenCode replaces Kimi as the default review target. On each Mac:
 4. Submit one read-only review with `--provider opencode` and confirm it
    completes with a `usage` event and an answer.
 
+The default Muse Spark Contributor model works only after the OpenCode
+workspace's Privacy settings allow paid endpoints that train on request data.
+Until someone opts in, reinstall with
+`AGENT_JOB_OPENCODE_DEFAULT_MODEL=opencode-go/kimi-k3`; afterwards reinstall
+without it.
+
 To rotate the key, rerun step 2; the supervisor reads the file at every launch.
 Guidance defaults in coding clients change only when
 `tools/install_agent_job_clients.py --apply` next runs with the desktop apps

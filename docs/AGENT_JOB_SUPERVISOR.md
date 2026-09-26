@@ -171,8 +171,12 @@ OpenCode replaces Kimi as the default review target. Jobs are read-only;
   otherwise call a separate small model. A default from the OpenAI or
   Anthropic family is refused so default reviews stay cross-family, and routing
   sends an explicit OpenCode model from the caller's own family `direct`. Muse
-  Spark Contributor trains on prompts and completions. Go includes US$60 a month
-  of it and US$15 a month of `opencode-go/kimi-k3` at list prices.
+  Spark Contributor trains on prompts and completions, so Go serves it only after
+  the workspace's Privacy settings allow paid endpoints that train on request
+  data; otherwise the job fails with an upstream error naming that setting. Until
+  then set `AGENT_JOB_OPENCODE_DEFAULT_MODEL=opencode-go/kimi-k3`, which does not
+  train. Go includes US$60 a month of Muse Spark and US$15 a month of Kimi K3 at
+  list prices.
 - **Errors.** Failures arrive as JSON `error` events on stdout with exit code 1.
   Jobs also pass `--print-logs --log-level ERROR`, because the JSON event can
   reduce the cause to "Unexpected server error". Only error-event text, never
