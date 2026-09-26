@@ -37,8 +37,27 @@ first place.
 CodexBar showed the weekly Codex window at 100%, which is why routing has sent
 Codex's usual slots elsewhere.
 
+## Review
+
+OpenCode (Muse Spark, `xhigh`) review `0a33fb06-4839-4f95-9d95-87c0298302ee`
+held on one point. Once the override was no longer resolved, a relative
+`AGENT_JOB_CODEX_BIN` would have been stored relative and resolved against
+launchd's working directory. The override is now made absolute without
+following links, as `_claude_binary` does. Also taken from the review:
+
+- Retained paths expand `~`.
+- Retained and candidate binaries must be executable, as the supervisor
+  requires at launch.
+- A runtime test covers the ChatGPT bundle fallback.
+- The docs cover explicit overrides.
+
+It confirmed that nothing relies on the pin being canonical: `binary_path` is
+resolved at launch, and process identity uses the PID and start time.
+
 ## Verification
 
-- New installer test: a missing retained path is rediscovered as the launcher
-  link, a valid retained path is kept, and an explicit link is not resolved.
-- Full suite: 340 tests pass.
+- Installer tests: a missing or non-executable retained path is rediscovered as
+  the launcher link, a valid retained path is kept, an explicit link is not
+  resolved, and a relative override is stored absolute.
+- Runtime test: stale links fall back to the ChatGPT bundle.
+- Full suite: 341 tests pass.

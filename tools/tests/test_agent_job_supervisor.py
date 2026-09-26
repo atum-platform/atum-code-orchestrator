@@ -75,6 +75,20 @@ class ProviderBinaryDiscoveryTest(unittest.TestCase):
         on_path = self._executable(self.root / "bin" / "claude")
         self.assertEqual(str(on_path.resolve()), self._find("claude", which=str(on_path)))
 
+    def test_codex_falls_back_to_the_chatgpt_bundle_when_links_are_stale(self) -> None:
+        bundle = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"
+        real_is_file = Path.is_file
+
+        def is_file(path: Path) -> bool:
+            return str(path) == bundle or real_is_file(path)
+
+        with patch.object(supervisor_module.Path, "is_file", is_file), \
+             patch.object(supervisor_module.Path, "resolve", lambda path, strict=False: path), \
+             patch.object(supervisor_module.os, "access", lambda path, mode: str(path) == bundle):
+            self.assertEqual(bundle, self._find("codex", env={
+                "AGENT_JOB_CODEX_BIN": "/Applications/ChatGPT.app/Contents/Resources/codex",
+            }))
+
     def test_desktop_releases_only_apply_to_claude(self) -> None:
         self._desktop_release("2.1.281")
         codex = self._executable(self.root / "bin" / "codex")

@@ -118,15 +118,20 @@ def _provider_binary(
     # bundled codex to Resources/codex-cli/bin/codex and broke the pin).
     override = os.environ.get(env_name, "").strip()
     if override:
-        return str(Path(override).expanduser())
+        # Absolute, but symlinks stay links.
+        return os.path.abspath(Path(override).expanduser())
+    def usable(path: Path) -> bool:
+        # The same test the supervisor applies at launch.
+        return path.is_file() and os.access(path, os.X_OK)
+
     retained = existing.get(env_name, "").strip()
-    if retained and Path(retained).is_file():
+    if retained and usable(Path(retained).expanduser()):
         return retained
     discovered = shutil.which(command)
     if discovered:
-        return discovered
+        return os.path.abspath(discovered)
     for candidate in candidates:
-        if candidate.is_file():
+        if usable(candidate):
             return str(candidate)
     return str(candidates[0])
 

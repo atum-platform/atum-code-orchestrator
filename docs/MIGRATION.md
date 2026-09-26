@@ -35,7 +35,10 @@ OpenCode binary, and profile-environment overrides from the existing ACO
 LaunchAgent.
 A retained Codex binary that no longer exists is rediscovered instead, and
 launcher symlinks such as `~/.local/bin/codex` are stored as links rather than
-their app-bundle targets, which app updates can move.
+their app-bundle targets, which app updates can move. An explicit
+`AGENT_JOB_CODEX_BIN` on the install command is stored as given (made
+absolute, links kept); if it later disappears, the supervisor falls back to
+`PATH` and the ChatGPT app's bundled CLI at launch.
 The Claude binary is the exception: it is resolved at each launch unless
 `AGENT_JOB_CLAUDE_BIN` is set on the install command (see
 [Retiring a Claude Launcher Pin](#retiring-a-claude-launcher-pin)).

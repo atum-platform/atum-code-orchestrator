@@ -104,10 +104,25 @@ class SupervisorInstallerTest(unittest.TestCase):
                 self.assertEqual(str(bundle), installer._provider_binary(
                     "AGENT_JOB_CODEX_BIN", "codex", (link,), {"AGENT_JOB_CODEX_BIN": str(bundle)},
                 ))
+                # A retained file that cannot run is rediscovered too.
+                stale = root / "not-executable"
+                stale.write_text("")
+                self.assertEqual(str(link), installer._provider_binary(
+                    "AGENT_JOB_CODEX_BIN", "codex", (link,), {"AGENT_JOB_CODEX_BIN": str(stale)},
+                ))
             with patch.dict(os.environ, {"AGENT_JOB_CODEX_BIN": str(link)}, clear=True):
                 self.assertEqual(str(link), installer._provider_binary(
                     "AGENT_JOB_CODEX_BIN", "codex", (link,), {},
                 ))
+            with patch.dict(os.environ, {"AGENT_JOB_CODEX_BIN": "bin/codex"}, clear=True):
+                previous = os.getcwd()
+                os.chdir(root)
+                try:
+                    self.assertEqual(str(root.resolve() / "bin/codex"), installer._provider_binary(
+                        "AGENT_JOB_CODEX_BIN", "codex", (link,), {},
+                    ))
+                finally:
+                    os.chdir(previous)
 
     def test_launchd_transition_budget_allows_thirty_seconds(self) -> None:
         self.assertEqual(300, installer.SERVICE_TRANSITION_POLLS)
