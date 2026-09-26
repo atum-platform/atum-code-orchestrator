@@ -67,7 +67,9 @@ def _load_read_denials() -> list[Path]:
         isinstance(path, str) and os.path.isabs(path) for path in paths
     ):
         raise RuntimeError("Approved-check read denials must be absolute paths")
-    return [Path(path) for path in paths]
+    # Seatbelt matches canonical paths (/tmp is /private/tmp), so resolve here
+    # rather than trust the caller to have done it.
+    return [Path(path).resolve() for path in paths]
 
 
 DENY_READ = _load_read_denials()

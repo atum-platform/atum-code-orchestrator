@@ -2259,6 +2259,8 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(str(self.supervisor.state_dir.resolve()), denials)
                 self.assertIn(str(profile.resolve()), denials)
                 self.assertIn(str((Path.home() / ".local/share/opencode").resolve()), denials)
+                self.assertIn(str((Path.home() / ".kimi-code").resolve()), denials)
+                self.assertIn(str(supervisor_module.IMPLEMENT_TOKEN_PATH.resolve()), denials)
                 self.assertTrue(mcp_path.resolve().is_relative_to(self.supervisor.state_dir.resolve()))
                 self.assertIn("--safe-mode", argv)
                 self.assertNotIn("Bash", argv[argv.index("--tools") + 1].split(","))
