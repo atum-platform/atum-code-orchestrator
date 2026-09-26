@@ -178,7 +178,7 @@ class OpenCodeProviderTest(unittest.TestCase):
 
         self.assertEqual([
             "/opt/homebrew/bin/opencode", "run", "--pure", "--format", "json",
-            "--agent", "aco-review", "--model", self.MODEL,
+            "--agent", "aco-review", "--model", self.MODEL, "--title", "ACO review",
             "--print-logs", "--log-level", "ERROR",
         ], argv)
         self.assertEqual("Review the change.", stdin_text)
@@ -192,7 +192,7 @@ class OpenCodeProviderTest(unittest.TestCase):
         self.assertFalse((staged / "link").exists())
         home = runtime / "opencode-home"
         self.assertEqual(str(home), env["HOME"])
-        for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"):
+        for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "TMPDIR"):
             self.assertTrue(env[name].startswith(str(home)))
         self.assertEqual(
             supervisor_module.OPENCODE_REVIEW_PERMISSION, json.loads(env["OPENCODE_PERMISSION"])
@@ -200,6 +200,10 @@ class OpenCodeProviderTest(unittest.TestCase):
         config = json.loads(env["OPENCODE_CONFIG_CONTENT"])
         self.assertEqual("disabled", config["share"])
         self.assertEqual({}, config["mcp"])
+        self.assertIs(False, config["lsp"])
+        self.assertIs(False, config["formatter"])
+        self.assertEqual(["opencode-go"], config["enabled_providers"])
+        self.assertEqual(self.MODEL, config["small_model"])
         self.assertEqual(
             supervisor_module.OPENCODE_REVIEW_PERMISSION,
             config["agent"]["aco-review"]["permission"],

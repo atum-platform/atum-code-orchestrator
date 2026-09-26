@@ -53,7 +53,12 @@ CLI, in disposable repositories under a throwaway home:
   content; error-event-only rate-limit scanning; `--print-logs --log-level ERROR`.
 - Models default to `opencode-go/muse-spark-1.3-contributor`, must match the
   `opencode-go/` prefix so the key cannot draw pay-as-you-go credits, and a
-  default from a caller family is refused.
+  default from a caller family is refused. Because one key serves every OpenCode
+  provider and titles or compaction use a separate small model, jobs also enable
+  only the allowed providers, pass a fixed `--title`, and pin `small_model`.
+- Language servers and formatters are disabled, `TMPDIR` lives in the job
+  runtime, and the command builder runs on a worker thread so staging a large
+  repository cannot block the supervisor's event loop.
 - Routing: OpenCode takes every slot Kimi held. Engineering work lost its
   automatic fallback because OpenCode is read-only. Cross-family checks for
   explicit OpenCode models use the model's family. Kimi stays accepted only as an
@@ -73,6 +78,11 @@ CLI, in disposable repositories under a throwaway home:
   only the source file, and the run ended with exit 1 and a parsed error event.
   Without a key the cause was `ProviderModelNotFoundError`, because OpenCode only
   activates the Go provider when `OPENCODE_API_KEY` is present.
+- Cross-family review was unavailable: the enforced route chose Kimi, whose job
+  `67402053` failed with the same subscription 403, and the one-hop escalation
+  returned `direct` because Codex was quota-exhausted. A direct adversarial
+  review found the small-model billing path, LSP/formatter execution, temporary
+  file residue, and event-loop blocking above; each is fixed and covered.
 - Not yet verified: an authenticated Go review. The agent session was not
   permitted to read secrets from Infisical, so the key must be materialized by an
   operator (see `docs/MIGRATION.md`).

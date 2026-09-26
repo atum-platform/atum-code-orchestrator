@@ -562,10 +562,12 @@ def _stage_opencode_workspace(source: Path, target: Path) -> Path:
     return target
 
 
-def _opencode_isolation_env(home: Path) -> dict[str, str]:
+def _opencode_isolation_env(home: Path, model: str) -> dict[str, str]:
     """Give OpenCode a private home so no user config, plugins, or sessions load."""
     home.mkdir(mode=0o700, parents=True, exist_ok=True)
-    env = {"HOME": str(home)}
+    # Temporary tool output then lives and dies with the job runtime.
+    (home / "tmp").mkdir(mode=0o700, exist_ok=True)
+    env = {"HOME": str(home), "TMPDIR": f"{home / 'tmp'}{os.sep}"}
     for name, subdir in (
         ("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "data"),
         ("XDG_CACHE_HOME", "cache"), ("XDG_STATE_HOME", "state"),
@@ -578,6 +580,13 @@ def _opencode_isolation_env(home: Path) -> dict[str, str]:
         "share": "disabled",
         "autoupdate": False,
         "mcp": {},
+        # Language servers and formatters can start repository-local binaries.
+        "lsp": False,
+        "formatter": False,
+        # One key serves every OpenCode provider, and titles or compaction use a
+        # separate small model, so both are held to the allowed providers.
+        "enabled_providers": sorted({prefix.split("/")[0] for prefix in _opencode_model_prefixes()}),
+        "small_model": model,
         "agent": {
             OPENCODE_AGENT: {
                 "mode": "primary",
@@ -1503,13 +1512,14 @@ class Supervisor:
             runtime.mkdir(parents=True, mode=0o700, exist_ok=True)
             _stage_opencode_workspace(Path(job["workdir"]), runtime / "workspace")
             env = _provider_env(provider)
-            env.update(_opencode_isolation_env(runtime / "opencode-home"))
+            env.update(_opencode_isolation_env(runtime / "opencode-home", model))
             # --pure skips external plugins; the prompt arrives on stdin, which
             # `run` reads to EOF whenever stdin is not a terminal. Error logs on
             # stderr carry the causes the JSON stream reduces to "server error".
             argv = [
                 binary, "run", "--pure", "--format", "json", "--agent", OPENCODE_AGENT,
-                "--model", model, "--print-logs", "--log-level", "ERROR",
+                "--model", model, "--title", "ACO review",
+                "--print-logs", "--log-level", "ERROR",
             ]
             return argv, prompt, env
         sandbox = "read-only" if mode == "readonly" else "workspace-write"
@@ -2139,7 +2149,9 @@ class Supervisor:
                     "Queue timeout reached before a provider slot became available",
                 )
                 return
-            argv, stdin_text, env = self.command_builder(job)
+            # Off the event loop: staging a large repository must not stall the
+            # control socket.
+            argv, stdin_text, env = await asyncio.to_thread(self.command_builder, job)
             proc = await asyncio.create_subprocess_exec(
                 *argv,
                 cwd=self._launch_cwd(job),

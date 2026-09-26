@@ -147,11 +147,14 @@ OpenCode replaces Kimi as the default review target. Jobs are read-only;
   prompt; `.env` files other than examples; key, keystore, and credential files;
   paths under secret-store directories; and symlinks. The copy is not a Git
   repository, so OpenCode's config discovery stops at its root. At most 50,000
-  files are staged.
-- **Private home.** `HOME` and all four XDG directories point into
+  files are staged, on a worker thread so a large repository cannot stall the
+  control socket.
+- **Private home.** `HOME`, `TMPDIR`, and all four XDG directories point into
   `runtime/<job>/opencode-home`, so no user config, plugins, sessions, or
-  `~/.claude` guidance load. `OPENCODE_DISABLE_CLAUDE_CODE`, default plugins, LSP
-  downloads, and auto-update are off, and `--pure` skips external plugins.
+  `~/.claude` guidance load, and temporary tool output is deleted with the job.
+  `OPENCODE_DISABLE_CLAUDE_CODE`, default plugins, LSP downloads, and auto-update
+  are off, `--pure` skips external plugins, and language servers and formatters
+  are disabled because they can start repository-local binaries.
 - **Permissions.** `OPENCODE_PERMISSION` and the job's `aco-review` agent deny
   everything except read, glob, grep, and list, and deny reads of `.env` files.
   OpenCode applies the last matching rule, and no rule is `ask`; headless `run`
@@ -162,7 +165,10 @@ OpenCode replaces Kimi as the default review target. Jobs are read-only;
 - **Models and billing.** `default` resolves to `AGENT_JOB_OPENCODE_DEFAULT_MODEL`
   (`opencode-go/muse-spark-1.3-contributor`). Every model must match
   `AGENT_JOB_OPENCODE_MODEL_PREFIXES` (`opencode-go/`), because the same key could
-  otherwise draw pay-as-you-go Zen credits. A default from the OpenAI or
+  otherwise draw pay-as-you-go Zen credits. Only the providers those prefixes
+  name are enabled, the session title is fixed with `--title`, and
+  `small_model` is pinned to the job's model, because titles and compaction
+  otherwise call a separate small model. A default from the OpenAI or
   Anthropic family is refused so default reviews stay cross-family, and routing
   sends an explicit OpenCode model from the caller's own family `direct`. Muse
   Spark Contributor trains on prompts and completions. Go includes US$60 a month
