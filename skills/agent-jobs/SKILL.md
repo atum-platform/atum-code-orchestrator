@@ -149,7 +149,8 @@ after its tokens have already been spent.
   `route-decide`, `route-feedback`, `route-reconcile`, `route-status`, `submit`,
   `read`, `list`, `cancel`, or `inbox` arguments.
 - **OpenCode:** call the same tools from the `agent-jobs` MCP server, passing
-  `caller_provider=opencode` and `surface=opencode`.
+  `caller_provider=opencode`, `surface=opencode`, and your current model as
+  `caller_model` so routing can skip a target from your own model family.
 
 Both review bindings use the same safety core. Explicit implementation goes
 directly to the supervisor's capability-gated write path. Read

@@ -11,8 +11,8 @@ POLICY_VERSION = "2026-09-26.2"
 CAPABILITY_MATRIX_VERSION = "2026-09-26.2"
 ROUTING_MODES = {"shadow", "codex_canary", "surface_canary"}
 
-PROVIDERS = {"codex", "claude", "kimi", "opencode", "hermes"}
-SURFACES = {"codex", "claude-code", "claude-desktop", "kimi-code", "opencode", "hermes"}
+PROVIDERS = {"codex", "claude", "opencode", "hermes"}
+SURFACES = {"codex", "claude-code", "claude-desktop", "opencode", "hermes"}
 CAPABILITIES = {
     "implementation", "code_review", "planning", "architecture", "design",
     "product", "copywriting", "research", "exploration", "tests",
@@ -35,14 +35,15 @@ MAX_ESCALATION_EVIDENCE_CHARS = 2_000
 LEGACY_MODEL_ALIASES = {
     "codex": "codex_standard",
     "claude": "claude_deep",
-    "kimi": "kimi_standard",
     # The supervisor resolves "default" to AGENT_JOB_OPENCODE_DEFAULT_MODEL.
     "opencode": "default",
 }
 
 # OpenCode is a harness over many model families, so cross-family routing keys
 # on the model it runs rather than on the provider name.
-CALLER_FAMILIES = {"codex": "openai", "claude": "anthropic", "kimi": "moonshot"}
+CALLER_FAMILIES = {"codex": "openai", "claude": "anthropic"}
+# Targets whose family an OpenCode caller must avoid when it runs one of them.
+TARGET_FAMILIES = {"codex": "openai", "claude": "anthropic"}
 OPENCODE_MODEL_FAMILIES = (
     ("muse-spark", "meta"), ("kimi-", "moonshot"), ("gpt-", "openai"),
     ("claude-", "anthropic"), ("gemini-", "google"), ("grok", "xai"),
@@ -74,12 +75,6 @@ PROVIDER_CAPABILITY_MATRIX = {
         "explicit_only_models": ["fable"],
         "strengths": ["planning", "architecture", "design", "product", "copywriting", "research", "code_review"],
     },
-    "kimi": {
-        "deep_model": "kimi-code/k3",
-        "standard_model": "kimi-code/kimi-for-coding",
-        "fast_model": "kimi-code/kimi-for-coding-highspeed",
-        "strengths": ["code_review", "implementation", "tests", "exploration"],
-    },
     # "default" resolves to AGENT_JOB_OPENCODE_DEFAULT_MODEL in the supervisor,
     # so moving between Go models or tiers is configuration, not policy.
     "opencode": {
@@ -94,14 +89,12 @@ SURFACE_CAPABILITY_MATRIX = {
     "codex": {"durable_agent_jobs", "native_subagents"},
     "claude-code": {"durable_agent_jobs", "native_subagents"},
     "claude-desktop": {"durable_agent_jobs"},
-    "kimi-code": {"durable_agent_jobs", "native_subagents"},
     "opencode": {"durable_agent_jobs"},
     "hermes": {"durable_agent_jobs"},
 }
 CALLER_SURFACES = {
     "codex": {"codex"},
     "claude": {"claude-code", "claude-desktop"},
-    "kimi": {"kimi-code"},
     # An OpenCode caller may run any model family, so it never routes to itself.
     "opencode": {"opencode"},
     "hermes": {"hermes"},
@@ -114,14 +107,12 @@ THINKING_CAPABILITIES = {
 NATIVE_CAPABILITIES = {
     "codex": ENGINEERING_CAPABILITIES,
     "claude": THINKING_CAPABILITIES,
-    "kimi": ENGINEERING_CAPABILITIES,
     "opencode": set(),
     "hermes": set(),
 }
 NATIVE_WORKER_PROFILES = {
     "codex": "codex-worker",
     "claude": "general-purpose",
-    "kimi": "general-purpose",
 }
 
 
@@ -155,7 +146,7 @@ def _default_targets(caller: str, capability: str) -> tuple[str, str]:
     if capability in THINKING_CAPABILITIES:
         if caller in {"codex", "hermes"}:
             return "claude", "opencode"
-        if caller in {"kimi", "opencode"}:
+        if caller == "opencode":
             return "claude", "codex"
         return "", ""
     return "", ""
@@ -205,6 +196,7 @@ def normalize_intent(intent: dict[str, Any]) -> dict[str, Any]:
 
     explicit_provider = str(intent.get("explicit_provider") or "").strip().lower()
     explicit_model = str(intent.get("explicit_model") or "").strip()
+    caller_model = str(intent.get("caller_model") or "").strip()
     session_id = str(intent.get("session_id") or "").strip()
     previous_decision_id = str(intent.get("previous_decision_id") or "").strip()
     escalation_reason = str(intent.get("escalation_reason") or "").strip().lower()
@@ -213,6 +205,8 @@ def normalize_intent(intent: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"Unsupported explicit_provider: {explicit_provider}")
     if len(explicit_model) > 200:
         raise ValueError("explicit_model is too long")
+    if len(caller_model) > 200:
+        raise ValueError("caller_model is too long")
     if len(session_id) > 200:
         raise ValueError("session_id is too long")
     if len(previous_decision_id) > 200:
@@ -259,6 +253,7 @@ def normalize_intent(intent: dict[str, Any]) -> dict[str, Any]:
         "effective_surface_capabilities": effective_capabilities,
         "explicit_provider": explicit_provider,
         "explicit_model": explicit_model,
+        "caller_model": caller_model,
         "session_id": session_id,
         "previous_decision_id": previous_decision_id,
         "escalation_reason": escalation_reason,
@@ -303,10 +298,6 @@ def _model_alias(provider: str, intent: dict[str, Any]) -> str:
             }
             or intent["complexity"] == "deep"
         ) else matrix["standard_model"]
-    if provider == "kimi":
-        if intent["capability"] == "code_review" or intent["complexity"] in {"standard", "deep"}:
-            return matrix["deep_model"]
-        return matrix["fast_model"] if intent["complexity"] == "trivial" else matrix["standard_model"]
     if provider == "opencode":
         return matrix["standard_model"]
     return matrix["deep_model"] if intent["complexity"] == "deep" else matrix["standard_model"]
@@ -327,7 +318,7 @@ def decide(intent: dict[str, Any], routing_mode: str = "shadow") -> dict[str, An
     surface_canary = (
         routing_mode == "surface_canary"
         and intent["protocol_version"] == 2
-        and surface in {"codex", "claude-code", "claude-desktop", "kimi-code", "opencode"}
+        and surface in {"codex", "claude-code", "claude-desktop", "opencode"}
     )
     canary = codex_canary or surface_canary
     mode = routing_mode if canary else "shadow"
@@ -376,6 +367,17 @@ def decide(intent: dict[str, Any], routing_mode: str = "shadow") -> dict[str, An
         )
     else:
         provider, fallback_provider = _default_targets(caller, capability)
+        if caller == "opencode" and intent["caller_model"]:
+            # An OpenCode caller can run any family, so drop the target it
+            # shares a family with instead of calling that review cross-family.
+            family = opencode_model_family(intent["caller_model"])
+            candidates = [
+                target for target in (provider, fallback_provider)
+                if target and TARGET_FAMILIES.get(target) != family
+            ]
+            if len(candidates) < len([t for t in (provider, fallback_provider) if t]):
+                reasons.append(f"skipped the {family} target shared with the caller's model")
+            provider, fallback_provider = (candidates + ["", ""])[:2]
         if provider:
             lane = "agent_jobs"
             reasons.append(

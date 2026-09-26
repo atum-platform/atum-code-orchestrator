@@ -411,5 +411,17 @@ class ClientInstallerTest(unittest.TestCase):
         self.assertFalse({name for name in names if "Kimi" in name})
         self.assertNotIn("Kimi guidance", installer.GUIDANCE)
 
+    def test_ambiguous_or_malformed_opencode_configs_fail_closed(self) -> None:
+        base = self.root / "dual" / ".config/opencode"
+        base.mkdir(parents=True)
+        (base / "opencode.json").write_text("{}", encoding="utf-8")
+        (base / "opencode.jsonc").write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "keep one"):
+            installer.merge_opencode_config(base / "opencode.jsonc", "test", False, self.root / "dual")
+        path = self.root / "opencode.json"
+        path.write_text(json.dumps({"mcp": {"agent-jobs": {"environment": "X=1"}}}), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "environment must be a JSON object"):
+            installer.merge_opencode_config(path, "test", False, self.root)
+
 if __name__ == "__main__":
     unittest.main()

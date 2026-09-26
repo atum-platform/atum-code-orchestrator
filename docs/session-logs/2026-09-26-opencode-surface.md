@@ -41,3 +41,23 @@ enabled OpenCode Go from the owner-only ACO key file without exposing the key,
 and `config disable --provider kimi` turned off Kimi. A live read reported the Go
 windows at 46% (five-hour), 18% (weekly), and 9% (monthly), almost entirely one
 US$1.37 Kimi K3 review against K3's small allowance.
+
+## Review
+
+The cross-family review ran through the live router on OpenCode with Muse Spark
+(job `5bcdba26`, about US$0.011, 19 tool calls). Verdict SHIP. The following
+findings were fixed and tested before merge:
+- An OpenCode caller running a GPT or Claude model could be routed to the
+  same-family target. Callers now pass an optional `caller_model`, and routing
+  drops the target that shares its family.
+- The raw supervisor socket still accepted `kimi`, and `surface_canary` still
+  enforced the `kimi-code` surface. Kimi no longer has a provider slot, a caller
+  identity, or a surface.
+- The rate-limit pattern missed "exceeded your weekly limit" and plural "limits".
+- Having both `opencode.json` and `opencode.jsonc`, or a non-object
+  `environment`, now fails closed.
+- The supervisor doc still described Kimi defaults, surfaces, and CodexBar files
+  as current; those passages now describe OpenCode.
+
+Verified as no change needed: the 60 s version probe only runs inside the command
+builder, which executes on a worker thread, so it cannot stall the event loop.

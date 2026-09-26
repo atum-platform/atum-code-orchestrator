@@ -10,8 +10,8 @@ import re
 from typing import Any
 
 
-# OpenCode has no CodexBar history; it is listed so rate-limit cooldowns
-# recorded from its failures reach routing health.
+# OpenCode's Go quota comes from CodexBar's `opencodego` history, and its
+# rate-limit cooldowns reach routing health through the same rows.
 PROVIDERS = ("claude", "codex", "kimi", "opencode")
 DEFAULT_HISTORY_DIR = Path(
     "~/Library/Application Support/com.steipete.codexbar/history"
@@ -43,8 +43,8 @@ RATE_LIMIT_PATTERNS = {
     # token limit" errors are request-shape failures, not quota.
     "opencode": re.compile(
         r"(?:rate[ -]?limit(?:ed| reached| exceeded)?|usage[ -]?limits?(?: reached| exceeded)?|"
-        r"reached (?:your )?(?:(?:5-hour|five-hour|rolling|daily|weekly|monthly) )?(?:usage )?limit\b|"
-        r"(?:5-hour|five-hour|rolling|daily|weekly|monthly) limit (?:reached|exceeded)|"
+        r"(?:reached|exceeded|hit) (?:your )?(?:(?:5-hour|five-hour|rolling|daily|weekly|monthly) )?(?:usage )?limits?\b|"
+        r"(?:5-hour|five-hour|rolling|daily|weekly|monthly) limits? (?:reached|exceeded)|"
         r"insufficient (?:balance|credits?)|credit balance is too low|"
         r"quota (?:exceeded|exhausted|reached)|too many requests|\b429\b)",
         re.IGNORECASE,

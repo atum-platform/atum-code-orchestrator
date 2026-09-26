@@ -42,16 +42,15 @@ only. This standalone repository does not ship those mode-heavy MCP servers.
 
 ## Lifecycle
 
-1. A caller submits `provider`, optional Kimi `model`, `mode`, `workdir`, `prompt`,
+1. A caller submits `provider`, `model` (optional for OpenCode), `mode`, `workdir`, `prompt`,
    an idempotency key, and independent queue and run timeouts over the user-only
    Unix socket.
 2. The daemon validates the workdir, model, prompt size, recursion depth, and
    provider, then persists a queued job in SQLite before returning its ID. A
-   blank Kimi model defaults to `kimi-code/k3`; supported aliases are
-   canonicalized, while stale or unknown Kimi aliases fall back to
-   `kimi-code/kimi-for-coding` (K2.7). Jobs retain `requested_model` alongside
-   the effective `model` for auditability and expose a message when an unknown
-   or legacy alias falls back. Claude and Codex still require an explicit model.
+   blank or `default` OpenCode model resolves to
+   `AGENT_JOB_OPENCODE_DEFAULT_MODEL`. Jobs retain `requested_model` alongside
+   the effective `model` for auditability. Claude and Codex still require an
+   explicit model.
 3. A machine-wide provider queue atomically claims the job as `launching`, then
    launches it once in a new process group.
 4. Output is appended to a cursor log and to separate raw stdout/stderr files.
@@ -239,9 +238,8 @@ below 70%. `route_status` exposes configured and effective slots.
 Native-agent reservations remain fixed and advisory. The status response reports
 whether their decision-to-feedback join rate has reached the 95% prerequisite
 for any later dynamic enforcement; P3 does not change native capacity. Approved
-Kimi's omitted-model default is `kimi-code/k3`; deployments may override it with
-`AGENT_JOB_KIMI_DEFAULT_MODEL` after confirming the target machine's Kimi Code
-configuration supports that canonical model ID. Approved
+OpenCode's omitted-model default is `opencode-go/muse-spark-1.3-contributor`;
+deployments override it with `AGENT_JOB_OPENCODE_DEFAULT_MODEL`. Approved
 workspace roots are defined once in `tools/agent_job_policy.py` and used by the
 installer, supervisor, and review core. Hermes-owned paths are intentionally
 excluded. Override the roots consistently with `AGENT_JOB_ALLOWED_ROOTS` when
@@ -251,7 +249,7 @@ The same socket accepts protocol-v1 and protocol-v2 `route_decide` requests plus
 `route_feedback`, `route_reconcile`, and `route_status`. V1 preserves the legacy
 model aliases and assumes durable jobs are available. V2 intersects declared
 client capabilities with the server-owned surface matrix and returns exact
-Codex/Claude/Kimi model IDs. Caller/surface mismatches fail closed in both
+Codex/Claude/OpenCode model IDs. Caller/surface mismatches fail closed in both
 versions. A lane the client cannot execute degrades explicitly to
 `direct`; unsupported native claims never create reservations.
 
@@ -259,8 +257,9 @@ Shadow mode validates and records
 centralized recommendations without changing caller behavior. Set
 `AGENT_JOB_ROUTING_MODE=codex_canary` to make only Codex-on-Codex responses
 authoritative. `surface_canary` also makes v2 decisions authoritative for Codex,
-Claude Code/Desktop, and Kimi Code while keeping every v1 caller in shadow.
-Eligible focused same-family work from Codex, Claude Code, or Kimi Code
+Claude Code/Desktop, and OpenCode while keeping every v1 caller in shadow. An
+OpenCode caller may pass `caller_model` so routing skips the target that shares
+its model's family. Eligible focused same-family work from Codex or Claude Code
 atomically claims an expiring cooperative native reservation; the supervisor
 does not spawn or terminate the subagent and does not change durable `submit`
 behavior.
@@ -275,10 +274,9 @@ limit shared by all coding surfaces (default 3). The legacy
 `AGENT_JOB_CODEX_NATIVE_RESERVATIONS` name remains an accepted fallback during
 the compatibility window. `AGENT_JOB_ROUTE_RESERVATION_SECONDS` controls TTL
 (default 900, bounded to 30-86400). The client installer declares a `codex-worker`
-Codex role backed by `clients/codex/codex-worker.toml`; Claude Code and Kimi Code
-use their native general-purpose worker interfaces. Focused native routing uses
-GPT-5.6 Terra with high reasoning for Codex, Sonnet for Claude, and high-speed
-K2.7 for Kimi. The installer
+Codex role backed by `clients/codex/codex-worker.toml`; Claude Code uses its
+native general-purpose worker interface. Focused native routing uses GPT-5.6
+Terra with high reasoning for Codex and Sonnet for Claude. The installer
 sets the stable Codex `agents.max_threads` machine ceiling to three when the user
 has not already chosen one. Feedback is idempotent, reconciliation is
 session-scoped, and status reports
@@ -296,8 +294,9 @@ worker from the model alias alone.
 ### Quota broker
 
 Set `AGENT_JOB_QUOTA_ROUTING=1` to let the supervisor rebalance default
-`agent_jobs` routes. The broker reads `claude.json`, `codex.json`, and any future
-`kimi.json` from CodexBar's local history directory. Override the directory with
+`agent_jobs` routes. The broker reads `claude.json`, `codex.json`, and
+`opencodego.json` (for the `opencode` provider) from CodexBar's local history
+directory. Override the directory with
 `AGENT_JOB_QUOTA_HISTORY_DIR`; no browser cookies, provider credentials, or
 CodexBar process access are required.
 
@@ -376,7 +375,7 @@ privilege boundary against other processes running as the same macOS user.
 The daemon scopes provider API credentials at process launch from its environment
 or `AGENT_JOB_PROFILE_ENV`; it never stores credential values in SQLite.
 
-Native Codex, Claude, and Kimi jobs produce schema-v1 records in
+Native Codex, Claude, and OpenCode jobs produce schema-v1 records in
 `<job>.log.events.jsonl` and assemble assistant message events into
 `<job>.log.partial.txt`. Claude runs with `stream-json`, partial messages,
 verbose events, and session persistence disabled. Its partial response is all
@@ -409,7 +408,7 @@ safe mode, so project or user hooks and other customizations cannot introduce a
 separate execution path. This prevents within-session shell execution and nested
 delegation at the native Claude CLI boundary. It does not by itself confine
 absolute paths, so the supervisor adds a second boundary for implementation.
-On macOS, native Claude and Kimi implementation processes run under a Seatbelt
+On macOS, native Claude implementation processes run under a Seatbelt
 profile that permits writes only in the resolved submitted workspace and a
 private per-job runtime directory, except that workspace Git metadata remains
 read-only. Symlink-resolved writes outside those paths are denied by the kernel.
@@ -450,8 +449,8 @@ isolation would require provider authentication to be injected into a disposable
 home rather than read from each CLI's durable local login.
 
 Claude implementation callers can opt into narrowly mediated verification by
-attaching up to eight named approved checks. Codex and Kimi check contracts fail
-closed until equivalent tool mediation is verified for those provider CLIs. The
+attaching up to eight named approved checks. Codex check contracts fail
+closed until equivalent tool mediation is verified for that provider CLI. The
 supervisor persists each exact argv only
 until provider launch, injects one private `aco_checks.run_check(name)` MCP tool,
 and clears the contract from durable job metadata after launch. The delegated
@@ -476,10 +475,9 @@ Reads advance the normalized stream with the opaque byte `event_cursor`. On
 terminal failure, cancellation, or interruption, `partial_response` and
 `partial_result_state` make retained work recoverable. Existing callers that
 omit `event_cursor` keep their prior log-only behavior for non-semantic
-providers; native Claude and Kimi callers consume events and `partial_response`
-rather than raw stream JSON. Kimi deliberately keeps output-byte liveness even
-with its structured adapter because its JSON stream has no tool-start boundary;
-stderr tool progress therefore prevents false stalls during long tools. Partial states are
+providers; native Claude and OpenCode callers consume events and
+`partial_response` rather than raw stream JSON. OpenCode keeps output-byte
+liveness because its JSON stream reports tools only when they finish. Partial states are
 `complete`, `partial`, `truncated`, `none`, or `unavailable`; the last value
 means the selected provider/backend does not have a semantic response adapter.
 
@@ -528,7 +526,7 @@ and reports an oversized or corrupt record while advancing its cursor, so damage
 journal data cannot wedge later reads. `journal_truncated` remains set after the
 journal reaches its byte budget. A normalization/storage failure disables
 semantic decoding for that job but raw stdout drainage and capture continue.
-Native Claude and Kimi stdout is retained only in the mode-`0600` raw file for
+Native Claude and OpenCode stdout is retained only in the mode-`0600` raw file for
 local diagnostics; ordinary reads do not expose it or mirror it into the
 combined log. Set `AGENT_JOB_KIMI_SEMANTIC=0` in the LaunchAgent environment and
 restart to restore Kimi's prior text argv, public stdout, and adapter-unavailable

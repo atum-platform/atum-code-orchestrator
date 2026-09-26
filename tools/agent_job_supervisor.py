@@ -1346,7 +1346,7 @@ class Supervisor:
         self.open_tools: dict[str, dict[str, tuple[str, float]]] = {}
         self.provider_limits = {
             provider: _bounded_int_env(f"AGENT_JOB_{provider.upper()}_CONCURRENCY", 3, 1, 3)
-            for provider in ("claude", "kimi", "codex", "opencode")
+            for provider in ("claude", "codex", "opencode")
         }
         self.routing_mode = os.environ.get("AGENT_JOB_ROUTING_MODE", "shadow").strip().lower()
         if self.routing_mode not in {"shadow", "codex_canary", "surface_canary"}:

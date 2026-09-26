@@ -268,8 +268,12 @@ class AgentQuotaBrokerTest(unittest.TestCase):
         ):
             with self.subTest(message=message):
                 self.assertFalse(rate_limit_cooldown("opencode", message, 100.0, 900)[0])
+        self.assertFalse(rate_limit_cooldown("opencode", "You exceeded your context limit", 100.0, 900)[0])
         for message in (
             "You have reached your weekly limit",
+            "You have exceeded your weekly limit",
+            "Exceeded your 5-hour limits for this model",
+            "You have reached your monthly limits",
             "5-hour limit reached; resets in 2 hours",
             "Insufficient balance to fall back to Zen credits",
         ):

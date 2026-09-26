@@ -64,8 +64,9 @@ Verify returned advice and changes locally before accepting them.
     "OpenCode guidance": """## Agent Jobs
 
 Use the `agent-jobs` MCP tools for durable cross-agent review and delegation. As
-an OpenCode caller, pass `caller_provider=opencode` and `surface=opencode` to
-`route_decide`; use Codex first for code review and Opus first for planning,
+an OpenCode caller, pass `caller_provider=opencode`, `surface=opencode`, and
+your current model as `caller_model` to `route_decide`, so routing can skip a
+target from your own model family; use Codex first for code review and Opus first for planning,
 design, product, copy, and research. Never delegate back to OpenCode, recurse, or
 send secrets. Retain job IDs and cursors, treat `possibly_stalled` as alive but
 quiet, and verify all returned work locally.
@@ -407,6 +408,9 @@ def merge_opencode_config(path: Path, suffix: str, apply: bool, home: Path | Non
     """
     if path.is_symlink():
         raise ValueError(f"Refusing to replace symlinked config; update its target explicitly: {path}")
+    siblings = [path.with_name(name) for name in ("opencode.json", "opencode.jsonc")]
+    if all(sibling.exists() or sibling.is_symlink() for sibling in siblings):
+        raise ValueError(f"Both opencode.json and opencode.jsonc exist in {path.parent}; keep one")
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -430,6 +434,8 @@ def merge_opencode_config(path: Path, suffix: str, apply: bool, home: Path | Non
     merged = dict(current or {})
     merged["type"] = "local"
     merged["command"] = [desired["command"], *desired["args"]]
+    if not isinstance(merged.get("environment") or {}, dict):
+        raise ValueError(f"agent-jobs environment must be a JSON object: {path}")
     environment = dict(merged.get("environment") or {})
     environment.update(desired["env"])
     merged["environment"] = environment

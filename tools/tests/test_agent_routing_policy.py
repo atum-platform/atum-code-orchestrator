@@ -17,7 +17,7 @@ class AgentRoutingPolicyTest(unittest.TestCase):
     def intent(self, caller: str, capability: str) -> dict[str, object]:
         surfaces = {
             "codex": "codex", "claude": "claude-code",
-            "kimi": "kimi-code", "hermes": "hermes", "opencode": "opencode",
+            "hermes": "hermes", "opencode": "opencode",
         }
         return {
             "protocol_version": 1,
@@ -42,8 +42,8 @@ class AgentRoutingPolicyTest(unittest.TestCase):
             ("hermes", "implementation"): ("codex", ""),
             ("claude", "code_review"): ("codex", "opencode"),
             ("claude", "implementation"): ("codex", ""),
-            ("kimi", "code_review"): ("codex", "claude"),
-            ("kimi", "research"): ("claude", "codex"),
+            ("opencode", "code_review"): ("codex", "claude"),
+            ("opencode", "research"): ("claude", "codex"),
         }
         for (caller, capability), expected in cases.items():
             with self.subTest(caller=caller, capability=capability):
@@ -59,7 +59,6 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         for caller, capability in (
             ("codex", "implementation"),
             ("claude", "design"),
-            ("kimi", "tests"),
         ):
             with self.subTest(caller=caller, capability=capability):
                 decision = decide(self.intent(caller, capability))
@@ -123,29 +122,29 @@ class AgentRoutingPolicyTest(unittest.TestCase):
     def test_one_hop_escalation_excludes_parent_and_clears_fallback(self) -> None:
         decision = {
             "lane": "agent_jobs", "provider": "claude", "model_alias": "opus",
-            "fallback_provider": "kimi", "fallback_model_alias": "kimi-code/k3",
+            "fallback_provider": "opencode", "fallback_model_alias": "default",
             "worker_profile": "", "reasons": ["default"],
         }
-        for health in ({}, {"kimi": {"state": "pressured"}},
-                       {"kimi": {"state": "stale"}}, {"kimi": {"state": "unknown"}},
-                       {"kimi": {"state": "available"}}):
+        for health in ({}, {"opencode": {"state": "pressured"}},
+                       {"opencode": {"state": "stale"}}, {"opencode": {"state": "unknown"}},
+                       {"opencode": {"state": "available"}}):
             with self.subTest(health=health):
                 escalated = apply_one_hop_escalation(
                     decision, {"provider": "claude"}, health,
                 )
-                self.assertEqual("kimi", escalated["provider"])
-                self.assertEqual("kimi-code/k3", escalated["model_alias"])
+                self.assertEqual("opencode", escalated["provider"])
+                self.assertEqual("default", escalated["model_alias"])
                 self.assertEqual("", escalated["fallback_provider"])
                 self.assertEqual(1, escalated["escalation_hop"])
 
         unavailable = apply_one_hop_escalation(
-            decision, {"provider": "claude"}, {"kimi": {"state": "rate_limited"}},
+            decision, {"provider": "claude"}, {"opencode": {"state": "rate_limited"}},
         )
         self.assertEqual("direct", unavailable["lane"])
         self.assertEqual("", unavailable["provider"])
 
         exhausted = apply_one_hop_escalation(
-            decision, {"provider": "claude"}, {"kimi": {"state": "exhausted"}},
+            decision, {"provider": "claude"}, {"opencode": {"state": "exhausted"}},
         )
         self.assertEqual("direct", exhausted["lane"])
         self.assertEqual("", exhausted["provider"])
@@ -262,22 +261,29 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         self.assertFalse(decision["effective_surface_capabilities"]["native_subagents"])
         self.assertEqual("direct", decision["lane"])
 
-    def test_kimi_code_routes_bounded_engineering_to_native_worker(self) -> None:
-        intent = self.intent("kimi", "implementation")
-        intent.update(
-            protocol_version=2, complexity="focused", scope="single_module",
-            duration="short", durability="session", session_id="task",
-            surface_capabilities={
-                "durable_agent_jobs": True, "native_subagents": True,
-            },
-        )
+    def test_kimi_is_no_longer_a_caller_or_target(self) -> None:
+        intent = self.intent("codex", "code_review")
+        intent["caller_provider"] = "kimi"
+        with self.assertRaisesRegex(ValueError, "Unsupported caller_provider"):
+            decide(intent)
+        explicit = self.intent("codex", "code_review")
+        explicit["explicit_provider"] = "kimi"
+        with self.assertRaisesRegex(ValueError, "Unsupported explicit_provider"):
+            decide(explicit)
 
-        decision = decide(intent, "surface_canary")
-
-        self.assertEqual("native_subagent", decision["lane"])
-        self.assertEqual("kimi", decision["provider"])
-        self.assertEqual("kimi-code/kimi-for-coding-highspeed", decision["model_alias"])
-        self.assertEqual("general-purpose", decision["worker_profile"])
+    def test_opencode_caller_model_keeps_reviews_cross_family(self) -> None:
+        for model, capability, expected in (
+            ("opencode-go/muse-spark-1.3-contributor", "code_review", ("codex", "claude")),
+            ("opencode/gpt-6-sol", "code_review", ("claude", "")),
+            ("anthropic/claude-sonnet-5", "code_review", ("codex", "")),
+            ("anthropic/claude-sonnet-5", "research", ("codex", "")),
+            ("openai/gpt-6-sol", "planning", ("claude", "")),
+        ):
+            with self.subTest(model=model, capability=capability):
+                intent = self.intent("opencode", capability)
+                intent["caller_model"] = model
+                decision = decide(intent)
+                self.assertEqual(expected, (decision["provider"], decision["fallback_provider"]))
 
     def test_surface_must_belong_to_caller(self) -> None:
         intent = self.intent("claude", "implementation")
@@ -307,7 +313,7 @@ class AgentRoutingPolicyTest(unittest.TestCase):
 
     def test_code_review_remains_cross_family_for_every_coding_surface(self) -> None:
         for caller, expected_provider in (
-            ("codex", "opencode"), ("claude", "codex"), ("kimi", "codex")
+            ("codex", "opencode"), ("claude", "codex"), ("opencode", "codex")
         ):
             with self.subTest(caller=caller):
                 intent = self.intent(caller, "code_review")
@@ -389,7 +395,6 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         for caller, model, lane in (
             ("codex", "opencode-go/gpt-6-luna", "direct"),
             ("codex", "opencode-go/muse-spark-1.3-contributor", "agent_jobs"),
-            ("kimi", "opencode-go/kimi-k3", "direct"),
             ("claude", "opencode-go/kimi-k3", "agent_jobs"),
         ):
             with self.subTest(caller=caller, model=model):
