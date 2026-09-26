@@ -16,6 +16,10 @@ def _parser() -> argparse.ArgumentParser:
     submit = sub.add_parser("submit")
     submit.add_argument("--provider", choices=sorted(review_core.PROVIDERS), required=True)
     submit.add_argument("--model", default="")
+    submit.add_argument(
+        "--reasoning-effort", default="",
+        help="OpenCode only: none, minimal, low, medium, high, xhigh, or max (default: supervisor setting)",
+    )
     submit.add_argument("--instructions", required=True)
     submit.add_argument("--workdir", required=True)
     submit.add_argument("--context-git-diff", action="store_true")

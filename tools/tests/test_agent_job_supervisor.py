@@ -99,6 +99,7 @@ class OpenCodeProviderTest(unittest.TestCase):
             binary_finder=lambda provider: "/opt/homebrew/bin/opencode",
         )
         self.real_generation = supervisor_module._opencode_cli_generation
+        self.real_list_variants = supervisor_module._list_opencode_variants
         generation = patch.object(supervisor_module, "_opencode_cli_generation", return_value="v1")
         generation.start()
         self.addCleanup(generation.stop)
@@ -108,8 +109,23 @@ class OpenCodeProviderTest(unittest.TestCase):
         for name in (
             "AGENT_JOB_PROFILE_ENV", "AGENT_JOB_OPENCODE_DEFAULT_MODEL",
             "AGENT_JOB_OPENCODE_MODEL_PREFIXES", "OPENCODE_API_KEY",
+            "AGENT_JOB_OPENCODE_DEFAULT_REASONING_EFFORT",
         ):
             os.environ.pop(name, None)
+        # Never run the real `opencode models`; mirror the Go catalog's shape.
+        self.catalog_calls = 0
+
+        def fake_catalog(binary: str, env: dict[str, str], cwd: Path, provider: str):
+            self.catalog_calls += 1
+            return {
+                self.MODEL: ["high", "low", "medium", "minimal", "xhigh"],
+                "opencode-go/kimi-k3": ["max"],
+                "opencode-go/plain": [],
+            }
+
+        catalog = patch.object(supervisor_module, "_list_opencode_variants", side_effect=fake_catalog)
+        catalog.start()
+        self.addCleanup(catalog.stop)
 
     def _write(self, relative: str, text: str = "x\n") -> Path:
         path = self.workdir / relative
@@ -149,7 +165,7 @@ class OpenCodeProviderTest(unittest.TestCase):
         self.assertEqual([
             "/opt/homebrew/bin/opencode", "run", "--pure", "--format", "json",
             "--agent", "aco-review", "--model", self.MODEL, "--title", "ACO review",
-            "--print-logs", "--log-level", "ERROR",
+            "--print-logs", "--log-level", "ERROR", "--variant", "xhigh",
         ], argv)
         self.assertEqual("Review the change.", stdin_text)
         runtime = self.supervisor._job_runtime_dir(str(job["job_id"]))
@@ -187,6 +203,100 @@ class OpenCodeProviderTest(unittest.TestCase):
 
     def test_only_supported_providers_have_slots(self) -> None:
         self.assertEqual({"claude", "codex", "opencode"}, set(self.supervisor.provider_limits))
+
+    def _variant(self, **overrides: object) -> list[str]:
+        argv, _, _ = self.supervisor._build_command(self._job(**overrides))
+        return argv[argv.index("--variant") + 1:] if "--variant" in argv else []
+
+    def test_reasoning_effort_defaults_to_xhigh_where_the_model_offers_it(self) -> None:
+        self.assertEqual(["xhigh"], self._variant())
+        # Kimi K3 offers only `max`, so the default is dropped rather than ignored.
+        self.assertEqual([], self._variant(model="opencode-go/kimi-k3"))
+        self.assertEqual([], self._variant(model="opencode-go/plain"))
+        os.environ["AGENT_JOB_OPENCODE_DEFAULT_REASONING_EFFORT"] = "high"
+        self.assertEqual(["high"], self._variant())
+        os.environ["AGENT_JOB_OPENCODE_DEFAULT_REASONING_EFFORT"] = ""
+        self.assertEqual([], self._variant())
+        # One listing serves every job until the cache expires.
+        self.assertEqual(1, self.catalog_calls)
+
+    def test_explicit_reasoning_effort_must_be_offered_by_the_model(self) -> None:
+        self.assertEqual(["minimal"], self._variant(reasoning_effort="minimal"))
+        self.assertEqual(["max"], self._variant(model="opencode-go/kimi-k3", reasoning_effort="max"))
+        with self.assertRaisesRegex(RuntimeError, "does not support reasoning effort 'max'; it offers high"):
+            self._variant(reasoning_effort="max")
+        with self.assertRaisesRegex(RuntimeError, "offers no reasoning levels"):
+            self._variant(model="opencode-go/plain", reasoning_effort="high")
+
+    def test_unlisted_catalog_drops_the_default_but_fails_explicit_requests(self) -> None:
+        with patch.object(supervisor_module, "_list_opencode_variants", side_effect=OSError("offline")):
+            self.assertEqual([], self._variant())
+            with self.assertRaisesRegex(RuntimeError, "could not be listed"):
+                self._variant(reasoning_effort="high")
+
+    def test_stale_catalog_is_refreshed_and_kept_when_refresh_fails(self) -> None:
+        self._variant()
+        cache_path = self.supervisor.state_dir / "opencode-models.json"
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        cache["opencode-go"]["fetched_at"] = 0
+        cache_path.write_text(json.dumps(cache), encoding="utf-8")
+        with patch.object(supervisor_module, "_list_opencode_variants", side_effect=OSError("offline")):
+            self.assertEqual(["xhigh"], self._variant())
+        self.assertEqual(0o600, stat.S_IMODE(cache_path.stat().st_mode))
+
+    def test_corrupt_or_unwritable_catalog_cache_never_fails_a_job(self) -> None:
+        cache_path = self.supervisor.state_dir / "opencode-models.json"
+        cache_path.write_text('{"opencode-go": {"fetched_at": "soon", "models": []}}', encoding="utf-8")
+        self.assertEqual(["xhigh"], self._variant())
+        with patch.object(supervisor_module.os, "replace", side_effect=OSError("disk full")):
+            cache_path.unlink()
+            self.assertEqual(["xhigh"], self._variant())
+
+    def test_catalog_listing_is_parsed_from_verbose_models_output(self) -> None:
+        output = (
+            "opencode-go/muse-spark-1.3-contributor\n"
+            + json.dumps({"id": "muse", "variants": {"low": {}, "xhigh": {}}}, indent=2)
+            + "\nopencode-go/kimi-k3\n"
+            + json.dumps({"id": "kimi-k3", "variants": {"max": {}}}, indent=2)
+            + "\nopencode-go/plain\n" + json.dumps({"id": "plain"}, indent=2) + "\n"
+        )
+        completed = subprocess.CompletedProcess([], 0, stdout=output, stderr="")
+        with patch.object(supervisor_module.subprocess, "run", return_value=completed) as run:
+            listing = self.real_list_variants("/bin/opencode", {}, self.root, "opencode-go")
+        self.assertEqual({
+            "opencode-go/muse-spark-1.3-contributor": ["low", "xhigh"],
+            "opencode-go/kimi-k3": ["max"],
+            "opencode-go/plain": [],
+        }, listing)
+        self.assertEqual(["/bin/opencode", "models", "opencode-go", "--verbose"], run.call_args.args[0])
+        failed = subprocess.CompletedProcess([], 1, stdout="", stderr="\x1b[91mError:\x1b[0m Provider not found")
+        with patch.object(supervisor_module.subprocess, "run", return_value=failed), \
+                self.assertRaisesRegex(RuntimeError, "exited 1: Error: Provider not found"):
+            self.real_list_variants("/bin/opencode", {}, self.root, "opencode-go")
+
+    def test_catalog_parsing_tolerates_colour_noise_and_a_bad_entry(self) -> None:
+        output = (
+            "\x1b[1mopencode-go/muse-spark-1.3-contributor\x1b[0m\n"
+            + json.dumps({"note": "opencode-go/not-a-model-line", "variants": {"xhigh": {}}}, indent=2)
+            + "\nopencode-go/broken\n{not json\n"
+            + "opencode-go/kimi-k3\n" + json.dumps({"variants": {"max": {}}}) + "\n\n2 models listed\n"
+        )
+        completed = subprocess.CompletedProcess([], 0, stdout=output, stderr="")
+        with patch.object(supervisor_module.subprocess, "run", return_value=completed):
+            listing = self.real_list_variants("/bin/opencode", {}, self.root, "opencode-go")
+        self.assertEqual({
+            "opencode-go/muse-spark-1.3-contributor": ["xhigh"],
+            "opencode-go/kimi-k3": ["max"],
+        }, listing)
+
+    def test_malformed_cached_variants_are_treated_as_unknown(self) -> None:
+        cache_path = self.supervisor.state_dir / "opencode-models.json"
+        cache_path.write_text(json.dumps({"opencode-go": {
+            "fetched_at": supervisor_module._now(), "models": {self.MODEL: "xhigh"},
+        }}), encoding="utf-8")
+        self.assertEqual([], self._variant())
+        with self.assertRaisesRegex(RuntimeError, "could not be listed"):
+            self._variant(reasoning_effort="xhigh")
 
     def test_launch_refuses_the_real_workdir_without_a_staged_copy(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "refusing the real workdir"):
@@ -1744,6 +1854,49 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(RuntimeError, "different job specification"):
                 await self.call(dict(spec, model="default"))
         await self.wait_for(str(submitted["job_id"]), {"completed", "failed"})
+
+    async def test_reasoning_effort_is_validated_stored_and_recorded(self) -> None:
+        claude = self.spec("complete")
+        claude["reasoning_effort"] = "high"
+        with self.assertRaisesRegex(RuntimeError, "only for OpenCode"):
+            await self.call(claude)
+        bogus = self.opencode_spec("complete")
+        bogus["reasoning_effort"] = "extreme"
+        with self.assertRaisesRegex(RuntimeError, "Unsupported reasoning effort"):
+            await self.call(bogus)
+
+        original_builder = self.supervisor.command_builder
+
+        def variant_command(job: dict[str, object]) -> tuple[list[str], None, dict[str, str]]:
+            argv, stdin_text, env = original_builder(job)
+            effort = str(job.get("reasoning_effort") or "")
+            return [*argv, *(["--variant", effort] if effort else [])], stdin_text, env
+
+        self.supervisor.command_builder = variant_command
+        try:
+            explicit = self.opencode_spec("complete")
+            explicit.update(reasoning_effort="HIGH", idempotency_key="effort-high")
+            submitted = await self.call(explicit)
+            self.assertEqual("high", submitted["reasoning_effort"])
+            defaulted = self.opencode_spec("complete")
+            defaulted.update(reasoning_effort="default", idempotency_key="effort-default")
+            plain = await self.call(defaulted)
+            self.assertEqual("", plain["reasoning_effort"])
+            high = await self.wait_for(str(submitted["job_id"]), {"completed"})
+            default = await self.wait_for(str(plain["job_id"]), {"completed"})
+        finally:
+            self.supervisor.command_builder = original_builder
+        self.assertEqual("high", high["job"]["effective_reasoning_effort"])
+        self.assertEqual("default", default["job"]["effective_reasoning_effort"])
+
+        # Omitting the field or asking for the default keeps the old request hash;
+        # an explicit level is a different request.
+        retry = self.opencode_spec("complete")
+        retry["idempotency_key"] = "effort-default"
+        self.assertEqual(plain["job_id"], (await self.call(retry))["job_id"])
+        retry["reasoning_effort"] = "low"
+        with self.assertRaisesRegex(RuntimeError, "different job specification"):
+            await self.call(retry)
 
     async def test_explicit_providers_still_require_a_model(self) -> None:
         spec = self.spec("complete")

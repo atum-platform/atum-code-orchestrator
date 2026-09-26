@@ -104,7 +104,8 @@ class ReviewCoreTest(unittest.IsolatedAsyncioTestCase):
             return {"job_id": "job"}
 
         values: dict[str, object] = {
-            "action": "submit", "provider": "claude", "model": "opus",
+            "action": "submit", "provider": "opencode", "model": "default",
+            "reasoning_effort": "high",
             "instructions": "review", "workdir": str(self.workdir),
             "context_git_diff": True, "context_git_base": "HEAD",
             "context_files": None, "context_text": "", "expected_output": "findings",

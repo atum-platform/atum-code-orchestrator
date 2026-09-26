@@ -183,6 +183,10 @@ def _parser() -> argparse.ArgumentParser:
     submit_parser = sub.add_parser("submit")
     submit_parser.add_argument("--provider", choices=("claude", "codex", "opencode"), required=True)
     submit_parser.add_argument("--model", default="")
+    submit_parser.add_argument(
+        "--reasoning-effort", default="",
+        help="OpenCode only: none, minimal, low, medium, high, xhigh, or max (default: supervisor setting)",
+    )
     submit_parser.add_argument("--mode", choices=("readonly", "implement"), required=True)
     submit_parser.add_argument("--workdir", required=True)
     submit_parser.add_argument("--prompt", required=True)
