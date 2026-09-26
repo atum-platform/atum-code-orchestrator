@@ -786,3 +786,42 @@
 - A token refreshed inside a job is not written back to `~/.kimi-code`. If Kimi
   rotates refresh tokens on use, the durable login would need a manual re-login;
   that has not been observed.
+
+## 2026-09-26 - Resolve the Claude runtime per launch
+
+- The MacBook supervisor launched Claude through `claude-review-runtime`, an
+  untracked wrapper in the deployed checkout that pinned Claude Desktop's bundled
+  Claude Code 2.1.280 and loaded credentials from a Hermes profile env file. The
+  desktop app had already installed 2.1.281 and prunes old releases, so the
+  Claude lane would fail once 2.1.280 disappeared, and no fresh clone or
+  bootstrap could recreate the wrapper. The previous pin, `~/.local/bin/claude`,
+  is a shim over an npm install at 2.1.247; the native install is 2.1.89.
+- The supervisor now resolves Claude at every submission and launch: an explicit
+  `AGENT_JOB_CLAUDE_BIN`, then the newest bundled desktop release (numeric version
+  order, skipping a release directory without its binary), then `PATH` and the
+  known locations. Kimi and Codex resolution is unchanged.
+- The installer persists `AGENT_JOB_CLAUDE_BIN` only when it is set on the install
+  command and drops a retained pin, because earlier installers wrote one
+  unconditionally. Dropping a retained script launcher requires
+  `AGENT_JOB_PROFILE_ENV` to name an existing file, since both known wrappers
+  supplied Claude credentials. The daemon's existing profile loader injects the
+  same four Anthropic keys the wrappers exported; the Hermes profile holds no
+  Kimi keys, so pointing it there changes nothing for Kimi or Codex jobs.
+- The wrapper also degraded job records: 94 of the 97 Claude jobs since
+  2026-09-23 recorded `binary_path=/bash`, because the launch probe ran before the
+  wrapper's `exec`. Restart reaping matches PID, PGID, and start time only (the
+  executable match was removed in `e2d7b1d`), so cleanup was unaffected; corrected
+  the supervisor doc that still claimed an executable match.
+- Installer tests now patch the LaunchAgent path in `setUp`; several read the
+  host's real plist and inherited whatever it retained.
+- Verification: 13 new tests, all failing against the previous code; a lexical
+  version-sort mutant fails the newest-release test. Full suite passes, 317
+  tests, on Python 3.11.16.
+- Deployment, per Mac after merge and once jobs drain: reinstall only the
+  supervisor with `AGENT_JOB_PROFILE_ENV` set to the credential file the wrapper
+  read, verify one Claude job's `binary_path`, then delete the wrapper. See
+  `docs/MIGRATION.md`. The Mac mini's retained pin has not been inspected.
+- Follow-ups: move Claude credentials from the Hermes profile into an ACO-owned
+  env file so ACO stops depending on Hermes profile layout at runtime; consider
+  restoring an executable identity check now that direct launches record it
+  accurately (sandboxed launches still `exec` after the probe).

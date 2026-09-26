@@ -56,6 +56,65 @@ class KimiCliCompatibilityTest(unittest.TestCase):
         )
 
 
+class ProviderBinaryDiscoveryTest(unittest.TestCase):
+    def setUp(self) -> None:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+
+    def _executable(self, path: Path) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#!/bin/sh\n")
+        path.chmod(0o755)
+        return path
+
+    def _desktop_release(self, version: str) -> Path:
+        return self._executable(
+            self.root / "claude-code" / version / "claude.app" / "Contents" / "MacOS" / "claude"
+        )
+
+    def _find(self, provider: str, env: dict[str, str] | None = None, which: str | None = None) -> str:
+        with patch.object(supervisor_module, "CLAUDE_DESKTOP_RUNTIMES", self.root / "claude-code"), \
+             patch.dict(os.environ, env or {}, clear=True), \
+             patch.object(supervisor_module.shutil, "which", return_value=which):
+            return supervisor_module._find_binary(provider)
+
+    def test_claude_prefers_the_newest_desktop_release(self) -> None:
+        self._desktop_release("2.1.99")
+        newest = self._desktop_release("2.1.281")
+        self._desktop_release("2.1.280")
+        # An update still unpacking has its directory but no binary yet.
+        (self.root / "claude-code" / "2.1.300").mkdir()
+        (self.root / "claude-code" / "download.tmp").mkdir()
+        on_path = self._executable(self.root / "bin" / "claude")
+        self.assertEqual(str(newest.resolve()), self._find("claude", which=str(on_path)))
+
+    def test_explicit_claude_pin_outranks_desktop_releases(self) -> None:
+        self._desktop_release("2.1.281")
+        pinned = self._executable(self.root / "pinned" / "claude")
+        self.assertEqual(
+            str(pinned.resolve()),
+            self._find("claude", env={"AGENT_JOB_CLAUDE_BIN": str(pinned)}),
+        )
+
+    def test_pruned_claude_pin_falls_back_to_the_newest_release(self) -> None:
+        newest = self._desktop_release("2.1.281")
+        pruned = self.root / "claude-code" / "2.1.280" / "claude.app" / "Contents" / "MacOS" / "claude"
+        self.assertEqual(
+            str(newest.resolve()),
+            self._find("claude", env={"AGENT_JOB_CLAUDE_BIN": str(pruned)}),
+        )
+
+    def test_claude_uses_path_without_desktop_releases(self) -> None:
+        on_path = self._executable(self.root / "bin" / "claude")
+        self.assertEqual(str(on_path.resolve()), self._find("claude", which=str(on_path)))
+
+    def test_desktop_releases_only_apply_to_claude(self) -> None:
+        self._desktop_release("2.1.281")
+        kimi = self._executable(self.root / "bin" / "kimi")
+        self.assertEqual(str(kimi.resolve()), self._find("kimi", which=str(kimi)))
+
+
 class WorkspaceConfinementTest(unittest.TestCase):
     @unittest.skipUnless(
         sys.platform == "darwin" and supervisor_module.SANDBOX_EXEC_PATH.is_file(),

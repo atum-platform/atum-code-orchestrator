@@ -55,6 +55,9 @@ sync between machines.
 
 Provider execution uses the locally authenticated `codex`, `claude`, and `kimi`
 CLIs, so usage is charged to the account or subscription configured in each CLI.
+Claude jobs run the newest Claude Desktop bundled Claude Code when one is
+installed, resolved at every launch; never pin a versioned Claude path. Supply
+Claude credentials through `AGENT_JOB_PROFILE_ENV` rather than a wrapper script.
 
 ## Operations
 

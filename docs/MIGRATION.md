@@ -30,8 +30,11 @@ The shared native reservation setting is `AGENT_JOB_NATIVE_RESERVATIONS`. The
 legacy `AGENT_JOB_CODEX_NATIVE_RESERVATIONS` name remains a fallback for one
 compatibility window; set only the new name on upgraded installations.
 
-Reinstalling preserves known routing, quota, concurrency, backend, provider
+Reinstalling preserves known routing, quota, concurrency, backend, Codex and Kimi
 binary, and profile-environment overrides from the existing ACO LaunchAgent.
+The Claude binary is the exception: it is resolved at each launch unless
+`AGENT_JOB_CLAUDE_BIN` is set on the install command (see
+[Retiring a Claude Launcher Pin](#retiring-a-claude-launcher-pin)).
 An explicit environment value on the install command still wins. Policy-owned
 values such as approved workspace roots are recomputed from the current release
 instead of retaining a stale deployment value. Launchd process transitions are
@@ -67,6 +70,27 @@ Restart client applications after installation. Verify:
 .venv/bin/python tools/install_agent_job_clients.py --check
 .venv/bin/python tools/install_agent_job_supervisor.py status
 ```
+
+## Retiring a Claude Launcher Pin
+
+Earlier installs pinned `AGENT_JOB_CLAUDE_BIN`, sometimes to a machine-local
+script that also loaded Claude credentials, such as an untracked
+`claude-review-runtime` in the checkout or a `~/.local/bin/claude` shim. The
+first reinstall on this release drops the pin. When the pinned launcher is a
+script, the installer refuses until you name the credential file that script
+read, so the daemon injects the same keys itself:
+
+```bash
+.venv/bin/python tools/agent_job_client.py list --status running
+AGENT_JOB_PROFILE_ENV=/path/to/credentials.env \
+  .venv/bin/python tools/install_agent_job_supervisor.py install
+```
+
+The value persists across later reinstalls. Only the supervisor is reinstalled;
+client bindings are unchanged, so Claude Desktop can stay open. Submit one Claude
+review, confirm that it completes and that `read` reports a `binary_path` in the
+newest bundled release, and only then delete the old wrapper file. To roll back,
+reinstall with `AGENT_JOB_CLAUDE_BIN` set to the previous launcher.
 
 ## Rollback
 

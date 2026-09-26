@@ -103,6 +103,9 @@ SEMANTIC_LIVENESS_PROVIDERS = {"claude", "codex"}
 DYNAMIC_HEALTH_REFRESH_SECONDS = 15
 NATIVE_FEEDBACK_JOIN_GATE = 0.95
 SANDBOX_EXEC_PATH = Path("/usr/bin/sandbox-exec")
+# Claude Desktop installs each bundled Claude Code release in its own version
+# directory and prunes old ones, so any pinned versioned path eventually breaks.
+CLAUDE_DESKTOP_RUNTIMES = Path("~/Library/Application Support/Claude/claude-code")
 MACOS_WORKSPACE_WRITE_PROFILE = """(version 1)
 (allow default)
 (deny file-write*
@@ -282,6 +285,23 @@ def _safe_workdir(value: str) -> Path:
     return path
 
 
+def _claude_desktop_runtimes() -> list[str]:
+    """Return Claude Desktop's bundled Claude Code binaries, newest release first."""
+    try:
+        entries = list(CLAUDE_DESKTOP_RUNTIMES.expanduser().iterdir())
+    except OSError:
+        return []
+    releases = [
+        (tuple(int(part) for part in entry.name.split(".")), entry)
+        for entry in entries
+        if re.fullmatch(r"\d+(?:\.\d+)*", entry.name)
+    ]
+    return [
+        str(entry / "claude.app" / "Contents" / "MacOS" / "claude")
+        for _, entry in sorted(releases, reverse=True)
+    ]
+
+
 def _find_binary(provider: str) -> str:
     env_name = f"AGENT_JOB_{provider.upper()}_BIN"
     known = {
@@ -289,7 +309,11 @@ def _find_binary(provider: str) -> str:
         "kimi": ["~/.kimi-code/bin/kimi", "/opt/homebrew/bin/kimi"],
         "codex": ["/opt/homebrew/bin/codex", "~/.local/bin/codex"],
     }
-    candidates = [os.environ.get(env_name, ""), shutil.which(provider)] + known[provider]
+    # Resolved at every launch. The desktop app keeps its bundled runtime current,
+    # while PATH installs are often stale shims, so an explicit pin is the only
+    # thing that outranks the newest bundled release.
+    bundled = _claude_desktop_runtimes() if provider == "claude" else []
+    candidates = [os.environ.get(env_name, ""), *bundled, shutil.which(provider)] + known[provider]
     for candidate in candidates:
         if not candidate:
             continue
