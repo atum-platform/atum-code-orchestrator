@@ -678,9 +678,9 @@ raise SystemExit(1)
     elif prompt == "opencode-stderr-slow":
         script = """import json, sys, time
 print(json.dumps({"type": "step_start", "part": {"type": "step-start"}}), flush=True)
-time.sleep(.2)
-print("INFO service=llm stream", file=sys.stderr, flush=True)
-time.sleep(30)
+for _ in range(150):
+    time.sleep(.2)
+    print("INFO service=llm stream", file=sys.stderr, flush=True)
 """
     elif prompt == "quota-subject-fail":
         script = """import sys
@@ -1136,9 +1136,16 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         job_id = str(submitted["job_id"])
         await self.wait_for(job_id, {"running"})
         await asyncio.sleep(.3)
+        # Backdate both anchors; only fresh stderr bytes can clear the stall.
+        stale = time.time() - 31
         self.supervisor.store.update(
-            job_id, last_progress_at=time.time() - 31, soft_stall_seconds=30
+            job_id, last_progress_at=stale, last_output_at=stale, soft_stall_seconds=30
         )
+        self.assertEqual(
+            "possibly_stalled",
+            (await self.call({"action": "read", "job_id": job_id}))["job"]["status"],
+        )
+        await asyncio.sleep(1.5)
         result = await self.call({"action": "read", "job_id": job_id})
         self.assertEqual("running", result["job"]["status"])
         self.assertNotEqual("possibly_stalled", result["job"]["status"])
@@ -2136,6 +2143,30 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.supervisor.store.create(spec, job_id, self.supervisor.log_dir / f"{job_id}.log")
         result = await self.wait_for(job_id, {"failed"}, timeout=5)
         self.assertEqual("timeout", result["job"]["failure_kind"])
+
+    async def test_retained_rows_of_a_removed_provider_keep_private_stdout(self) -> None:
+        retained = self.spec("complete")
+        retained.update({
+            "provider": "kimi", "model": "kimi-code/k3", "semantic_stream": 1,
+            "idempotency_key": "retained-kimi", "request_hash": "hash",
+        })
+        job_id = "retained-kimi-job"
+        log_path = self.supervisor.log_dir / f"{job_id}.log"
+        self.supervisor.log_dir.mkdir(parents=True, exist_ok=True)
+        Path(f"{log_path}.stdout").write_text('{"role": "tool", "content": "secret-result"}\n')
+        Path(f"{log_path}.partial.txt").write_text("kept answer")
+        # No await between these, so the scheduler never sees the row queued.
+        self.supervisor.store.create(retained, job_id, log_path)
+        self.supervisor.store.update(job_id, status="completed", exit_code=0, finished_at=time.time())
+
+        result = await self.call({
+            "action": "read", "job_id": job_id, "stream_cursors": True,
+        })
+        self.assertEqual("", result["stdout"])
+        self.assertEqual("", result["stdout_output"])
+        self.assertNotIn("secret-result", json.dumps(result))
+        self.assertEqual("kept answer", result["partial_response"])
+        self.assertNotEqual("unavailable", result["partial_result_state"])
 
     async def test_queued_job_for_a_removed_provider_fails_without_blocking_the_queue(self) -> None:
         # A job queued before an upgrade removed its provider has no slot; it

@@ -151,7 +151,8 @@ the installed checkout and reinstall the supervisor while no jobs are running:
 
 - The reinstall drops `AGENT_JOB_KIMI_BIN`, `AGENT_JOB_KIMI_CONCURRENCY`,
   `AGENT_JOB_KIMI_DEFAULT_MODEL`, and `~/.kimi-code/bin` from the LaunchAgent.
-- Retained Kimi job rows stay readable. A Kimi job still queued at upgrade
+- Retained Kimi job rows stay readable, and their raw stdout stays private. A
+  Kimi job still queued at upgrade
   fails with `launch_error` instead of waiting for its queue deadline.
 - Kimi logins are left alone. Delete `~/.kimi` and `~/.kimi-code` by hand if
   Kimi Code is no longer used; approved checks keep denying reads of `~/.kimi`

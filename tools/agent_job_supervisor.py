@@ -1647,9 +1647,10 @@ class Supervisor:
 
     @staticmethod
     def _has_semantic_adapter(job: dict[str, Any]) -> bool:
+        # The selection persisted at submission is authoritative, so rows kept
+        # from a provider a later release removed keep their read contract.
         return (
             bool(job.get("semantic_stream"))
-            and job.get("provider") in SEMANTIC_PROVIDERS
             and job.get("execution_backend", "native") == "native"
         )
 
@@ -1667,8 +1668,10 @@ class Supervisor:
         )
 
     def _private_semantic_stdout(self, job: dict[str, Any]) -> bool:
+        # Only Codex's JSON stream is public. Every other semantic stream,
+        # including retained Kimi rows, can carry tool output and stays private.
         return (
-            job.get("provider") in {"claude", "opencode"}
+            job.get("provider") != "codex"
             and self._semantic_adapter_active(job)
         )
 

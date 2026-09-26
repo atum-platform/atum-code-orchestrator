@@ -502,7 +502,9 @@ Native Claude and OpenCode stdout is retained only in the mode-`0600` raw file f
 local diagnostics; ordinary reads do not expose it or mirror it into the
 combined log. Each job persists its `semantic_stream` selection at submission,
 so later configuration changes never reinterpret retained or already queued
-jobs and cannot expose their structured stdout. CAO-bridged jobs have no
+jobs and cannot expose their structured stdout, even after a later release
+removes the job's provider. Only Codex's JSON stdout is public. CAO-bridged
+jobs have no
 semantic adapter; their stdout stays readable as plain output.
 
 ## Verification

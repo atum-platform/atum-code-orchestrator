@@ -861,5 +861,7 @@
   Kimi K3 remains available as `opencode-go/kimi-k3`.
 - A job still queued for a provider with no slot now fails with `launch_error`
   instead of wedging the scheduler until its queue deadline.
-- Verification: 327 tests pass; the new guard test fails without the fix.
+- Retained Kimi rows keep private stdout; only Codex's JSON stdout is public.
+- Verification: 328 tests pass; the new guard and privacy tests fail without
+  their fixes. OpenCode review HOLD on the privacy gap, fixed.
 - Details: `docs/session-logs/2026-09-26-remove-kimi-provider.md`.

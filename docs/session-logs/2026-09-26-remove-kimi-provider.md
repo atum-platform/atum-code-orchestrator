@@ -30,6 +30,11 @@ subscription. The owner asked for the dormant Kimi launch code to be removed.
   scheduler pass, so no job behind it launched until its queue deadline. #34 had
   already removed Kimi's slot, so an upgrade with a queued Kimi job could hit
   this.
+- Retained rows: the persisted `semantic_stream` selection alone now decides
+  whether a row has a semantic read contract, and every semantic stream except
+  Codex's keeps stdout private. Before this, dropping `kimi` from the semantic
+  providers would have made reads return raw stdout, tool output included, for
+  retained Kimi rows (59 on the MacBook).
 
 ## Kept on purpose
 
@@ -53,9 +58,19 @@ decoder, runtime-staging, and billing-cycle tests were deleted. New tests cover
 the queued-job guard, OpenCode default-model recording and idempotency, and a
 leftover Kimi key in a profile file reaching no provider.
 
+## Review
+
+OpenCode (Muse Spark) review `305affe3-1e26-4bf3-8330-cabeb17e1d46` returned
+HOLD on one blocker: retained Kimi rows would expose raw stdout. Fixed as above,
+with a test that leaks the fixture's tool output without the fix. It also
+noted that the OpenCode stderr-liveness test passed without exercising stderr;
+it now backdates both liveness anchors, confirms the stall, and requires fresh
+stderr bytes to clear it. It confirmed the scheduler guard keeps rate-limited
+providers (zero slots) queued and that no credential reaches another provider.
+
 ## Verification
 
-- `python -m unittest discover -s tools/tests`: 327 tests pass.
+- `python -m unittest discover -s tools/tests`: 328 tests pass.
 - The queued-job guard test fails without the fix: the scheduler logs
   `agent-job scheduler error: 'kimi'` on every pass and the job never finishes.
 - `py_compile` on all tools, `ruff --select F` on the changed modules, and
