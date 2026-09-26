@@ -10,7 +10,9 @@ import re
 from typing import Any
 
 
-PROVIDERS = ("claude", "codex", "kimi")
+# OpenCode has no CodexBar history; it is listed so rate-limit cooldowns
+# recorded from its failures reach routing health.
+PROVIDERS = ("claude", "codex", "kimi", "opencode")
 DEFAULT_HISTORY_DIR = Path(
     "~/Library/Application Support/com.steipete.codexbar/history"
 ).expanduser()
@@ -34,6 +36,13 @@ RATE_LIMIT_PATTERNS = {
         r"(?:rate[ -]?limit(?:ed| reached| exceeded)?|usage[ -]?limit(?: reached| exceeded)|"
         r"reached (?:your )?usage[ -]?limit|"
         r"quota (?:exceeded|exhausted|reached)|out of usage|too many requests|\b429\b)",
+        re.IGNORECASE,
+    ),
+    # Scanned against OpenCode's JSON error messages only, never tool output.
+    "opencode": re.compile(
+        r"(?:rate[ -]?limit(?:ed| reached| exceeded)?|usage[ -]?limit(?:s)?(?: reached| exceeded)?|"
+        r"reached (?:your )?(?:\w+ )?(?:usage )?limit|"
+        r"quota (?:exceeded|exhausted|reached)|too many requests|\b429\b)",
         re.IGNORECASE,
     ),
 }

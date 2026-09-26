@@ -93,17 +93,28 @@ class ClientInstallerTest(unittest.TestCase):
         self.assertTrue(path.with_name("AGENTS.md.bak.agent-jobs-test").exists())
         self.assertFalse(installer.merge_guidance(path, "Kimi guidance", "second", True))
 
-    def test_known_stale_claude_managed_policy_is_migrated(self) -> None:
+    def test_known_stale_managed_policies_are_migrated(self) -> None:
+        for name, filename in (("Claude guidance", "CLAUDE.md"), ("Codex guidance", "AGENTS.md")):
+            for index, stale in enumerate(installer.MIGRATABLE_MANAGED_GUIDANCE[name]):
+                with self.subTest(name=name, version=index):
+                    path = self.root / f"{index}-{filename}"
+                    path.write_text(
+                        f"{installer.GUIDANCE_START}\n{stale.rstrip()}\n{installer.GUIDANCE_END}\n",
+                        encoding="utf-8",
+                    )
+                    self.assertTrue(installer.merge_guidance(path, name, "test", True))
+                    result = path.read_text(encoding="utf-8")
+                    self.assertIn(installer.GUIDANCE[name].splitlines()[2], result)
+                    self.assertIn("OpenCode", result)
+                    self.assertNotIn("Kimi", result.split(installer.GUIDANCE_END)[0])
+
+    def test_customized_managed_policy_is_preserved(self) -> None:
         path = self.root / "CLAUDE.md"
-        stale = installer.MIGRATABLE_MANAGED_GUIDANCE["Claude guidance"]
-        path.write_text(
-            f"{installer.GUIDANCE_START}\n{stale.rstrip()}\n{installer.GUIDANCE_END}\n",
-            encoding="utf-8",
-        )
-        self.assertTrue(installer.merge_guidance(path, "Claude guidance", "test", True))
-        result = path.read_text(encoding="utf-8")
-        self.assertIn("Claude keeps", result)
-        self.assertNotIn("Codex first for code review, planning", result)
+        custom = "## Agent Jobs\n\nTeam-specific routing that the installer must keep.\n"
+        original = f"{installer.GUIDANCE_START}\n{custom.rstrip()}\n{installer.GUIDANCE_END}\n"
+        path.write_text(original, encoding="utf-8")
+        installer.merge_guidance(path, "Claude guidance", "test", True)
+        self.assertIn("Team-specific routing", path.read_text(encoding="utf-8"))
 
     def test_invalid_json_has_actionable_error(self) -> None:
         path = self.root / "mcp.json"

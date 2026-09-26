@@ -37,6 +37,10 @@ PERSISTED_OVERRIDE_NAMES = (
     "AGENT_JOB_CODEX_CONCURRENCY",
     "AGENT_JOB_KIMI_CONCURRENCY",
     "AGENT_JOB_KIMI_DEFAULT_MODEL",
+    "AGENT_JOB_OPENCODE_BIN",
+    "AGENT_JOB_OPENCODE_CONCURRENCY",
+    "AGENT_JOB_OPENCODE_DEFAULT_MODEL",
+    "AGENT_JOB_OPENCODE_MODEL_PREFIXES",
     "AGENT_JOB_MAX_LOG_BYTES",
     "AGENT_JOB_MAX_EVENT_BYTES",
     "AGENT_JOB_MAX_PARTIAL_RESPONSE_BYTES",
@@ -147,8 +151,9 @@ def _claude_binary(existing: dict[str, str], profile_env: str | None) -> str | N
     retained = existing.get("AGENT_JOB_CLAUDE_BIN", "").strip()
     if not retained:
         return None
-    credentials = Path(profile_env).expanduser() if profile_env else None
-    if _is_script(Path(retained).expanduser()) and not (credentials and credentials.is_file()):
+    paths = [item.strip() for item in (profile_env or "").split(os.pathsep) if item.strip()]
+    credentials = bool(paths) and all(Path(item).expanduser().is_file() for item in paths)
+    if _is_script(Path(retained).expanduser()) and not credentials:
         # A launcher script may be what supplies Claude's credentials; dropping it
         # silently would leave every Claude job unauthenticated.
         raise RuntimeError(

@@ -14,6 +14,7 @@ TOOLS_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS_DIR))
 
 from agent_quota_broker import (  # noqa: E402
+    PROVIDERS,
     enforce_provider_availability,
     evaluate_health,
     rate_limit_cooldown,
@@ -247,6 +248,17 @@ class AgentQuotaBrokerTest(unittest.TestCase):
             )
         self.assertEqual("pressured", health["state"])
 
+
+    def test_opencode_limits_record_a_cooldown(self) -> None:
+        self.assertIn("opencode", PROVIDERS)
+        for message in (
+            "Go usage limit reached (status 429)",
+            "You have reached your weekly usage limit",
+            "Rate limit exceeded",
+        ):
+            with self.subTest(message=message):
+                self.assertTrue(rate_limit_cooldown("opencode", message, 100.0, 900)[0])
+        self.assertFalse(rate_limit_cooldown("opencode", "Model returned an empty response", 100.0)[0])
 
 if __name__ == "__main__":
     unittest.main()

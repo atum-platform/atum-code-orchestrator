@@ -1,6 +1,6 @@
 # Atum Agent Jobs
 
-A local, durable supervisor for cross-agent work among Codex, Claude, and Kimi.
+A local, durable supervisor for cross-agent work among Codex, Claude, and OpenCode.
 It lets any supported coding surface submit work to another provider, observe
 incremental progress, recover partial responses, and receive durable completion
 notices without keeping one MCP request open.
@@ -53,8 +53,11 @@ sync between machines.
 - Kimi Code: MCP registration, global guidance, and shared skill.
 - Hermes: protocol-compatible only; managed by its independent cluster runtime.
 
-Provider execution uses the locally authenticated `codex`, `claude`, and `kimi`
-CLIs, so usage is charged to the account or subscription configured in each CLI.
+Provider execution uses the locally authenticated `codex`, `claude`, and
+`opencode` CLIs, so usage is charged to the account or subscription configured
+for each. OpenCode jobs are read-only reviews on the OpenCode Go subscription
+(default model Muse Spark, a Meta model), run in a sealed copy of the repository;
+the `kimi` provider remains only as an explicit legacy target.
 Claude jobs run the newest Claude Desktop bundled Claude Code when one is
 installed, resolved at every launch; never pin a versioned Claude path. Supply
 Claude credentials through `AGENT_JOB_PROFILE_ENV` rather than a wrapper script.

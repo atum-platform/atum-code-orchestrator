@@ -16,7 +16,7 @@ MAX_VALUE_DEPTH = 4
 MAX_CLAUDE_STREAM_BLOCK_CHARS = 1_048_576
 MAX_CLAUDE_STREAM_BLOCKS = 256
 MAX_CLAUDE_SNAPSHOT_MESSAGES = 64
-PRIVATE_STDOUT_PROVIDERS = {"claude", "kimi"}
+PRIVATE_STDOUT_PROVIDERS = {"claude", "kimi", "opencode"}
 
 
 def _bounded(value: Any, depth: int = 0) -> Any:
@@ -601,6 +601,82 @@ def _kimi_events(value: dict[str, Any], state: dict[str, Any]) -> list[dict[str,
     return [{"kind": "progress", "payload": _kimi_metadata(value)}]
 
 
+def _opencode_events(value: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize `opencode run --format json` records from the 1.x CLI.
+
+    Tool inputs and outputs can carry file contents, so only the tool name,
+    status, and output size are kept.
+    """
+    record_type = str(value.get("type") or "")
+    part = value.get("part")
+    part = part if isinstance(part, dict) else {}
+    if record_type == "text":
+        text = _text(part.get("text"))
+        if text and not part.get("synthetic") and not part.get("ignored"):
+            return [{"kind": "message_delta", "payload": {"text": text}}]
+        return [{"kind": "progress", "payload": {"phase": "text"}}]
+    if record_type == "reasoning":
+        text = _text(part.get("text"))
+        if text:
+            return [{"kind": "thinking_delta", "payload": {"text": text}}]
+        return [{"kind": "progress", "payload": {"phase": "reasoning"}}]
+    if record_type == "tool_use":
+        state = part.get("state")
+        state = state if isinstance(state, dict) else {}
+        status = str(state.get("status") or "unknown")[:50]
+        return [{
+            "kind": "tool_finished",
+            "payload": {
+                "id": str(part.get("callID") or part.get("id") or "tool")[:200],
+                "name": str(part.get("tool") or "tool")[:200],
+                "status": status,
+                "content_bytes": _content_bytes(
+                    state.get("output") if status == "completed" else state.get("error")
+                ),
+            },
+        }]
+    if record_type == "step_start":
+        return [{"kind": "progress", "payload": {"phase": "step_started"}}]
+    if record_type == "step_finish":
+        tokens = part.get("tokens")
+        tokens = tokens if isinstance(tokens, dict) else {}
+        cache = tokens.get("cache")
+        cache = cache if isinstance(cache, dict) else {}
+        return [{
+            "kind": "usage",
+            "payload": {
+                "scope": "step",
+                "reason": str(part.get("reason") or "")[:100],
+                "cost": part.get("cost"),
+                "input_tokens": tokens.get("input"),
+                "output_tokens": tokens.get("output"),
+                "reasoning_tokens": tokens.get("reasoning"),
+                "cache_read_tokens": cache.get("read"),
+                "cache_write_tokens": cache.get("write"),
+            },
+        }]
+    if record_type == "error":
+        error = value.get("error")
+        error = error if isinstance(error, dict) else {}
+        data = error.get("data")
+        data = data if isinstance(data, dict) else {}
+        message = (
+            _text(data.get("message")) or _text(error.get("message"))
+            or str(error.get("name") or "OpenCode reported an error")
+        )
+        return [{
+            "kind": "warning",
+            "payload": {
+                "message": message[:500],
+                "subtype": "provider_error",
+                "error_name": str(error.get("name") or error.get("type") or "")[:100],
+                "status_code": data.get("statusCode", error.get("status")),
+                "retryable": data.get("isRetryable"),
+            },
+        }]
+    return [{"kind": "progress", "payload": {"type": record_type[:100]}}]
+
+
 def _coalesce_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     coalesced: list[dict[str, Any]] = []
     input_progress: dict[str, dict[str, Any]] = {}
@@ -686,6 +762,8 @@ class ProviderEventDecoder:
                 events.extend(_claude_events(value, self._provider_state))
             elif self.provider == "kimi":
                 events.extend(_kimi_events(value, self._provider_state))
+            elif self.provider == "opencode":
+                events.extend(_opencode_events(value))
             else:
                 events.append({
                     "kind": "provider_raw",

@@ -43,7 +43,7 @@ GUIDANCE = {
 Use `$agent-jobs` for cross-agent reviews, consultations, planning, architecture,
 UI/UX, visual design, product judgment, copywriting, research, or explicitly
 delegated implementation. Use Opus first for planning, architecture, design,
-product, copy, and research. Use Kimi first for code review, then Opus only on
+product, copy, and research. Use OpenCode first for code review, then Opus only on
 provider failure or quota exhaustion. Never delegate recursively or send secrets.
 Save durable job IDs and cursors, treat `possibly_stalled` as alive but quiet,
 and omit the retired `max_turns` option entirely; run deadlines remain the
@@ -55,8 +55,8 @@ the final decision. Read the retained result before acknowledging inbox delivery
 
 Use `$agent-jobs` for durable cross-agent review and delegation. Claude keeps
 planning, architecture, design, product, copywriting, and research in-family;
-use Codex first for code review and engineering work, then Kimi as the documented
-fallback. Never delegate back to Claude, recurse, or send secrets. Run the
+use Codex first for code review and engineering work, with OpenCode as the
+documented review fallback. Never delegate back to Claude, recurse, or send secrets. Run the
 skill's guarded CLI, retain job IDs and cursors, and treat
 `possibly_stalled` as alive but quiet. The retired `max_turns` option is omitted.
 Verify returned advice and changes locally before accepting them.
@@ -71,8 +71,36 @@ and omit the retired `max_turns` option. Verify all returned work locally.
 """,
 }
 
+# Every earlier installer default per surface. A managed block that still
+# matches one exactly was never customized, so it is safe to replace.
 MIGRATABLE_MANAGED_GUIDANCE = {
-    "Claude guidance": """## Agent Jobs
+    "Codex guidance": (
+        """## Agent Jobs
+
+Use `$agent-jobs` for cross-agent reviews, consultations, planning, architecture,
+UI/UX, visual design, product judgment, copywriting, research, or explicitly
+delegated implementation. Use Opus first for planning, architecture, design,
+product, copy, and research. Use Kimi first for code review, then Opus only on
+provider failure or quota exhaustion. Never delegate recursively or send secrets.
+Save durable job IDs and cursors, treat `possibly_stalled` as alive but quiet,
+and omit the retired `max_turns` option entirely; run deadlines remain the
+execution bound.
+Codex owns local inspection, implementation unless delegated, tests, docs, and
+the final decision. Read the retained result before acknowledging inbox delivery.
+""",
+    ),
+    "Claude guidance": (
+        """## Agent Jobs
+
+Use `$agent-jobs` for durable cross-agent review and delegation. Claude keeps
+planning, architecture, design, product, copywriting, and research in-family;
+use Codex first for code review and engineering work, then Kimi as the documented
+fallback. Never delegate back to Claude, recurse, or send secrets. Run the
+skill's guarded CLI, retain job IDs and cursors, and treat
+`possibly_stalled` as alive but quiet. The retired `max_turns` option is omitted.
+Verify returned advice and changes locally before accepting them.
+""",
+        """## Agent Jobs
 
 Use `$agent-jobs` for durable cross-agent review and delegation. As a Claude
 caller, use Codex first for code review, planning, and implementation; use Kimi
@@ -81,6 +109,7 @@ secrets. Run the skill's guarded CLI, retain job IDs and cursors, and treat
 `possibly_stalled` as alive but quiet. The retired `max_turns` option is omitted.
 Verify returned advice and changes locally before accepting them.
 """,
+    ),
 }
 
 ROUTING_GUIDANCE = """## Agent Jobs Routing Protocol
@@ -105,7 +134,7 @@ When `enforced=true`, the returned lane, provider, and model supersede static
 provider-preference text elsewhere in the guidance. For `agent_jobs`, submit
 exactly the returned provider/model with `job_submit`. For `native_subagent`,
 spawn one worker using the returned worker profile/model. For `direct`, continue
-in the primary session. Never submit Opus, Kimi, or Codex directly from the
+in the primary session. Never submit Opus, OpenCode, or Codex directly from the
 static fallback table when an enforced route exists. Shadow decisions remain
 telemetry; on supervisor outage or shadow-only routing, use the skill's table.
 
@@ -312,14 +341,13 @@ def merge_guidance(path: Path, name: str, suffix: str, apply: bool) -> bool:
         # overrides and team-specific routing must not be silently overwritten.
         end += len(GUIDANCE_END)
         existing = original[start:end]
-        migratable = MIGRATABLE_MANAGED_GUIDANCE.get(name)
-        old_managed = (
-            f"{GUIDANCE_START}\n{migratable.rstrip()}\n{GUIDANCE_END}"
-            if migratable else ""
-        )
+        old_managed = {
+            f"{GUIDANCE_START}\n{previous.rstrip()}\n{GUIDANCE_END}"
+            for previous in MIGRATABLE_MANAGED_GUIDANCE.get(name, ())
+        }
         updated = (
             original[:start] + managed + original[end:]
-            if existing == old_managed else original
+            if existing in old_managed else original
         )
     else:
         # Adopt legacy policy verbatim; the shared skill carries portable defaults.

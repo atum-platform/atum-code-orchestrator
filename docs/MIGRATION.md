@@ -92,6 +92,45 @@ review, confirm that it completes and that `read` reports a `binary_path` in the
 newest bundled release, and only then delete the old wrapper file. To roll back,
 reinstall with `AGENT_JOB_CLAUDE_BIN` set to the previous launcher.
 
+## Enabling the OpenCode Provider
+
+OpenCode replaces Kimi as the default review target. On each Mac:
+
+1. Install the public CLI; ACO accepts only its 1.x contract:
+
+   ```bash
+   brew install anomalyco/tap/opencode
+   ```
+
+2. Materialize the OpenCode Go API key from the secret manager into an
+   owner-only env file. The value never appears on a command line:
+
+   ```bash
+   ( umask 077; { printf 'OPENCODE_API_KEY='; infisical secrets get SECRET_NAME \
+       --projectId PROJECT_ID --env ENVIRONMENT --plain --silent; } \
+       > ~/.local/state/agent-job-supervisor/opencode.env )
+   ```
+
+3. With no jobs running, reinstall only the supervisor and append that file to
+   the credential path list, keeping any existing entry:
+
+   ```bash
+   .venv/bin/python tools/agent_job_client.py list --status running
+   AGENT_JOB_PROFILE_ENV="EXISTING_PROFILE_ENV:$HOME/.local/state/agent-job-supervisor/opencode.env" \
+     .venv/bin/python tools/install_agent_job_supervisor.py install
+   ```
+
+4. Submit one read-only review with `--provider opencode` and confirm it
+   completes with a `usage` event and an answer.
+
+To rotate the key, rerun step 2; the supervisor reads the file at every launch.
+Guidance defaults in coding clients change only when
+`tools/install_agent_job_clients.py --apply` next runs with the desktop apps
+closed; until then `route_decide` remains authoritative.
+
+To roll back, reinstall the previous release. Kimi stays available as an explicit
+target in the meantime, although routing no longer selects it.
+
 ## Rollback
 
 Stop submitting jobs and let active jobs drain. Restore the timestamped
