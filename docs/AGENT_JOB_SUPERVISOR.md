@@ -458,6 +458,14 @@ servers, commands requiring secrets, or untrusted code. The macOS profile is
 targeted blast-radius reduction, not a default-deny execution sandbox: it blocks
 network, Apple Events, common launchd/script escapes, sensitive credential reads,
 out-of-workspace writes, and Git writes, but callers must still inspect the diff.
+The credential reads it denies are the usual CLI homes (`~/.ssh`, `~/.aws`,
+`~/.kube`, `~/.config/gh`, `~/.claude`, `~/.claude.json`, `~/.codex`, `~/.kimi`,
+`~/.netrc`, `~/.npmrc`, and the keychains) plus the paths the supervisor passes
+in `ACO_CHECKS_DENY_READ`. Those are its state directory (the OpenCode key
+file, implementation token, job database, and logs), each
+`AGENT_JOB_PROFILE_ENV` file, OpenCode's `~/.local/share/opencode`, and
+`~/.kimi-code`. The check's own runtime directory inside the state directory
+stays readable.
 
 Reads advance the normalized stream with the opaque byte `event_cursor`. On
 terminal failure, cancellation, or interruption, `partial_response` and

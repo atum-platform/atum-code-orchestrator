@@ -1525,6 +1525,26 @@ class Supervisor:
             finally:
                 record_path.unlink(missing_ok=True)
 
+    def _check_read_denials(self) -> list[str]:
+        """ACO and provider credentials that approved checks must not read.
+
+        Covers the state directory (its OpenCode key file, implementation
+        token, job database, and logs), every credential profile file, and
+        logins the check sandbox's fixed list does not name. The check
+        server re-allows the job's own runtime inside the state directory.
+        """
+        home = Path.home()
+        paths = [
+            self.state_dir, IMPLEMENT_TOKEN_PATH,
+            home / ".local" / "share" / "opencode", home / ".kimi-code",
+        ]
+        paths += [
+            Path(entry.strip()).expanduser()
+            for entry in os.environ.get("AGENT_JOB_PROFILE_ENV", "").split(os.pathsep)
+            if entry.strip()
+        ]
+        return sorted({str(path.resolve()) for path in paths})
+
     def _prepare_check_mcp(self, runtime: Path, job: dict[str, Any]) -> Path:
         checks_json = str(job.get("checks_json") or "[]")
         config_path = runtime / "checks-mcp.json"
@@ -1537,6 +1557,7 @@ class Supervisor:
                     "ACO_CHECKS_WORKDIR": job["workdir"],
                     "ACO_CHECKS_RUNTIME": str(runtime),
                     "ACO_CHECKS_JSON": checks_json,
+                    "ACO_CHECKS_DENY_READ": _json(self._check_read_denials()),
                 },
             }
         config_path.write_text(_json(config), encoding="utf-8")
