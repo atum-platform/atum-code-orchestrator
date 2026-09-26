@@ -198,6 +198,11 @@ Use these canonical model aliases:
   for cross-family review, planning, and research consultation.
 - OpenCode `opencode-go/kimi-k3`: Kimi K3 on Go; its allowance is small, so request
   it only when K3 specifically matters.
+
+OpenCode jobs also take `reasoning_effort` (`--reasoning-effort` on the CLI). Omit
+it for the supervisor default (`xhigh` on Muse Spark). Pass `high` or lower for
+a quicker, cheaper pass, or `max` for Kimi K3, which offers only that level. A
+level the model does not offer fails the job with the list it does offer.
 - Codex: pass the currently configured Codex model when another caller requests it.
 
 After completion, inspect the complete diff, reject unrelated changes, run focused

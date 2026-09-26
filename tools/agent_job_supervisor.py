@@ -21,6 +21,7 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from typing import Any, Callable
@@ -70,6 +71,13 @@ OPENCODE_DEFAULT_MODEL = "opencode-go/muse-spark-1.3-contributor"
 # provider, such as pay-as-you-go Zen, would bill per token on the same key.
 OPENCODE_DEFAULT_MODEL_PREFIXES = ("opencode-go/",)
 OPENCODE_AGENT = "aco-review"
+# Reasoning levels OpenCode exposes as model variants. Each model offers a
+# subset, and OpenCode silently ignores one the model lacks, so ACO checks
+# the catalog before passing --variant.
+REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+OPENCODE_DEFAULT_REASONING_EFFORT = "xhigh"
+OPENCODE_CATALOG_TTL_SECONDS = 24 * 3600
+OPENCODE_MODEL_LINE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._:-]*)\s*$", re.M)
 # Families of the callers that route to OpenCode by default. A default model
 # from one of them would quietly turn cross-family reviews into same-family ones.
 OPENCODE_EXCLUDED_DEFAULT_FAMILIES = {"openai", "anthropic"}
@@ -391,6 +399,28 @@ def _cao_bridge_env(provider: str) -> dict[str, str]:
     return env
 
 
+def _list_opencode_variants(
+    binary: str, env: dict[str, str], cwd: Path, provider: str
+) -> dict[str, list[str]]:
+    """Map each model id to its variant names from `opencode models --verbose`."""
+    result = subprocess.run(
+        [binary, "models", provider, "--verbose"], cwd=cwd, env=env, check=False,
+        capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"opencode models exited {result.returncode}")
+    parts = OPENCODE_MODEL_LINE.split(result.stdout)
+    listing: dict[str, list[str]] = {}
+    for index in range(1, len(parts) - 1, 2):
+        details = json.loads(parts[index + 1])
+        variants = details.get("variants") if isinstance(details, dict) else None
+        # Catalog order runs from least to most reasoning; keep it for messages.
+        listing[parts[index]] = list(variants) if isinstance(variants, dict) else []
+    if not listing:
+        raise ValueError("opencode models listed no models")
+    return listing
+
+
 def _opencode_error_messages(path: Path) -> list[str]:
     """Error text from OpenCode's JSON error events.
 
@@ -694,6 +724,8 @@ class JobStore:
             "queue_timeout_seconds": "INTEGER",
             "run_timeout_seconds": "INTEGER",
             "requested_model": "TEXT NOT NULL DEFAULT ''",
+            "reasoning_effort": "TEXT NOT NULL DEFAULT ''",
+            "effective_reasoning_effort": "TEXT NOT NULL DEFAULT ''",
             "last_event_at": "REAL",
             "last_event_kind": "TEXT NOT NULL DEFAULT ''",
             "last_progress_at": "REAL",
@@ -775,8 +807,8 @@ class JobStore:
                 created_at, updated_at, timeout_seconds, queue_timeout_seconds,
                 run_timeout_seconds, soft_stall_seconds,
                 max_turns, log_path, idempotency_key, request_hash, execution_backend,
-                semantic_stream, checks_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                semantic_stream, checks_json, reasoning_effort
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 job_id, spec["provider"], spec["model"], spec.get("requested_model", ""),
                 spec["mode"], spec["workdir"],
@@ -786,6 +818,7 @@ class JobStore:
                 spec["soft_stall_seconds"], spec["max_turns"], str(log_path), key,
                 spec["request_hash"], spec.get("execution_backend", "native"),
                 int(spec.get("semantic_stream") or 0), spec.get("checks_json", "[]"),
+                spec.get("reasoning_effort", ""),
             ),
         )
         self.db.commit()
@@ -1275,6 +1308,7 @@ class Supervisor:
         self.last_event_writes: dict[str, float] = {}
         self.job_log_paths: dict[str, Path] = {}
         self.event_decoders: dict[str, ProviderEventDecoder] = {}
+        self.opencode_catalog_lock = threading.Lock()
         self.event_sequences: dict[str, int] = {}
         self.event_summaries: dict[str, dict[str, Any]] = {}
         self.event_truncated: set[str] = set()
@@ -1430,6 +1464,7 @@ class Supervisor:
             _stage_opencode_workspace(Path(job["workdir"]), runtime / "workspace")
             env = _provider_env(provider)
             env.update(_opencode_isolation_env(runtime / "opencode-home", model))
+            variant = self._opencode_variant(job, binary, env, runtime / "workspace")
             # --pure skips external plugins; the prompt arrives on stdin, which
             # `run` reads to EOF whenever stdin is not a terminal. Error logs on
             # stderr carry the causes the JSON stream reduces to "server error".
@@ -1438,6 +1473,8 @@ class Supervisor:
                 "--model", model, "--title", "ACO review",
                 "--print-logs", "--log-level", "ERROR",
             ]
+            if variant:
+                argv.extend(["--variant", variant])
             return argv, prompt, env
         sandbox = "read-only" if mode == "readonly" else "workspace-write"
         argv = [
@@ -1448,6 +1485,70 @@ class Supervisor:
             argv.extend(["--model", model])
         argv.append("-")
         return argv, prompt, _provider_env(provider)
+
+    def _opencode_variant(
+        self, job: dict[str, Any], binary: str, env: dict[str, str], cwd: Path
+    ) -> str:
+        """The --variant to pass, or "" to leave the model at its default.
+
+        An explicit request the model cannot honour fails the job; the
+        configured default is simply dropped for models that lack it.
+        """
+        requested = str(job.get("reasoning_effort") or "")
+        effort = requested or os.environ.get(
+            "AGENT_JOB_OPENCODE_DEFAULT_REASONING_EFFORT", OPENCODE_DEFAULT_REASONING_EFFORT
+        ).strip().lower()
+        if not effort:
+            return ""
+        supported = self._opencode_model_variants(binary, env, cwd, str(job["model"]))
+        if supported is not None and effort in supported:
+            return effort
+        if requested:
+            offered = (
+                f"it offers {', '.join(supported) or 'no reasoning levels'}"
+                if supported is not None else "its reasoning levels could not be listed"
+            )
+            raise RuntimeError(
+                f"OpenCode model {job['model']} does not support reasoning effort "
+                f"{requested!r}; {offered}"
+            )
+        return ""
+
+    def _opencode_model_variants(
+        self, binary: str, env: dict[str, str], cwd: Path, model: str
+    ) -> tuple[str, ...] | None:
+        """Variants OpenCode lists for `model`, or None when unknown.
+
+        A cold OpenCode start can take tens of seconds, so each provider's
+        listing is cached in the state directory. A stale listing is still
+        used when a refresh fails.
+        """
+        provider = model.split("/", 1)[0]
+        cache_path = self.state_dir / "opencode-models.json"
+        with self.opencode_catalog_lock:
+            try:
+                cache = json.loads(cache_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                cache = {}
+            entry = cache.get(provider) if isinstance(cache, dict) else None
+            entry = entry if isinstance(entry, dict) else None
+            if entry is None or _now() - float(entry.get("fetched_at") or 0) > OPENCODE_CATALOG_TTL_SECONDS:
+                try:
+                    listing = _list_opencode_variants(binary, env, cwd, provider)
+                except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as exc:
+                    print(f"agent-job OpenCode catalog refresh failed: {exc}", file=sys.stderr, flush=True)
+                else:
+                    entry = {"fetched_at": _now(), "models": listing}
+                    cache = cache if isinstance(cache, dict) else {}
+                    cache[provider] = entry
+                    temporary = cache_path.with_suffix(".tmp")
+                    temporary.write_text(_json(cache), encoding="utf-8")
+                    os.chmod(temporary, 0o600)
+                    os.replace(temporary, cache_path)
+        models = entry.get("models") if entry else None
+        if not isinstance(models, dict) or model not in models:
+            return None
+        return tuple(str(name) for name in models[model])
 
     def _launch_cwd(self, job: dict[str, Any]) -> str:
         """OpenCode runs inside its staged copy, never the real workdir."""
@@ -2033,6 +2134,13 @@ class Supervisor:
             # Off the event loop: staging a large repository must not stall the
             # control socket.
             argv, stdin_text, env = await asyncio.to_thread(self.command_builder, job)
+            if job["provider"] == "opencode":
+                self.store.update(
+                    job_id,
+                    effective_reasoning_effort=(
+                        argv[argv.index("--variant") + 1] if "--variant" in argv else "default"
+                    ),
+                )
             proc = await asyncio.create_subprocess_exec(
                 *argv,
                 cwd=self._launch_cwd(job),
@@ -2295,6 +2403,16 @@ class Supervisor:
         if not prompt.strip() or len(prompt.encode("utf-8")) > MAX_PROMPT_BYTES:
             raise ValueError(f"Prompt must contain 1 to {MAX_PROMPT_BYTES} UTF-8 bytes")
         workdir = _safe_workdir(str(payload.get("workdir") or ""))
+        reasoning_effort = str(payload.get("reasoning_effort") or "").strip().lower()
+        if reasoning_effort in {"default", "auto"}:
+            reasoning_effort = ""
+        if reasoning_effort and reasoning_effort not in REASONING_EFFORTS:
+            raise ValueError(
+                f"Unsupported reasoning effort {reasoning_effort!r}; "
+                f"use one of {', '.join(sorted(REASONING_EFFORTS))}"
+            )
+        if reasoning_effort and provider != "opencode":
+            raise ValueError("reasoning_effort is supported only for OpenCode jobs")
         if provider == "opencode":
             if mode != "readonly":
                 raise ValueError(
@@ -2341,6 +2459,7 @@ class Supervisor:
             ),
             "idempotency_key": str(payload.get("idempotency_key") or "")[:200],
             "checks_json": _json(checks),
+            "reasoning_effort": reasoning_effort,
         }
         hash_fields = {key: spec[key] for key in (
             "provider", "model", "requested_model", "mode", "workdir", "prompt",
@@ -2349,6 +2468,10 @@ class Supervisor:
             "semantic_stream",
             "checks_json",
         )}
+        if reasoning_effort:
+            # Only explicit requests join the hash, so retries of jobs submitted
+            # before this field existed still match.
+            hash_fields["reasoning_effort"] = reasoning_effort
         spec["request_hash"] = hashlib.sha256(_json(hash_fields).encode("utf-8")).hexdigest()
         legacy_hash_fields = {key: spec[key] for key in (
             "provider", "model", "requested_model", "mode", "workdir", "prompt",

@@ -137,6 +137,14 @@ closed; until then `route_decide` remains authoritative.
 
 To roll back, reinstall the previous release.
 
+### Reasoning effort
+
+OpenCode jobs now run at `xhigh` reasoning by default where the model offers it.
+Pull the release and reinstall the supervisor to pick it up. To keep the
+model's own default instead, reinstall with
+`AGENT_JOB_OPENCODE_DEFAULT_REASONING_EFFORT=` (empty); the installer keeps the
+value across later reinstalls.
+
 ## Removing the Kimi Provider
 
 This release deletes the Kimi launch code that the OpenCode release left

@@ -873,3 +873,10 @@
   OpenCode's data directory, or `~/.kimi-code`. The job's runtime directory stays
   readable.
 - Details: `docs/session-logs/2026-09-26-check-sandbox-credentials.md`.
+
+## 2026-09-26 - OpenCode reasoning effort
+
+- Callers can set `reasoning_effort` for OpenCode jobs; the default is `xhigh`
+  where the model offers it. ACO checks each model's variants first, because
+  OpenCode silently ignores unknown ones.
+- Details: `docs/session-logs/2026-09-26-opencode-reasoning-effort.md`.

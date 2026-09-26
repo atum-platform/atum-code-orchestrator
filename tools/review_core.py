@@ -283,6 +283,7 @@ def job_submit(
     instructions: str,
     workdir: str,
     model: str = "",
+    reasoning_effort: str = "",
     context_git_diff: bool = False,
     context_git_base: str = "HEAD",
     context_files: list[str] | None = None,
@@ -307,6 +308,7 @@ def job_submit(
     effective_owner = ":".join(part for part in (owner.strip(), label.strip()) if part)[:200]
     return submit(
         provider=provider, model=model, mode="readonly", workdir=str(cwd), prompt=prompt,
+        reasoning_effort=reasoning_effort,
         queue_timeout_seconds=queue_timeout_seconds,
         run_timeout_seconds=(timeout_seconds if timeout_seconds is not None else run_timeout_seconds),
         owner=effective_owner,

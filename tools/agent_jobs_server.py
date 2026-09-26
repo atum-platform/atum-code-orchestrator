@@ -83,6 +83,7 @@ async def job_submit(
     instructions: str,
     workdir: str,
     model: str = "",
+    reasoning_effort: str = "",
     context_git_diff: bool = False,
     context_git_base: str = "HEAD",
     context_files: list[str] | None = None,
@@ -99,7 +100,8 @@ async def job_submit(
     """Submit a durable read-only job with separate queue and run budgets."""
     result = await asyncio.to_thread(
         review_core.job_submit,
-        provider=provider, model=model, instructions=instructions, workdir=workdir,
+        provider=provider, model=model, reasoning_effort=reasoning_effort,
+        instructions=instructions, workdir=workdir,
         context_git_diff=context_git_diff, context_git_base=context_git_base,
         context_files=context_files, context_text=context_text,
         expected_output=expected_output, queue_timeout_seconds=queue_timeout_seconds,
