@@ -84,3 +84,15 @@ providers (zero slots) queued and that no credential reaches another provider.
   A delegated Claude implementation job with approved checks could therefore
   make a check print one of them into the model's context. This predates this
   change and needs its own sandbox test, so it is tracked separately.
+
+## Operations: CodexBar on the Mac mini
+
+The Mac mini's CodexBar showed "OpenCode Go cookie header is invalid" and
+wrote no `opencodego.json`, so the quota broker had no OpenCode data there.
+CodexBar 0.55's menu-bar app ignores the provider's `source: api` and runs its
+auto pipeline: local history first, then the API, then opencode.ai cookies. A
+stale cookie on the mini failed that last step. Setting `cookieSource: off`
+on both Macs, with the app quit, fixed it. The mini reported 46% of the
+five-hour window and 18% weekly within a minute. Setup is documented under
+Quota broker in `docs/AGENT_JOB_SUPERVISOR.md`. Config backups are at
+`~/.config/codexbar/config.json.bak.cookie-off-*`.

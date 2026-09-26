@@ -295,6 +295,22 @@ directory. Override the directory with
 `AGENT_JOB_QUOTA_HISTORY_DIR`; no browser cookies, provider credentials, or
 CodexBar process access are required.
 
+CodexBar writes `opencodego.json` only while its OpenCode Go provider is
+enabled with the Go API key:
+
+```bash
+CLI=/Applications/CodexBar.app/Contents/Helpers/CodexBarCLI
+$CLI config set-api-key --provider opencodego --stdin < KEY_FILE
+$CLI config disable --provider kimi
+```
+
+Then, with CodexBar quit, set `"cookieSource": "off"` on the `opencodego`
+entry in `~/.config/codexbar/config.json`. The menu-bar app (0.55) ignores that
+entry's `source: api` and tries opencode.ai browser cookies too. A stale cookie
+fails with "OpenCode Go cookie header is invalid" and no history is written.
+Only the CLI honors `source`, so a working `CodexBarCLI usage --provider
+opencodego` does not prove the app works.
+
 For every active quota window, pressure is the greater of current utilization
 and utilization projected linearly to the reset, capped at 100%. A provider
 enters `pressured` at 85% and leaves only below 70%, providing hysteresis across
