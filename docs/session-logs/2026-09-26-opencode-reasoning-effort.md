@@ -38,12 +38,32 @@ reasoning tokens.
   levels, so the level was verified from OpenCode's source and ACO's argv rather
   than from token counts.
 
+## Review
+
+OpenCode (Muse Spark) review `5f75ac43-ae27-4360-b709-f7a213aa9d83` returned SHIP
+with no blocking findings. It confirmed:
+
+- The catalog subprocess reuses the job's isolated home and staged workspace, so
+  it exposes nothing new.
+- Default jobs keep their pre-feature idempotency hash.
+- The lock serializes refreshes without blocking the event loop.
+
+Suggestions taken:
+
+- Catalog parsing strips ANSI codes, ignores footers, and skips an unreadable
+  entry instead of discarding the whole listing.
+- A failed listing reports OpenCode's stderr.
+- A cached entry with the wrong shape is treated as unknown.
+- The effective level is recorded only once the process has started.
+- `none` is documented.
+- Failures writing or reading the cache never fail a job.
+
 ## Verification
 
 - Unit tests cover default resolution, dropping the default, explicit
   mismatches, an unavailable catalog, stale-cache fallback, parsing the verbose
   listing, submit validation, stored and effective values, and idempotency.
-  Full suite: 336 tests pass.
+  Full suite: 339 tests pass.
 - End to end with a throwaway supervisor on this branch and real OpenCode Go:
   a default job ran with `--variant xhigh` and recorded `xhigh`; `max` on Muse
   Spark failed at launch, naming the offered levels; the cached catalog listed

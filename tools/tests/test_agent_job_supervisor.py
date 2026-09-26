@@ -244,6 +244,14 @@ class OpenCodeProviderTest(unittest.TestCase):
             self.assertEqual(["xhigh"], self._variant())
         self.assertEqual(0o600, stat.S_IMODE(cache_path.stat().st_mode))
 
+    def test_corrupt_or_unwritable_catalog_cache_never_fails_a_job(self) -> None:
+        cache_path = self.supervisor.state_dir / "opencode-models.json"
+        cache_path.write_text('{"opencode-go": {"fetched_at": "soon", "models": []}}', encoding="utf-8")
+        self.assertEqual(["xhigh"], self._variant())
+        with patch.object(supervisor_module.os, "replace", side_effect=OSError("disk full")):
+            cache_path.unlink()
+            self.assertEqual(["xhigh"], self._variant())
+
     def test_catalog_listing_is_parsed_from_verbose_models_output(self) -> None:
         output = (
             "opencode-go/muse-spark-1.3-contributor\n"
@@ -261,10 +269,34 @@ class OpenCodeProviderTest(unittest.TestCase):
             "opencode-go/plain": [],
         }, listing)
         self.assertEqual(["/bin/opencode", "models", "opencode-go", "--verbose"], run.call_args.args[0])
-        failed = subprocess.CompletedProcess([], 1, stdout="", stderr="Provider not found")
+        failed = subprocess.CompletedProcess([], 1, stdout="", stderr="\x1b[91mError:\x1b[0m Provider not found")
         with patch.object(supervisor_module.subprocess, "run", return_value=failed), \
-                self.assertRaisesRegex(RuntimeError, "exited 1"):
+                self.assertRaisesRegex(RuntimeError, "exited 1: Error: Provider not found"):
             self.real_list_variants("/bin/opencode", {}, self.root, "opencode-go")
+
+    def test_catalog_parsing_tolerates_colour_noise_and_a_bad_entry(self) -> None:
+        output = (
+            "\x1b[1mopencode-go/muse-spark-1.3-contributor\x1b[0m\n"
+            + json.dumps({"note": "opencode-go/not-a-model-line", "variants": {"xhigh": {}}}, indent=2)
+            + "\nopencode-go/broken\n{not json\n"
+            + "opencode-go/kimi-k3\n" + json.dumps({"variants": {"max": {}}}) + "\n\n2 models listed\n"
+        )
+        completed = subprocess.CompletedProcess([], 0, stdout=output, stderr="")
+        with patch.object(supervisor_module.subprocess, "run", return_value=completed):
+            listing = self.real_list_variants("/bin/opencode", {}, self.root, "opencode-go")
+        self.assertEqual({
+            "opencode-go/muse-spark-1.3-contributor": ["xhigh"],
+            "opencode-go/kimi-k3": ["max"],
+        }, listing)
+
+    def test_malformed_cached_variants_are_treated_as_unknown(self) -> None:
+        cache_path = self.supervisor.state_dir / "opencode-models.json"
+        cache_path.write_text(json.dumps({"opencode-go": {
+            "fetched_at": supervisor_module._now(), "models": {self.MODEL: "xhigh"},
+        }}), encoding="utf-8")
+        self.assertEqual([], self._variant())
+        with self.assertRaisesRegex(RuntimeError, "could not be listed"):
+            self._variant(reasoning_effort="xhigh")
 
     def test_launch_refuses_the_real_workdir_without_a_staged_copy(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "refusing the real workdir"):

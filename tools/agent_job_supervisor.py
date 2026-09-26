@@ -77,6 +77,7 @@ OPENCODE_AGENT = "aco-review"
 REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 OPENCODE_DEFAULT_REASONING_EFFORT = "xhigh"
 OPENCODE_CATALOG_TTL_SECONDS = 24 * 3600
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 OPENCODE_MODEL_LINE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._:-]*)\s*$", re.M)
 # Families of the callers that route to OpenCode by default. A default model
 # from one of them would quietly turn cross-family reviews into same-family ones.
@@ -408,11 +409,18 @@ def _list_opencode_variants(
         capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"opencode models exited {result.returncode}")
-    parts = OPENCODE_MODEL_LINE.split(result.stdout)
+        detail = ANSI_ESCAPE.sub("", result.stderr).strip()[-300:]
+        raise RuntimeError(f"opencode models exited {result.returncode}: {detail}")
+    parts = OPENCODE_MODEL_LINE.split(ANSI_ESCAPE.sub("", result.stdout))
     listing: dict[str, list[str]] = {}
+    decoder = json.JSONDecoder()
     for index in range(1, len(parts) - 1, 2):
-        details = json.loads(parts[index + 1])
+        # Each model line is followed by one JSON object; anything after it,
+        # such as a footer, is ignored, and an unreadable entry is skipped.
+        try:
+            details, _ = decoder.raw_decode(parts[index + 1].strip())
+        except ValueError:
+            continue
         variants = details.get("variants") if isinstance(details, dict) else None
         # Catalog order runs from least to most reasoning; keep it for messages.
         listing[parts[index]] = list(variants) if isinstance(variants, dict) else []
@@ -1494,7 +1502,7 @@ class Supervisor:
         An explicit request the model cannot honour fails the job; the
         configured default is simply dropped for models that lack it.
         """
-        requested = str(job.get("reasoning_effort") or "")
+        requested = str(job.get("reasoning_effort") or "").strip().lower()
         effort = requested or os.environ.get(
             "AGENT_JOB_OPENCODE_DEFAULT_REASONING_EFFORT", OPENCODE_DEFAULT_REASONING_EFFORT
         ).strip().lower()
@@ -1530,25 +1538,34 @@ class Supervisor:
                 cache = json.loads(cache_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 cache = {}
-            entry = cache.get(provider) if isinstance(cache, dict) else None
+            cache = cache if isinstance(cache, dict) else {}
+            entry = cache.get(provider)
             entry = entry if isinstance(entry, dict) else None
-            if entry is None or _now() - float(entry.get("fetched_at") or 0) > OPENCODE_CATALOG_TTL_SECONDS:
+            try:
+                age = _now() - float(entry["fetched_at"]) if entry else None
+            except (KeyError, TypeError, ValueError):
+                age = None
+            if age is None or age > OPENCODE_CATALOG_TTL_SECONDS:
                 try:
                     listing = _list_opencode_variants(binary, env, cwd, provider)
                 except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as exc:
                     print(f"agent-job OpenCode catalog refresh failed: {exc}", file=sys.stderr, flush=True)
                 else:
                     entry = {"fetched_at": _now(), "models": listing}
-                    cache = cache if isinstance(cache, dict) else {}
                     cache[provider] = entry
+                    # A cache that cannot be written only costs a relisting later.
                     temporary = cache_path.with_suffix(".tmp")
-                    temporary.write_text(_json(cache), encoding="utf-8")
-                    os.chmod(temporary, 0o600)
-                    os.replace(temporary, cache_path)
+                    try:
+                        temporary.write_text(_json(cache), encoding="utf-8")
+                        os.chmod(temporary, 0o600)
+                        os.replace(temporary, cache_path)
+                    except OSError as exc:
+                        print(f"agent-job OpenCode catalog cache write failed: {exc}", file=sys.stderr, flush=True)
         models = entry.get("models") if entry else None
-        if not isinstance(models, dict) or model not in models:
+        variants = models.get(model) if isinstance(models, dict) else None
+        if not isinstance(variants, list):
             return None
-        return tuple(str(name) for name in models[model])
+        return tuple(str(name) for name in variants)
 
     def _launch_cwd(self, job: dict[str, Any]) -> str:
         """OpenCode runs inside its staged copy, never the real workdir."""
@@ -2134,13 +2151,6 @@ class Supervisor:
             # Off the event loop: staging a large repository must not stall the
             # control socket.
             argv, stdin_text, env = await asyncio.to_thread(self.command_builder, job)
-            if job["provider"] == "opencode":
-                self.store.update(
-                    job_id,
-                    effective_reasoning_effort=(
-                        argv[argv.index("--variant") + 1] if "--variant" in argv else "default"
-                    ),
-                )
             proc = await asyncio.create_subprocess_exec(
                 *argv,
                 cwd=self._launch_cwd(job),
@@ -2152,6 +2162,15 @@ class Supervisor:
             )
             self.processes[job_id] = proc
             self.job_log_paths[job_id] = Path(job["log_path"])
+            if job["provider"] == "opencode":
+                # Recorded only once the process exists: "default" means no
+                # --variant ran; an empty value means the job never launched.
+                self.store.update(
+                    job_id,
+                    effective_reasoning_effort=(
+                        argv[argv.index("--variant") + 1] if "--variant" in argv else "default"
+                    ),
+                )
             process_start = await self._ps_field(proc.pid, "lstart")
             live_executable = await self._ps_field(proc.pid, "comm")
             current = self.store.get(job_id)

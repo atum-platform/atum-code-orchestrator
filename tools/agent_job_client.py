@@ -185,7 +185,7 @@ def _parser() -> argparse.ArgumentParser:
     submit_parser.add_argument("--model", default="")
     submit_parser.add_argument(
         "--reasoning-effort", default="",
-        help="OpenCode only: minimal, low, medium, high, xhigh, or max",
+        help="OpenCode only: none, minimal, low, medium, high, xhigh, or max (default: supervisor setting)",
     )
     submit_parser.add_argument("--mode", choices=("readonly", "implement"), required=True)
     submit_parser.add_argument("--workdir", required=True)

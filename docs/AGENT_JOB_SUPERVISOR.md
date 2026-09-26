@@ -178,20 +178,24 @@ outside a Git work tree fails at launch.
   then set `AGENT_JOB_OPENCODE_DEFAULT_MODEL=opencode-go/kimi-k3`, which does not
   train. Go includes US$60 a month of Muse Spark and US$15 a month of Kimi K3 at
   list prices.
-- **Reasoning effort.** Callers may pass `reasoning_effort` (`minimal`, `low`,
-  `medium`, `high`, `xhigh`, or `max`); ACO passes it to OpenCode as `--variant`.
+- **Reasoning effort.** Callers may pass `reasoning_effort` (`none`, `minimal`,
+  `low`, `medium`, `high`, `xhigh`, or `max`; `default` means omit it); ACO
+  passes it to OpenCode as `--variant`.
   Other providers refuse the field. Without it, jobs use
   `AGENT_JOB_OPENCODE_DEFAULT_REASONING_EFFORT` (`xhigh`, the level published
   Muse Spark benchmarks use; set it empty to leave the model's own default).
   OpenCode silently ignores a variant the model does not offer, so ACO checks
   `opencode models <provider> --verbose` first. The listing is cached per
   provider for 24 hours in `opencode-models.json` in the state directory, and a
-  stale copy is used if a refresh fails. An explicit level the model lacks
+  stale copy is used if a refresh fails. With no usable listing, the default
+  is dropped and an explicit level fails with "could not be listed". An
+  explicit level the model lacks
   fails the job at launch and names the offered levels (Muse Spark offers
   `minimal` to `xhigh`; Kimi K3 only `max`). The configured default is dropped
   for such models. Jobs record `reasoning_effort` (the request, empty for the
-  default) and `effective_reasoning_effort` (what ran, or `default`). Only an
-  explicit level joins the idempotency hash.
+  default) and `effective_reasoning_effort` once the process starts: the level
+  that ran, `default` when no `--variant` was passed, or empty if the job never
+  launched. Only an explicit level joins the idempotency hash.
 - **Errors.** Failures arrive as JSON `error` events on stdout with exit code 1.
   Jobs also pass `--print-logs --log-level ERROR`, because the JSON event can
   reduce the cause to "Unexpected server error". Only error-event text, never
