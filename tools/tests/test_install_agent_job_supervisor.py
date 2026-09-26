@@ -82,6 +82,33 @@ class SupervisorInstallerTest(unittest.TestCase):
 
         self.assertEqual("surface_canary", environment["AGENT_JOB_ROUTING_MODE"])
 
+    def test_provider_binary_keeps_links_and_drops_dead_retained_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bundle = root / "ChatGPT.app/Contents/Resources/codex-cli/bin/codex"
+            bundle.parent.mkdir(parents=True)
+            bundle.write_text("#!/bin/sh\n")
+            bundle.chmod(0o755)
+            link = root / "bin/codex"
+            link.parent.mkdir()
+            link.symlink_to(bundle)
+            moved = str(root / "ChatGPT.app/Contents/Resources/codex")
+
+            with patch.dict(os.environ, {}, clear=True), \
+                 patch.object(installer.shutil, "which", return_value=str(link)):
+                # A path an app update removed is rediscovered, and the stable
+                # launcher link is kept instead of its bundle target.
+                self.assertEqual(str(link), installer._provider_binary(
+                    "AGENT_JOB_CODEX_BIN", "codex", (link,), {"AGENT_JOB_CODEX_BIN": moved},
+                ))
+                self.assertEqual(str(bundle), installer._provider_binary(
+                    "AGENT_JOB_CODEX_BIN", "codex", (link,), {"AGENT_JOB_CODEX_BIN": str(bundle)},
+                ))
+            with patch.dict(os.environ, {"AGENT_JOB_CODEX_BIN": str(link)}, clear=True):
+                self.assertEqual(str(link), installer._provider_binary(
+                    "AGENT_JOB_CODEX_BIN", "codex", (link,), {},
+                ))
+
     def test_launchd_transition_budget_allows_thirty_seconds(self) -> None:
         self.assertEqual(300, installer.SERVICE_TRANSITION_POLLS)
 

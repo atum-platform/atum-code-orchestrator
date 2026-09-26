@@ -880,3 +880,10 @@
   where the model offers it. ACO checks each model's variants first, because
   OpenCode silently ignores unknown ones.
 - Details: `docs/session-logs/2026-09-26-opencode-reasoning-effort.md`.
+
+## 2026-09-26 - Codex binary after a ChatGPT app update
+
+- A ChatGPT app update moved its bundled Codex CLI and left the launcher links,
+  and ACO's pinned path, dangling. The installer now keeps links unresolved and
+  rediscovers a missing retained binary.
+- Details: `docs/session-logs/2026-09-26-codex-binary-after-app-update.md`.

@@ -339,7 +339,12 @@ def _find_binary(provider: str) -> str:
     env_name = f"AGENT_JOB_{provider.upper()}_BIN"
     known = {
         "claude": ["~/.local/bin/claude", "/opt/homebrew/bin/claude"],
-        "codex": ["/opt/homebrew/bin/codex", "~/.local/bin/codex"],
+        # The ChatGPT app bundles the CLI; its launcher links can go stale
+        # when an update moves it, so the bundle path is the last resort.
+        "codex": [
+            "/opt/homebrew/bin/codex", "~/.local/bin/codex",
+            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+        ],
         "opencode": ["/opt/homebrew/bin/opencode", "~/.opencode/bin/opencode"],
     }
     # Resolved at every launch. The desktop app keeps its bundled runtime current,
