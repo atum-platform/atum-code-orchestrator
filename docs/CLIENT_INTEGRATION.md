@@ -2,7 +2,8 @@
 
 The machine-wide agent-job supervisor is a local execution service. Coding
 clients join it through the same read-only MCP server or the equivalent review
-CLI, while target providers are launched through Claude, Codex, and Kimi CLIs.
+CLI, while target providers are launched through the Claude, Codex, and OpenCode
+CLIs (Kimi remains an explicit-only legacy target).
 
 ## Install
 
@@ -130,8 +131,9 @@ native lanes cover planning, architecture, design, product, copywriting, and
 research; Kimi native lanes cover implementation, exploration, and tests. Work
 outside the caller family's primary domain routes cross-family, and code review
 always routes cross-family. V2 selects Opus
-for Claude's deep/review/thinking work and K3 for Kimi review or standard/deep
-work. Codex targets use concrete GPT-5.6 Sol, with GPT-5.6 Terra at high
+for Claude's deep/review/thinking work and the configured OpenCode Go model
+(alias `default`) wherever Kimi used to be the target; OpenCode cross-family
+checks use the model's family, not the provider name. Codex targets use concrete GPT-5.6 Sol, with GPT-5.6 Terra at high
 reasoning reserved for focused native work. Focused Claude native work uses
 Sonnet and focused Kimi native work
 uses high-speed K2.7; Fable remains explicit-only.

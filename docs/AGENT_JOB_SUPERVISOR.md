@@ -129,6 +129,70 @@ Kimi keys. Launching the real binary also keeps each job's `binary_path`
 accurate; through a wrapper the probe usually recorded the transient shell
 (`/bash`) rather than the Claude release that ran.
 
+### OpenCode provider
+
+OpenCode replaces Kimi as the default review target. Jobs are read-only:
+`implement` jobs and the CAO backend are refused at submission, and a workdir
+outside a Git work tree fails at launch.
+
+- **CLI contract.** Only the verified 1.x `opencode run --format json` interface
+  is accepted, checked with `--version` per resolved binary. The binary resolves
+  per launch from `AGENT_JOB_OPENCODE_BIN`, then `PATH` (Homebrew's
+  `anomalyco/tap/opencode`), then known locations; the installer never pins the
+  Homebrew link's versioned Cellar target. OpenCode Desktop bundles a 2.x CLI
+  with a different contract (`--standalone`, no `--pure`), which is refused.
+- **Sealed copy.** Each job runs in `runtime/<job>/workspace`, a copy-on-write
+  clone of the workdir's Git-visible files (`git ls-files --cached --others
+  --exclude-standard`). It omits `opencode.json`, `opencode.jsonc`, and
+  `.opencode/`, from which OpenCode loads plugins and MCP servers without a trust
+  prompt; `.env` and `.envrc` files other than examples, samples, and templates;
+  key, keystore, credential, and Terraform variable or state files; `.kube`,
+  `.docker`, and other secret-store directories; and symlinks. The copy is not a Git
+  repository, so OpenCode's config discovery stops at its root. At most 50,000
+  files are staged. Staging and teardown run on worker threads so a large
+  repository cannot stall the control socket, and launch refuses to fall back to
+  the real workdir if the copy is missing.
+- **Private home.** `HOME`, `TMPDIR`, and all four XDG directories point into
+  `runtime/<job>/opencode-home`, so no user config, plugins, sessions, or
+  `~/.claude` guidance load, and temporary tool output is deleted with the job.
+  `OPENCODE_DISABLE_CLAUDE_CODE`, default plugins, LSP downloads, and auto-update
+  are off, `--pure` skips external plugins, and language servers and formatters
+  are disabled because they can start repository-local binaries.
+- **Permissions.** `OPENCODE_PERMISSION` and the job's `aco-review` agent deny
+  everything except read, glob, grep, and list, and deny reads of `.env` files
+  other than examples, samples, and templates.
+  OpenCode applies the last matching rule, and no rule is `ask`; headless `run`
+  rejects any permission request it receives regardless.
+- **Credentials.** `OPENCODE_API_KEY` comes from `AGENT_JOB_PROFILE_ENV`, which
+  accepts an `os.pathsep`-separated list of env files where later files win. Each
+  provider receives only its own keys.
+- **Models and billing.** `default` resolves to `AGENT_JOB_OPENCODE_DEFAULT_MODEL`
+  (`opencode-go/muse-spark-1.3-contributor`). Every model must match
+  `AGENT_JOB_OPENCODE_MODEL_PREFIXES` (`opencode-go/`), because the same key could
+  otherwise draw pay-as-you-go Zen credits. Only the providers those prefixes
+  name are enabled, the session title is fixed with `--title`, and
+  `small_model` is pinned to the job's model, because titles and compaction
+  otherwise call a separate small model. A default from the OpenAI or
+  Anthropic family is refused so default reviews stay cross-family, and routing
+  sends an explicit OpenCode model from the caller's own family `direct`,
+  resolving a requested `default` to the configured model first. Muse
+  Spark Contributor trains on prompts and completions, so Go serves it only after
+  the workspace's Privacy settings allow paid endpoints that train on request
+  data; otherwise the job fails with an upstream error naming that setting. Until
+  then set `AGENT_JOB_OPENCODE_DEFAULT_MODEL=opencode-go/kimi-k3`, which does not
+  train. Go includes US$60 a month of Muse Spark and US$15 a month of Kimi K3 at
+  list prices.
+- **Errors.** Failures arrive as JSON `error` events on stdout with exit code 1.
+  Jobs also pass `--print-logs --log-level ERROR`, because the JSON event can
+  reduce the cause to "Unexpected server error". Only error-event text, never
+  tool output, is scanned for rate limits, which record the usual routing
+  cooldown. The prompt is written to stdin, which `run` reads to end of file;
+  launching with an open stdin would hang.
+- **No anonymous free tier.** OpenCode's anonymous free models serve only its
+  interactive apps; headless `run` receives HTTP 403 `FreeTierError` from both
+  CLI generations. ACO requires a Go or Zen API key and never impersonates
+  another client.
+
 ### Service restart policy
 
 `KeepAlive` is unconditionally true. A supervisor that is signalled exits zero,

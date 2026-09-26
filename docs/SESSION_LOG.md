@@ -825,3 +825,19 @@
   env file so ACO stops depending on Hermes profile layout at runtime; consider
   restoring an executable identity check now that direct launches record it
   accurately (sandboxed launches still `exec` after the probe).
+
+## 2026-09-26 - Replace Kimi with OpenCode
+
+- Added a read-only `opencode` provider and moved every routing slot Kimi held to
+  it; Kimi remains an explicit-only legacy target. The Kimi lane had failed every
+  job since 2026-09-12 on a Kimi Code subscription 403.
+- OpenCode jobs run on the OpenCode Go subscription (default
+  `opencode-go/muse-spark-1.3-contributor`, Meta) inside a sealed, staged copy of
+  the repository with a private home and deny-by-default permissions. Models are
+  limited to `opencode-go/` so the key cannot draw pay-as-you-go credits.
+- Verification: 331 tests pass; a real-CLI run on a hostile repository executed
+  neither its plugin nor its MCP server; an authenticated Go run with Kimi K3
+  completed. Muse Spark Contributor additionally needs the workspace's
+  training-endpoint privacy opt-in.
+- Details, spike evidence, and follow-ups:
+  `docs/session-logs/2026-09-26-opencode-provider.md`.

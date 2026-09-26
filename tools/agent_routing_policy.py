@@ -7,8 +7,8 @@ from typing import Any
 
 PROTOCOL_VERSION = 2
 SUPPORTED_PROTOCOL_VERSIONS = {1, 2}
-POLICY_VERSION = "2026-08-30.1"
-CAPABILITY_MATRIX_VERSION = "2026-08-30.1"
+POLICY_VERSION = "2026-09-26.1"
+CAPABILITY_MATRIX_VERSION = "2026-09-26.1"
 ROUTING_MODES = {"shadow", "codex_canary", "surface_canary"}
 
 PROVIDERS = {"codex", "claude", "kimi", "hermes"}
@@ -22,7 +22,9 @@ RISKS = {"low", "medium", "high"}
 SCOPES = {"local", "single_module", "cross_module", "repo"}
 DURATIONS = {"short", "medium", "long"}
 DURABILITIES = {"session", "durable"}
-TARGET_PROVIDERS = {"codex", "claude", "kimi"}
+# `kimi` stays an explicit-only target for one compatibility window; default
+# routing sends every former Kimi slot to OpenCode.
+TARGET_PROVIDERS = {"codex", "claude", "kimi", "opencode"}
 MAX_INTENT_BYTES = 16 * 1024
 ESCALATION_REASONS = {
     "provider_failure", "rate_limit", "unusable_output", "scope_growth",
@@ -34,7 +36,29 @@ LEGACY_MODEL_ALIASES = {
     "codex": "codex_standard",
     "claude": "claude_deep",
     "kimi": "kimi_standard",
+    # The supervisor resolves "default" to AGENT_JOB_OPENCODE_DEFAULT_MODEL.
+    "opencode": "default",
 }
+
+# OpenCode is a harness over many model families, so cross-family routing keys
+# on the model it runs rather than on the provider name.
+CALLER_FAMILIES = {"codex": "openai", "claude": "anthropic", "kimi": "moonshot"}
+OPENCODE_MODEL_FAMILIES = (
+    ("muse-spark", "meta"), ("kimi-", "moonshot"), ("gpt-", "openai"),
+    ("claude-", "anthropic"), ("gemini-", "google"), ("grok", "xai"),
+    ("glm-", "zhipu"), ("qwen", "alibaba"), ("deepseek", "deepseek"),
+    ("minimax", "minimax"), ("mimo", "xiaomi"), ("longcat", "meituan"),
+    ("nemotron", "nvidia"), ("hy", "tencent"),
+)
+
+
+def opencode_model_family(model: str) -> str:
+    """Return the vendor family of an OpenCode model id, or "unknown"."""
+    name = model.rsplit("/", 1)[-1].lower()
+    for prefix, family in OPENCODE_MODEL_FAMILIES:
+        if name.startswith(prefix):
+            return family
+    return "unknown"
 
 PROVIDER_CAPABILITY_MATRIX = {
     "codex": {
@@ -55,6 +79,14 @@ PROVIDER_CAPABILITY_MATRIX = {
         "standard_model": "kimi-code/kimi-for-coding",
         "fast_model": "kimi-code/kimi-for-coding-highspeed",
         "strengths": ["code_review", "implementation", "tests", "exploration"],
+    },
+    # "default" resolves to AGENT_JOB_OPENCODE_DEFAULT_MODEL in the supervisor,
+    # so moving between Go models or tiers is configuration, not policy.
+    "opencode": {
+        "deep_model": "default",
+        "standard_model": "default",
+        "fast_model": "default",
+        "strengths": ["code_review", "planning", "research"],
     },
 }
 
@@ -106,17 +138,19 @@ def _optional_enum(intent: dict[str, Any], key: str, allowed: set[str], default:
 def _default_targets(caller: str, capability: str) -> tuple[str, str]:
     if capability == "code_review":
         if caller in {"codex", "hermes"}:
-            return "kimi", "claude"
+            return "opencode", "claude"
         if caller == "claude":
-            return "codex", "kimi"
+            return "codex", "opencode"
         return "codex", "claude"
     if capability in ENGINEERING_CAPABILITIES:
+        # OpenCode runs read-only until workspace-confined implementation is
+        # verified, so engineering work has no automatic fallback.
         if caller in {"claude", "hermes"}:
-            return "codex", "kimi"
+            return "codex", ""
         return "", ""
     if capability in THINKING_CAPABILITIES:
         if caller in {"codex", "hermes"}:
-            return "claude", "kimi"
+            return "claude", "opencode"
         if caller == "kimi":
             return "claude", "codex"
         return "", ""
@@ -269,6 +303,8 @@ def _model_alias(provider: str, intent: dict[str, Any]) -> str:
         if intent["capability"] == "code_review" or intent["complexity"] in {"standard", "deep"}:
             return matrix["deep_model"]
         return matrix["fast_model"] if intent["complexity"] == "trivial" else matrix["standard_model"]
+    if provider == "opencode":
+        return matrix["standard_model"]
     return matrix["deep_model"] if intent["complexity"] == "deep" else matrix["standard_model"]
 
 
@@ -303,6 +339,15 @@ def decide(intent: dict[str, Any], routing_mode: str = "shadow") -> dict[str, An
             provider = ""
             fallback_provider = ""
             reasons.append("recursive delegation to the calling provider is not allowed")
+        elif (
+            explicit_provider == "opencode"
+            and CALLER_FAMILIES.get(caller)
+            and opencode_model_family(explicit_model) == CALLER_FAMILIES[caller]
+        ):
+            lane = "direct"
+            provider = ""
+            fallback_provider = ""
+            reasons.append("an OpenCode model from the caller's own family is not cross-family")
         else:
             lane = "agent_jobs"
             provider = explicit_provider

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from collections import Counter
+import ctypes
 import fcntl
 import functools
 import hashlib
@@ -83,6 +84,37 @@ KIMI_MODEL_ALIASES = {
     "kimi-for-coding-highspeed": "kimi-code/kimi-for-coding-highspeed",
     "kimi-code/kimi-for-coding-highspeed": "kimi-code/kimi-for-coding-highspeed",
 }
+OPENCODE_DEFAULT_MODEL = "opencode-go/muse-spark-1.3-contributor"
+# Go meters usage against the subscription allowance. Any other OpenCode
+# provider, such as pay-as-you-go Zen, would bill per token on the same key.
+OPENCODE_DEFAULT_MODEL_PREFIXES = ("opencode-go/",)
+OPENCODE_AGENT = "aco-review"
+# Families of the callers that route to OpenCode by default. A default model
+# from one of them would quietly turn cross-family reviews into same-family ones.
+OPENCODE_EXCLUDED_DEFAULT_FAMILIES = {"openai", "anthropic"}
+# Every rule is an explicit allow or deny; `*` denies edits, shell, web,
+# sub-agents, skills, and questions. Later rules win in OpenCode.
+OPENCODE_REVIEW_PERMISSION = {
+    "*": "deny",
+    "read": {
+        "*": "allow", "*.env": "deny", "*.env.*": "deny",
+        "*.env.example": "allow", "*.env.sample": "allow", "*.env.template": "allow",
+    },
+    "glob": "allow",
+    "grep": "allow",
+    "list": "allow",
+}
+OPENCODE_EXCLUDED_NAMES = {"opencode.json", "opencode.jsonc", ".opencode", ".git"}
+SECRET_DIR_NAMES = {".kube", ".docker"}
+SECRET_FILE_NAMES = {
+    ".netrc", ".npmrc", ".pypirc", ".envrc", ".pgpass", ".git-credentials", ".htpasswd",
+}
+SECRET_FILE_PREFIXES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")
+SECRET_FILE_SUFFIXES = (
+    ".pem", ".key", ".p8", ".p12", ".pfx", ".keystore", ".jks",
+    ".tfvars", ".tfstate", ".tfstate.backup",
+)
+MAX_OPENCODE_STAGED_FILES = 50_000
 TERMINAL_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
 SEMANTIC_PROGRESS_KINDS = {
     "turn_started", "thinking_delta", "message_delta", "tool_started",
@@ -97,8 +129,13 @@ SAFE_ENV_KEYS = {
 CAO_ENV_KEYS = {"AGENT_JOB_CAO_URL", "AGENT_JOB_CAO_TOKEN", "AGENT_JOB_CAO_LAUNCH_TIMEOUT"}
 CLAUDE_AUTH_KEYS = {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}
 KIMI_AUTH_KEYS = {"KIMI_API_KEY", "KIMI_CN_API_KEY", "MOONSHOT_API_KEY", "MOONSHOT_API_BASE"}
-PROVIDER_AUTH_KEYS = {"claude": CLAUDE_AUTH_KEYS, "kimi": KIMI_AUTH_KEYS, "codex": set()}
-SEMANTIC_PROVIDERS = {"claude", "codex", "kimi"}
+OPENCODE_AUTH_KEYS = {"OPENCODE_API_KEY"}
+PROVIDER_AUTH_KEYS = {
+    "claude": CLAUDE_AUTH_KEYS, "kimi": KIMI_AUTH_KEYS, "codex": set(),
+    "opencode": OPENCODE_AUTH_KEYS,
+}
+ALL_PROVIDER_AUTH_KEYS = CLAUDE_AUTH_KEYS | KIMI_AUTH_KEYS | OPENCODE_AUTH_KEYS
+SEMANTIC_PROVIDERS = {"claude", "codex", "kimi", "opencode"}
 SEMANTIC_LIVENESS_PROVIDERS = {"claude", "codex"}
 DYNAMIC_HEALTH_REFRESH_SECONDS = 15
 NATIVE_FEEDBACK_JOIN_GATE = 0.95
@@ -214,8 +251,51 @@ def _kimi_cli_generation(binary: str) -> str:
     raise RuntimeError("Installed Kimi CLI exposes an unsupported command-line contract")
 
 
+@functools.lru_cache(maxsize=8)
+def _opencode_cli_generation(binary: str) -> str:
+    """Accept only the verified 1.x `opencode run --format json` contract."""
+    try:
+        result = subprocess.run(
+            [binary, "--version"], check=False, capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"Unable to inspect OpenCode CLI capabilities: {exc}") from exc
+    version = result.stdout.strip()
+    if result.returncode == 0 and re.fullmatch(r"1\.\d+\.\d+(?:[-+].*)?", version):
+        return "v1"
+    raise RuntimeError(
+        f"Installed OpenCode CLI {version or '<unknown>'} exposes an unverified command-line "
+        "contract; ACO supports the 1.x `run --format json` interface"
+    )
+
+
+def _opencode_model_prefixes() -> tuple[str, ...]:
+    return tuple(sorted(_csv_values("AGENT_JOB_OPENCODE_MODEL_PREFIXES"))) or OPENCODE_DEFAULT_MODEL_PREFIXES
+
+
+def _normalize_opencode_model(model: str) -> str:
+    from agent_routing_policy import opencode_model_family
+
+    if not model or model.lower() in {"auto", "default", "opencode"}:
+        model = os.environ.get("AGENT_JOB_OPENCODE_DEFAULT_MODEL", "").strip() or OPENCODE_DEFAULT_MODEL
+        if opencode_model_family(model) in OPENCODE_EXCLUDED_DEFAULT_FAMILIES:
+            raise ValueError(
+                f"Default OpenCode model {model} belongs to a caller family; "
+                "default OpenCode reviews must stay cross-family"
+            )
+    prefixes = _opencode_model_prefixes()
+    if not model.startswith(prefixes):
+        raise ValueError(
+            f"OpenCode model {model} is outside the allowed providers ({', '.join(prefixes)}); "
+            "widen AGENT_JOB_OPENCODE_MODEL_PREFIXES only to accept per-token billing deliberately"
+        )
+    return model
+
+
 def _normalize_model(provider: str, requested_model: str) -> tuple[str, str]:
     model = requested_model.strip()
+    if provider == "opencode":
+        return _normalize_opencode_model(model), ""
     if provider != "kimi":
         return model, ""
     if not model or model.lower() in {"auto", "default", "kimi"}:
@@ -308,6 +388,7 @@ def _find_binary(provider: str) -> str:
         "claude": ["~/.local/bin/claude", "/opt/homebrew/bin/claude"],
         "kimi": ["~/.kimi-code/bin/kimi", "/opt/homebrew/bin/kimi"],
         "codex": ["/opt/homebrew/bin/codex", "~/.local/bin/codex"],
+        "opencode": ["/opt/homebrew/bin/opencode", "~/.opencode/bin/opencode"],
     }
     # Resolved at every launch. The desktop app keeps its bundled runtime current,
     # while PATH installs are often stale shims, so an explicit pin is the only
@@ -331,9 +412,13 @@ def _provider_env(provider: str) -> dict[str, str]:
     env.setdefault("LOGNAME", env["USER"])
     env.setdefault("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
     profile: dict[str, str] = {}
-    profile_path = os.environ.get("AGENT_JOB_PROFILE_ENV", "").strip()
-    if profile_path and Path(profile_path).expanduser().is_file():
-        for raw in Path(profile_path).expanduser().read_text(encoding="utf-8", errors="ignore").splitlines():
+    # A path list; later files win, so each provider's credentials can live in
+    # its own file.
+    for profile_path in os.environ.get("AGENT_JOB_PROFILE_ENV", "").split(os.pathsep):
+        path = Path(profile_path.strip()).expanduser()
+        if not profile_path.strip() or not path.is_file():
+            continue
+        for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
             line = raw.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
@@ -345,7 +430,7 @@ def _provider_env(provider: str) -> dict[str, str]:
         value = profile.get(key) or inherited.get(key)
         if value:
             env[key] = value
-    for key in (CLAUDE_AUTH_KEYS | KIMI_AUTH_KEYS) - PROVIDER_AUTH_KEYS[provider]:
+    for key in ALL_PROVIDER_AUTH_KEYS - PROVIDER_AUTH_KEYS[provider]:
         env.pop(key, None)
     env["AGENT_JOB_DEPTH"] = str(int(inherited.get("AGENT_JOB_DEPTH", "0") or 0) + 1)
     env["AGENT_JOB_PROVIDER"] = provider
@@ -357,12 +442,178 @@ def _provider_env(provider: str) -> dict[str, str]:
 def _cao_bridge_env(provider: str) -> dict[str, str]:
     """Build the bridge environment without forwarding provider credentials."""
     env = _provider_env(provider)
-    for key in CLAUDE_AUTH_KEYS | KIMI_AUTH_KEYS:
+    for key in ALL_PROVIDER_AUTH_KEYS:
         env.pop(key, None)
     env.pop("KIMI_CODE_EXPERIMENTAL_FLAG", None)
     for key in CAO_ENV_KEYS:
         if os.environ.get(key):
             env[key] = os.environ[key]
+    return env
+
+
+def _opencode_error_messages(path: Path) -> list[str]:
+    """Error text from OpenCode's JSON error events.
+
+    OpenCode reports provider failures on stdout, where tool output also lands,
+    so only error records are read; file contents never reach the classifier.
+    """
+    try:
+        with path.open("rb") as handle:
+            handle.seek(max(0, path.stat().st_size - 64_000))
+            tail = handle.read(64_000).decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    messages: list[str] = []
+    for line in tail.splitlines():
+        if '"error"' not in line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict) or record.get("type") != "error":
+            continue
+        error = record.get("error")
+        if not isinstance(error, dict):
+            continue
+        data = error.get("data") if isinstance(error.get("data"), dict) else {}
+        message = str(data.get("message") or error.get("message") or error.get("name") or "")[:2000]
+        status = data.get("statusCode", error.get("status"))
+        messages.append(f"{message} (status {status})" if status else message)
+    return messages
+
+
+def _load_clonefile() -> Callable[[bytes, bytes, int], int] | None:
+    if sys.platform != "darwin":
+        return None
+    try:
+        function = ctypes.CDLL(None, use_errno=True).clonefile
+    except (OSError, AttributeError):
+        return None
+    function.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32]
+    function.restype = ctypes.c_int
+    return function
+
+
+_CLONEFILE = _load_clonefile()
+
+
+def _clone_file(source: Path, target: Path) -> None:
+    """Copy-on-write clone on APFS, so staging a large tree costs no data copy."""
+    if _CLONEFILE is not None and _CLONEFILE(os.fsencode(source), os.fsencode(target), 0) == 0:
+        return
+    shutil.copy2(source, target)
+
+
+def _is_secret_path(relative: Path) -> bool:
+    if any(part.lower() in SENSITIVE_PATH_PARTS | SECRET_DIR_NAMES for part in relative.parts):
+        return True
+    name = relative.name.lower()
+    if name == ".env" or (
+        name.startswith(".env.") and not name.endswith((".example", ".sample", ".template"))
+    ):
+        return True
+    return (
+        name in SECRET_FILE_NAMES
+        or name.startswith(SECRET_FILE_PREFIXES)
+        or name.endswith(SECRET_FILE_SUFFIXES)
+    )
+
+
+def _require_git_workdir(workdir: Path) -> None:
+    result = subprocess.run(
+        ["git", "-C", str(workdir), "rev-parse", "--is-inside-work-tree"],
+        check=False, capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0 or result.stdout.strip() != "true":
+        raise ValueError(
+            "OpenCode reviews require a Git workdir so ignored files stay out of the staged copy"
+        )
+
+
+def _stage_opencode_workspace(source: Path, target: Path) -> Path:
+    """Copy the Git-visible files OpenCode may read, minus its config and secrets.
+
+    OpenCode loads plugins and MCP servers from a project's `opencode.json` and
+    `.opencode/` without a trust prompt, and contributor models may train on
+    anything they read. Discovery stops at a non-Git directory's own root, so
+    this copy is sealed from config above it.
+    """
+    _require_git_workdir(source)
+    listing = subprocess.run(
+        [
+            "git", "-c", "core.fsmonitor=false", "-C", str(source), "ls-files", "-z",
+            "--cached", "--others", "--exclude-standard",
+        ],
+        check=False, capture_output=True, timeout=120,
+    )
+    if listing.returncode != 0:
+        raise RuntimeError("Unable to list the workdir's Git-visible files for OpenCode staging")
+    names = [name for name in os.fsdecode(listing.stdout).split("\0") if name]
+    if len(names) > MAX_OPENCODE_STAGED_FILES:
+        raise RuntimeError(
+            f"Workdir lists {len(names)} files; OpenCode staging allows {MAX_OPENCODE_STAGED_FILES}"
+        )
+    target.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for name in names:
+        relative = Path(name)
+        if relative.is_absolute() or ".." in relative.parts:
+            continue
+        if any(part.lower() in OPENCODE_EXCLUDED_NAMES for part in relative.parts):
+            continue
+        if _is_secret_path(relative):
+            continue
+        path = source / relative
+        # A symlink could point outside the copy; everything staged is a file.
+        if path.is_symlink() or not path.is_file():
+            continue
+        destination = target / relative
+        destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _clone_file(path, destination)
+    return target
+
+
+def _opencode_isolation_env(home: Path, model: str) -> dict[str, str]:
+    """Give OpenCode a private home so no user config, plugins, or sessions load."""
+    home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # Temporary tool output then lives and dies with the job runtime.
+    (home / "tmp").mkdir(mode=0o700, exist_ok=True)
+    env = {"HOME": str(home), "TMPDIR": f"{home / 'tmp'}{os.sep}"}
+    for name, subdir in (
+        ("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "data"),
+        ("XDG_CACHE_HOME", "cache"), ("XDG_STATE_HOME", "state"),
+    ):
+        path = home / subdir
+        path.mkdir(mode=0o700, exist_ok=True)
+        env[name] = str(path)
+    config = {
+        "$schema": "https://opencode.ai/config.json",
+        "share": "disabled",
+        "autoupdate": False,
+        "mcp": {},
+        # Language servers and formatters can start repository-local binaries.
+        "lsp": False,
+        "formatter": False,
+        # One key serves every OpenCode provider, and titles or compaction use a
+        # separate small model, so both are held to the allowed providers.
+        "enabled_providers": sorted({prefix.split("/")[0] for prefix in _opencode_model_prefixes()}),
+        "small_model": model,
+        "agent": {
+            OPENCODE_AGENT: {
+                "mode": "primary",
+                "description": "ACO read-only reviewer",
+                "permission": OPENCODE_REVIEW_PERMISSION,
+            },
+        },
+    }
+    env.update(
+        OPENCODE_CONFIG_CONTENT=json.dumps(config, separators=(",", ":")),
+        OPENCODE_PERMISSION=json.dumps(OPENCODE_REVIEW_PERMISSION, separators=(",", ":")),
+        OPENCODE_DISABLE_AUTOUPDATE="1",
+        OPENCODE_DISABLE_LSP_DOWNLOAD="1",
+        OPENCODE_DISABLE_DEFAULT_PLUGINS="1",
+        OPENCODE_DISABLE_CLAUDE_CODE="1",
+    )
     return env
 
 
@@ -1091,7 +1342,7 @@ class Supervisor:
         self.open_tools: dict[str, dict[str, tuple[str, float]]] = {}
         self.provider_limits = {
             provider: _bounded_int_env(f"AGENT_JOB_{provider.upper()}_CONCURRENCY", 3, 1, 3)
-            for provider in ("claude", "kimi", "codex")
+            for provider in ("claude", "kimi", "codex", "opencode")
         }
         self.routing_mode = os.environ.get("AGENT_JOB_ROUTING_MODE", "shadow").strip().lower()
         if self.routing_mode not in {"shadow", "codex_canary", "surface_canary"}:
@@ -1262,6 +1513,26 @@ class Supervisor:
                 argv.extend(["--output-format", "stream-json"])
             argv.extend(["--prompt", prompt])
             return self._confine_implementation(job, argv, None, env)
+        if provider == "opencode":
+            if mode != "readonly":
+                raise RuntimeError(
+                    "OpenCode jobs are read-only until workspace-confined implementation is verified"
+                )
+            _opencode_cli_generation(binary)
+            runtime = self._job_runtime_dir(str(job["job_id"]))
+            runtime.mkdir(parents=True, mode=0o700, exist_ok=True)
+            _stage_opencode_workspace(Path(job["workdir"]), runtime / "workspace")
+            env = _provider_env(provider)
+            env.update(_opencode_isolation_env(runtime / "opencode-home", model))
+            # --pure skips external plugins; the prompt arrives on stdin, which
+            # `run` reads to EOF whenever stdin is not a terminal. Error logs on
+            # stderr carry the causes the JSON stream reduces to "server error".
+            argv = [
+                binary, "run", "--pure", "--format", "json", "--agent", OPENCODE_AGENT,
+                "--model", model, "--title", "ACO review",
+                "--print-logs", "--log-level", "ERROR",
+            ]
+            return argv, prompt, env
         sandbox = "read-only" if mode == "readonly" else "workspace-write"
         argv = [
             binary, "exec", "--ignore-user-config", "-C", job["workdir"],
@@ -1271,6 +1542,15 @@ class Supervisor:
             argv.extend(["--model", model])
         argv.append("-")
         return argv, prompt, _provider_env(provider)
+
+    def _launch_cwd(self, job: dict[str, Any]) -> str:
+        """OpenCode runs inside its staged copy, never the real workdir."""
+        if job.get("provider") == "opencode":
+            workspace = self._job_runtime_dir(str(job["job_id"])) / "workspace"
+            if not workspace.is_dir():
+                raise RuntimeError("OpenCode staged workspace is missing; refusing the real workdir")
+            return str(workspace)
+        return str(job["workdir"])
 
     def _runtime_base(self) -> Path:
         raw = self.state_dir.resolve() / "runtime"
@@ -1543,7 +1823,7 @@ class Supervisor:
 
     def _private_semantic_stdout(self, job: dict[str, Any]) -> bool:
         return (
-            job.get("provider") in {"claude", "kimi"}
+            job.get("provider") in {"claude", "kimi", "opencode"}
             and self._semantic_adapter_active(job)
         )
 
@@ -1839,7 +2119,7 @@ class Supervisor:
             proc.kill()
         await proc.wait()
 
-    def _provider_failure_stderr(self, job_id: str) -> str:
+    def _provider_failure_stderr(self, job_id: str, provider: str = "") -> str:
         base = self.job_log_paths.get(job_id)
         if base is None:
             return ""
@@ -1851,6 +2131,8 @@ class Supervisor:
                 chunks.append(handle.read(16_000).decode("utf-8", errors="replace"))
         except OSError:
             pass
+        if provider == "opencode":
+            chunks.extend(_opencode_error_messages(Path(f"{base}.stdout")))
         return "\n".join(chunks)
 
     async def _ps_field(self, pid: int, field: str) -> str:
@@ -1879,10 +2161,12 @@ class Supervisor:
                     "Queue timeout reached before a provider slot became available",
                 )
                 return
-            argv, stdin_text, env = self.command_builder(job)
+            # Off the event loop: staging a large repository must not stall the
+            # control socket.
+            argv, stdin_text, env = await asyncio.to_thread(self.command_builder, job)
             proc = await asyncio.create_subprocess_exec(
                 *argv,
-                cwd=job["workdir"],
+                cwd=self._launch_cwd(job),
                 env=env,
                 stdin=asyncio.subprocess.PIPE if stdin_text is not None else asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
@@ -1959,7 +2243,7 @@ class Supervisor:
                 from agent_quota_broker import rate_limit_cooldown
 
                 limited, cooldown_until, evidence = rate_limit_cooldown(
-                    str(job["provider"]), self._provider_failure_stderr(job_id), _now(),
+                    str(job["provider"]), self._provider_failure_stderr(job_id, str(job["provider"])), _now(),
                     self.rate_limit_cooldown_seconds,
                 ) if self.quota_routing_enabled else (False, None, "")
                 if limited and cooldown_until is not None:
@@ -1985,8 +2269,11 @@ class Supervisor:
                 await self._terminate(proc)
             self._finish_job(job_id, "failed", "launch_error", str(exc))
         finally:
-            self._cleanup_job_runtime(job_id)
-            self.change_events.pop(job_id, None)
+            try:
+                # Off the event loop: a staged OpenCode copy can hold 50,000 files.
+                await asyncio.to_thread(self._cleanup_job_runtime, job_id)
+            finally:
+                self.change_events.pop(job_id, None)
             self.processes.pop(job_id, None)
             self.tasks.pop(job_id, None)
             self.log_locks.pop(job_id, None)
@@ -2131,6 +2418,13 @@ class Supervisor:
         if not prompt.strip() or len(prompt.encode("utf-8")) > MAX_PROMPT_BYTES:
             raise ValueError(f"Prompt must contain 1 to {MAX_PROMPT_BYTES} UTF-8 bytes")
         workdir = _safe_workdir(str(payload.get("workdir") or ""))
+        if provider == "opencode":
+            if mode != "readonly":
+                raise ValueError(
+                    "OpenCode jobs are read-only until workspace-confined implementation is verified"
+                )
+            if execution_backend == "cao":
+                raise ValueError("OpenCode jobs require the native backend; the CAO bridge cannot isolate them")
         legacy_timeout = payload.get("timeout_seconds")
         requested_run_timeout = payload.get("run_timeout_seconds")
         run_timeout = max(MIN_TIMEOUT_SECONDS, min(
@@ -2205,6 +2499,13 @@ class Supervisor:
         if len(_json(intent).encode("utf-8")) > MAX_INTENT_BYTES:
             raise ValueError(f"Routing intent exceeds {MAX_INTENT_BYTES} UTF-8 bytes")
         canonical_intent = normalize_intent(intent)
+        if (
+            canonical_intent["explicit_provider"] == "opencode"
+            and canonical_intent["explicit_model"].lower() in {"", "auto", "default", "opencode"}
+        ):
+            # The configured default decides the family, so resolve it before
+            # the same-family check rather than letting "default" pass as unknown.
+            canonical_intent["explicit_model"] = _normalize_opencode_model("")
         if canonical_intent["escalation_evidence"]:
             clean_evidence, _ = redact(
                 canonical_intent["escalation_evidence"]

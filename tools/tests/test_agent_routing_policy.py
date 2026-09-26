@@ -8,7 +8,9 @@ import unittest
 TOOLS_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS_DIR))
 
-from agent_routing_policy import apply_one_hop_escalation, decide, normalize_intent  # noqa: E402
+from agent_routing_policy import (  # noqa: E402
+    apply_one_hop_escalation, decide, normalize_intent, opencode_model_family,
+)
 
 
 class AgentRoutingPolicyTest(unittest.TestCase):
@@ -33,12 +35,13 @@ class AgentRoutingPolicyTest(unittest.TestCase):
 
     def test_cross_family_routing_table_is_centralized(self) -> None:
         cases = {
-            ("codex", "code_review"): ("kimi", "claude"),
-            ("codex", "planning"): ("claude", "kimi"),
-            ("hermes", "code_review"): ("kimi", "claude"),
-            ("hermes", "implementation"): ("codex", "kimi"),
-            ("claude", "code_review"): ("codex", "kimi"),
-            ("claude", "implementation"): ("codex", "kimi"),
+            ("codex", "code_review"): ("opencode", "claude"),
+            ("codex", "planning"): ("claude", "opencode"),
+            ("hermes", "code_review"): ("opencode", "claude"),
+            # OpenCode is read-only, so engineering work has no automatic fallback.
+            ("hermes", "implementation"): ("codex", ""),
+            ("claude", "code_review"): ("codex", "opencode"),
+            ("claude", "implementation"): ("codex", ""),
             ("kimi", "code_review"): ("codex", "claude"),
             ("kimi", "research"): ("claude", "codex"),
         }
@@ -182,7 +185,7 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         self.assertEqual("", escalated["worker_profile"])
         self.assertEqual(1, escalated["escalation_hop"])
 
-    def test_v2_selects_exact_claude_and_kimi_models(self) -> None:
+    def test_v2_selects_exact_claude_and_opencode_models(self) -> None:
         planning = self.intent("codex", "planning")
         planning.update(
             protocol_version=2,
@@ -198,8 +201,9 @@ class AgentRoutingPolicyTest(unittest.TestCase):
         review_decision = decide(review)
 
         self.assertEqual("opus", planning_decision["model_alias"])
-        self.assertEqual("kimi-code/k3", planning_decision["fallback_model_alias"])
-        self.assertEqual("kimi-code/k3", review_decision["model_alias"])
+        # "default" resolves to AGENT_JOB_OPENCODE_DEFAULT_MODEL in the supervisor.
+        self.assertEqual("default", planning_decision["fallback_model_alias"])
+        self.assertEqual("default", review_decision["model_alias"])
         self.assertEqual("opus", review_decision["fallback_model_alias"])
 
     def test_v2_degrades_when_surface_cannot_execute_selected_lane(self) -> None:
@@ -303,7 +307,7 @@ class AgentRoutingPolicyTest(unittest.TestCase):
 
     def test_code_review_remains_cross_family_for_every_coding_surface(self) -> None:
         for caller, expected_provider in (
-            ("codex", "kimi"), ("claude", "codex"), ("kimi", "codex")
+            ("codex", "opencode"), ("claude", "codex"), ("kimi", "codex")
         ):
             with self.subTest(caller=caller):
                 intent = self.intent(caller, "code_review")
@@ -376,3 +380,25 @@ class AgentRoutingPolicyTest(unittest.TestCase):
 
         self.assertEqual("shadow", decision["mode"])
         self.assertFalse(decision["enforced"])
+
+    def test_opencode_cross_family_check_follows_the_model(self) -> None:
+        self.assertEqual("meta", opencode_model_family("opencode-go/muse-spark-1.3-contributor"))
+        self.assertEqual("moonshot", opencode_model_family("opencode-go/kimi-k3"))
+        self.assertEqual("openai", opencode_model_family("opencode-go/gpt-6-luna"))
+        self.assertEqual("unknown", opencode_model_family("opencode/big-pickle"))
+        for caller, model, lane in (
+            ("codex", "opencode-go/gpt-6-luna", "direct"),
+            ("codex", "opencode-go/muse-spark-1.3-contributor", "agent_jobs"),
+            ("kimi", "opencode-go/kimi-k3", "direct"),
+            ("claude", "opencode-go/kimi-k3", "agent_jobs"),
+        ):
+            with self.subTest(caller=caller, model=model):
+                intent = self.intent(caller, "code_review")
+                intent.update(explicit_provider="opencode", explicit_model=model)
+                self.assertEqual(lane, decide(intent)["lane"])
+
+    def test_v1_opencode_routes_return_a_model_the_supervisor_accepts(self) -> None:
+        decision = decide(self.intent("codex", "code_review"))
+        self.assertEqual(1, decision["protocol_version"])
+        self.assertEqual("opencode", decision["provider"])
+        self.assertEqual("default", decision["model_alias"])

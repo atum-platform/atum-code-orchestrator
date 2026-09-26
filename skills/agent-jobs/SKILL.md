@@ -1,6 +1,6 @@
 ---
 name: agent-jobs
-description: Route focused native Codex subagents and durable cross-agent reviews, consultations, planning, design, copywriting, research, or explicitly delegated implementation among Codex, Claude, and Kimi. Use when a separable worker or independent model can materially improve a checkpoint, or when the user explicitly asks one provider to perform scoped work. The skill owns routing policy and lifecycle feedback.
+description: Route focused native Codex subagents and durable cross-agent reviews, consultations, planning, design, copywriting, research, or explicitly delegated implementation among Codex, Claude, and OpenCode. Use when a separable worker or independent model can materially improve a checkpoint, or when the user explicitly asks one provider to perform scoped work. The skill owns routing policy and lifecycle feedback.
 ---
 
 # Agent Jobs
@@ -24,7 +24,7 @@ unverified authority.
 The supervisor exposes a versioned `route_decide` protocol. Follow its lane only
 when `enforced=true`; `mode=shadow` is telemetry and creates no reservation.
 In `codex_canary`, decisions are enforced for Codex callers on the Codex surface,
-including Codex routes to Claude or Kimi. `surface_canary` extends v2 enforcement
+including Codex routes to Claude or OpenCode. `surface_canary` extends v2 enforcement
 to supported Claude and Kimi coding surfaces. The table below remains the
 fail-open policy for shadow responses or supervisor outage.
 
@@ -42,9 +42,14 @@ Default routing by caller:
 
 | Caller | Code review | Planning, design, product, copy, research |
 |---|---|---|
-| Codex or Hermes | Kimi K3, then Opus on provider failure | Opus, then Kimi K3 on provider failure |
-| Claude | Codex, then Kimi K3 on provider failure | Codex, then Kimi K3 on provider failure |
+| Codex or Hermes | OpenCode, then Opus on provider failure | Opus, then OpenCode on provider failure |
+| Claude | Codex, then OpenCode on provider failure | In-family: native Claude worker or direct |
 | Kimi | Codex, then Opus on provider failure | Opus, then Codex on provider failure |
+
+OpenCode runs the supervisor's configured default model, currently Muse Spark
+(Meta) on the OpenCode Go subscription, so it is a different family from every
+caller. It is read-only: engineering work has no automatic fallback. The `kimi`
+provider is a legacy target accepted only when explicitly requested.
 
 An explicit user model/provider request overrides these defaults. A fallback is
 for provider failure, quota exhaustion, or unusable output, not disagreement.
@@ -173,6 +178,13 @@ or network access and with bounded time/output under the implementation sandbox.
 Because a delegated job may edit project code before invoking a check, approving
 the check explicitly authorizes execution of model-influenced repository code.
 
+OpenCode submissions may omit `model` or pass `default`; the supervisor then
+selects `AGENT_JOB_OPENCODE_DEFAULT_MODEL`. OpenCode is read-only, and explicit
+models must use an allowed provider prefix (`opencode-go/` by default) so jobs
+never draw pay-as-you-go credits. An explicit OpenCode model from the caller's own
+family, including a `default` that resolves to one, routes `direct`, because it
+would not be a cross-family review.
+
 Kimi submissions may omit `model`; the supervisor then selects
 `kimi-code/k3`. It canonicalizes supported K3 and K2.7 aliases and maps stale or
 unknown Kimi aliases to `kimi-code/kimi-for-coding` (K2.7), recording both the
@@ -184,10 +196,11 @@ Use these canonical model aliases:
 - Claude `opus`: architecture, UI/UX, visual design, product judgment, copywriting.
 - Claude `sonnet`: ordinary implementation when Claude is explicitly requested.
 - Claude `fable`: only when explicitly requested or its capability fits the task.
-- Kimi `kimi-code/k3`: default for code-heavy review or implementation.
-- Kimi `kimi-code/k3-256k`: K3 with lower context and quota use.
-- Kimi `kimi-code/kimi-for-coding`: K2.7 for routine coding work or fallback.
-- Kimi `kimi-code/kimi-for-coding-highspeed`: faster K2.7 when the plan supports it.
+- OpenCode `default`: the configured Go model (`opencode-go/muse-spark-1.3-contributor`)
+  for cross-family review, planning, and research consultation.
+- OpenCode `opencode-go/kimi-k3`: Kimi K3 on Go; its allowance is small, so request
+  it only when K3 specifically matters.
+- Kimi `kimi-code/*`: legacy direct Kimi Code models, explicit requests only.
 - Codex: pass the currently configured Codex model when another caller requests it.
 
 After completion, inspect the complete diff, reject unrelated changes, run focused

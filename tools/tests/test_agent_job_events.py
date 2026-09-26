@@ -809,5 +809,71 @@ class ProviderEventDecoderTest(unittest.TestCase):
         self.assertEqual("café", events[0]["payload"]["text"])
 
 
+    def test_opencode_events_keep_the_answer_and_drop_tool_content(self) -> None:
+        decoder = ProviderEventDecoder("opencode")
+        events = decoder.feed(self._jsonl(
+            {"type": "step_start", "sessionID": "ses_1", "part": {"type": "step-start"}},
+            {"type": "tool_use", "sessionID": "ses_1", "part": {
+                "type": "tool", "callID": "call_1", "tool": "read",
+                "state": {
+                    "status": "completed", "input": {"filePath": "/repo/settings.py"},
+                    "output": "API_TOKEN = 'do-not-journal'", "title": "settings.py",
+                    "metadata": {}, "time": {"start": 1, "end": 2},
+                },
+            }},
+            {"type": "text", "sessionID": "ses_1", "part": {
+                "type": "text", "text": "No blocking findings.", "time": {"start": 2, "end": 3},
+            }},
+            {"type": "step_finish", "sessionID": "ses_1", "part": {
+                "type": "step-finish", "reason": "stop", "cost": 0.0012,
+                "tokens": {"input": 1200, "output": 80, "reasoning": 0, "cache": {"read": 400, "write": 0}},
+            }},
+            {"type": "error", "sessionID": "ses_1", "error": {"name": "APIError", "data": {
+                "message": "Go usage limit reached", "statusCode": 429, "isRetryable": False,
+            }}},
+        )) + decoder.feed(b"not json API_TOKEN=abc\n", final=True)
+
+        self.assertEqual(
+            ["progress", "tool_finished", "message_delta", "usage", "warning", "parse_error"],
+            [event["kind"] for event in events],
+        )
+        journal = json.dumps(events)
+        self.assertNotIn("do-not-journal", journal)
+        self.assertNotIn("settings.py", journal)
+        self.assertNotIn("API_TOKEN=abc", journal)
+        self.assertEqual({
+            "id": "call_1", "name": "read", "status": "completed",
+            "content_bytes": len("API_TOKEN = 'do-not-journal'"),
+        }, events[1]["payload"])
+        self.assertEqual("No blocking findings.", events[2]["payload"]["text"])
+        self.assertEqual(1200, events[3]["payload"]["input_tokens"])
+        self.assertEqual(400, events[3]["payload"]["cache_read_tokens"])
+        self.assertEqual({
+            "message": "Go usage limit reached", "subtype": "provider_error",
+            "error_name": "APIError", "status_code": 429, "retryable": False,
+        }, events[4]["payload"])
+
+    def test_real_opencode_transcript_decodes_without_tool_content(self) -> None:
+        # Captured from OpenCode 1.18.32 `run --format json` on the Go subscription.
+        fixture = Path(__file__).with_name("fixtures") / "opencode-1.18.32-run.jsonl"
+        raw = fixture.read_bytes()
+        tool = next(
+            json.loads(line)["part"]["state"]
+            for line in raw.decode().splitlines()
+            if json.loads(line)["type"] == "tool_use"
+        )
+        decoder = ProviderEventDecoder("opencode")
+        events = decoder.feed(raw[:500]) + decoder.feed(raw[500:]) + decoder.finish()
+
+        self.assertEqual(
+            ["progress", "tool_finished", "usage", "progress", "message_delta", "usage"],
+            [event["kind"] for event in events],
+        )
+        self.assertIn("a - b", events[4]["payload"]["text"])
+        self.assertEqual("stop", events[5]["payload"]["reason"])
+        journal = json.dumps(events)
+        self.assertNotIn(tool["input"]["filePath"], journal)
+        self.assertNotIn(tool["output"], journal)
+
 if __name__ == "__main__":
     unittest.main()

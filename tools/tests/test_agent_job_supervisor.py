@@ -115,6 +115,199 @@ class ProviderBinaryDiscoveryTest(unittest.TestCase):
         self.assertEqual(str(kimi.resolve()), self._find("kimi", which=str(kimi)))
 
 
+class OpenCodeProviderTest(unittest.TestCase):
+    MODEL = "opencode-go/muse-spark-1.3-contributor"
+
+    def setUp(self) -> None:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name).resolve()
+        self.workdir = self.root / "repo"
+        self.workdir.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.workdir)], check=True)
+        self.supervisor = Supervisor(
+            state_dir=self.root / "state",
+            socket_path=self.root / "state/supervisor.sock",
+            db_path=self.root / "state/jobs.sqlite3",
+            log_dir=self.root / "state/logs",
+            binary_finder=lambda provider: "/opt/homebrew/bin/opencode",
+        )
+        self.real_generation = supervisor_module._opencode_cli_generation
+        generation = patch.object(supervisor_module, "_opencode_cli_generation", return_value="v1")
+        generation.start()
+        self.addCleanup(generation.stop)
+        environment = patch.dict(os.environ, {}, clear=False)
+        environment.start()
+        self.addCleanup(environment.stop)
+        for name in (
+            "AGENT_JOB_PROFILE_ENV", "AGENT_JOB_OPENCODE_DEFAULT_MODEL",
+            "AGENT_JOB_OPENCODE_MODEL_PREFIXES", "OPENCODE_API_KEY",
+        ):
+            os.environ.pop(name, None)
+
+    def _write(self, relative: str, text: str = "x\n") -> Path:
+        path = self.workdir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def _job(self, **overrides: object) -> dict[str, object]:
+        job: dict[str, object] = {
+            "job_id": "00000000-0000-0000-0000-00000000000c",
+            "provider": "opencode", "model": self.MODEL, "mode": "readonly",
+            "prompt": "Review the change.", "max_turns": 0,
+            "workdir": str(self.workdir), "checks_json": "[]", "semantic_stream": 1,
+        }
+        job.update(overrides)
+        return job
+
+    def test_command_runs_locked_down_in_a_staged_copy(self) -> None:
+        self._write("src/app.py", "print('ok')\n")
+        self._write(".gitignore", "ignored.log\n")
+        self._write("ignored.log")
+        self._write("opencode.json", '{"mcp": {"x": {"type": "local", "command": ["true"]}}}')
+        self._write(".opencode/plugin/run.js", "export const P = async () => ({})\n")
+        self._write(".env", "OPENAI_API_KEY=not-for-review\n")
+        self._write(".env.example", "OPENAI_API_KEY=\n")
+        self._write(".env.sample", "OPENAI_API_KEY=\n")
+        self._write(".envrc", "export OPENAI_API_KEY=not-for-review\n")
+        self._write("deploy/server.pem")
+        self._write("infra/prod.tfvars")
+        self._write(".kube/config")
+        self._write("secrets/token.txt")
+        (self.workdir / "link").symlink_to("/etc/hosts")
+
+        job = self._job()
+        argv, stdin_text, env = self.supervisor._build_command(job)
+
+        self.assertEqual([
+            "/opt/homebrew/bin/opencode", "run", "--pure", "--format", "json",
+            "--agent", "aco-review", "--model", self.MODEL, "--title", "ACO review",
+            "--print-logs", "--log-level", "ERROR",
+        ], argv)
+        self.assertEqual("Review the change.", stdin_text)
+        runtime = self.supervisor._job_runtime_dir(str(job["job_id"]))
+        staged = runtime / "workspace"
+        self.assertEqual(str(staged), self.supervisor._launch_cwd(job))
+        present = sorted(
+            str(path.relative_to(staged)) for path in staged.rglob("*") if path.is_file()
+        )
+        self.assertEqual([".env.example", ".env.sample", ".gitignore", "src/app.py"], present)
+        self.assertFalse((staged / "link").exists())
+        home = runtime / "opencode-home"
+        self.assertEqual(str(home), env["HOME"])
+        for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "TMPDIR"):
+            self.assertTrue(env[name].startswith(str(home)))
+        self.assertEqual(
+            supervisor_module.OPENCODE_REVIEW_PERMISSION, json.loads(env["OPENCODE_PERMISSION"])
+        )
+        config = json.loads(env["OPENCODE_CONFIG_CONTENT"])
+        self.assertEqual("disabled", config["share"])
+        self.assertEqual({}, config["mcp"])
+        self.assertIs(False, config["lsp"])
+        self.assertIs(False, config["formatter"])
+        self.assertEqual(["opencode-go"], config["enabled_providers"])
+        self.assertEqual(self.MODEL, config["small_model"])
+        self.assertEqual(
+            supervisor_module.OPENCODE_REVIEW_PERMISSION,
+            config["agent"]["aco-review"]["permission"],
+        )
+        for flag in (
+            "OPENCODE_DISABLE_AUTOUPDATE", "OPENCODE_DISABLE_LSP_DOWNLOAD",
+            "OPENCODE_DISABLE_DEFAULT_PLUGINS", "OPENCODE_DISABLE_CLAUDE_CODE",
+        ):
+            self.assertEqual("1", env[flag])
+        self.assertNotIn("OPENCODE_AUTO_SHARE", env)
+
+    def test_launch_refuses_the_real_workdir_without_a_staged_copy(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "refusing the real workdir"):
+            self.supervisor._launch_cwd(self._job(job_id="00000000-0000-0000-0000-00000000000d"))
+
+    def test_review_permissions_leave_no_ask_rules(self) -> None:
+        def actions(value: object) -> list[str]:
+            if isinstance(value, dict):
+                return [action for item in value.values() for action in actions(item)]
+            return [str(value)]
+
+        self.assertNotIn("ask", actions(supervisor_module.OPENCODE_REVIEW_PERMISSION))
+        self.assertEqual("deny", supervisor_module.OPENCODE_REVIEW_PERMISSION["*"])
+
+    def test_credentials_reach_only_their_provider_and_later_files_win(self) -> None:
+        first = self.root / "claude.env"
+        first.write_text("ANTHROPIC_API_KEY=claude-secret\nOPENCODE_API_KEY=stale\n")
+        second = self.root / "opencode.env"
+        second.write_text("export OPENCODE_API_KEY='go-secret'\n")
+        os.environ["AGENT_JOB_PROFILE_ENV"] = os.pathsep.join((str(first), str(second)))
+
+        opencode_env = supervisor_module._provider_env("opencode")
+        claude_env = supervisor_module._provider_env("claude")
+
+        self.assertEqual("go-secret", opencode_env["OPENCODE_API_KEY"])
+        self.assertNotIn("ANTHROPIC_API_KEY", opencode_env)
+        self.assertEqual("claude-secret", claude_env["ANTHROPIC_API_KEY"])
+        self.assertNotIn("OPENCODE_API_KEY", claude_env)
+        self.assertNotIn("OPENCODE_API_KEY", supervisor_module._cao_bridge_env("opencode"))
+
+    def test_default_model_and_billing_guard(self) -> None:
+        normalize = supervisor_module._normalize_model
+        self.assertEqual((self.MODEL, ""), normalize("opencode", ""))
+        self.assertEqual((self.MODEL, ""), normalize("opencode", "default"))
+        os.environ["AGENT_JOB_OPENCODE_DEFAULT_MODEL"] = "opencode-go/kimi-k3"
+        self.assertEqual(("opencode-go/kimi-k3", ""), normalize("opencode", ""))
+        with self.assertRaisesRegex(ValueError, "outside the allowed providers"):
+            normalize("opencode", "opencode/claude-opus-5-5")
+        os.environ["AGENT_JOB_OPENCODE_MODEL_PREFIXES"] = "opencode-go/,opencode/"
+        self.assertEqual(("opencode/muse-spark-1.3", ""), normalize("opencode", "opencode/muse-spark-1.3"))
+        os.environ["AGENT_JOB_OPENCODE_DEFAULT_MODEL"] = "opencode-go/gpt-6-luna"
+        with self.assertRaisesRegex(ValueError, "caller family"):
+            normalize("opencode", "")
+
+    def test_implement_mode_and_non_git_workdirs_fail_closed(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "read-only"):
+            self.supervisor._build_command(self._job(mode="implement"))
+        plain = self.root / "plain"
+        plain.mkdir()
+        with self.assertRaisesRegex(ValueError, "Git workdir"):
+            supervisor_module._require_git_workdir(plain)
+
+    def test_cli_generation_accepts_only_the_verified_contract(self) -> None:
+        generation = self.real_generation.__wrapped__
+        for output, accepted in (("1.18.32\n", True), ("opencode v2.0.18\n", False)):
+            completed = subprocess.CompletedProcess([], 0, stdout=output, stderr="")
+            with self.subTest(output=output), patch.object(
+                supervisor_module.subprocess, "run", return_value=completed,
+            ):
+                if accepted:
+                    self.assertEqual("v1", generation("/opt/homebrew/bin/opencode"))
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "unverified"):
+                        generation("/opt/homebrew/bin/opencode")
+
+    def test_rate_limit_text_comes_only_from_error_events(self) -> None:
+        from agent_quota_broker import rate_limit_cooldown
+
+        stdout = self.root / "job.log.stdout"
+        stdout.write_text("\n".join([
+            json.dumps({"type": "tool_use", "part": {"tool": "read", "state": {
+                "status": "completed", "output": "HTTP 429 too many requests in fixture",
+            }}}, separators=(",", ":")),
+            json.dumps({"type": "error", "error": {"name": "APIError", "data": {
+                "message": "Go usage limit reached; resets in 3 hours", "statusCode": 429,
+            }}}, separators=(",", ":")),
+            json.dumps({"type": "error", "error": {"type": "provider.auth", "message": "denied", "status": 403}}),
+        ]) + "\n", encoding="utf-8")
+
+        messages = supervisor_module._opencode_error_messages(stdout)
+
+        self.assertEqual(
+            ["Go usage limit reached; resets in 3 hours (status 429)", "denied (status 403)"], messages
+        )
+        messages = messages[:1]
+        limited, until, _ = rate_limit_cooldown("opencode", "\n".join(messages), 1000.0)
+        self.assertTrue(limited)
+        self.assertEqual(1000.0 + 3 * 3600, until)
+
+
 class WorkspaceConfinementTest(unittest.TestCase):
     @unittest.skipUnless(
         sys.platform == "darwin" and supervisor_module.SANDBOX_EXEC_PATH.is_file(),
@@ -2482,8 +2675,8 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual("claude", parent["provider"])
-        self.assertEqual("kimi", child["provider"])
-        self.assertEqual("kimi-code/k3", child["model_alias"])
+        self.assertEqual("opencode", child["provider"])
+        self.assertEqual("default", child["model_alias"])
         self.assertEqual("", child["fallback_provider"])
         self.assertEqual(parent["decision_id"], child["parent_decision_id"])
         self.assertEqual(1, child["escalation_hop"])
@@ -2530,7 +2723,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             "session_id": "bounded-session", "outcome": "escalated",
         })
         self.supervisor.quota_routing_enabled = True
-        self.supervisor.store.record_provider_rate_limit("kimi", time.time() + 60, "test")
+        self.supervisor.store.record_provider_rate_limit("opencode", time.time() + 60, "test")
         child = await self.escalate_route(str(parent["decision_id"]), "bounded-session")
         self.assertEqual("direct", child["lane"])
 
@@ -2553,10 +2746,36 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             "surface_capabilities": {"durable_agent_jobs": True},
         })
 
-        self.assertEqual("kimi", decision["provider"])
-        self.assertEqual("kimi-code/k3", decision["model_alias"])
+        self.assertEqual("opencode", decision["provider"])
+        self.assertEqual("default", decision["model_alias"])
         self.assertEqual("claude", decision["fallback_provider"])
         self.assertEqual("opus", decision["fallback_model_alias"])
+
+    async def test_opencode_submissions_fail_closed_before_queueing(self) -> None:
+        self.supervisor.provider_limits["opencode"] = 1
+        base = {**self.spec("review"), "provider": "opencode", "model": "default"}
+        with self.assertRaisesRegex(RuntimeError, "read-only"):
+            await self.call({**base, "mode": "implement", "implement_capability": "test-capability"})
+        with patch.dict(os.environ, {"AGENT_JOB_CAO_PROVIDERS": "opencode"}):
+            with self.assertRaisesRegex(RuntimeError, "native backend"):
+                await self.call(base)
+
+    async def test_explicit_opencode_default_resolves_its_family_before_routing(self) -> None:
+        self.supervisor.routing_mode = "surface_canary"
+        intent = {
+            "action": "route_decide", "protocol_version": 2,
+            "caller_provider": "kimi", "surface": "kimi-code", "capability": "code_review",
+            "explicit_provider": "opencode", "surface_capabilities": {"durable_agent_jobs": True},
+        }
+        with patch.dict(os.environ, {"AGENT_JOB_OPENCODE_DEFAULT_MODEL": "opencode-go/kimi-k3"}):
+            same_family = await self.call(intent)
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AGENT_JOB_OPENCODE_DEFAULT_MODEL", None)
+            cross_family = await self.call(intent)
+
+        self.assertEqual("direct", same_family["lane"])
+        self.assertEqual("agent_jobs", cross_family["lane"])
+        self.assertEqual("opencode-go/muse-spark-1.3-contributor", cross_family["model_alias"])
 
     async def test_quota_broker_rebalances_default_but_not_explicit_route(self) -> None:
         now = time.time()
@@ -2583,7 +2802,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         balanced = await self.call(payload)
         explicit = await self.call({**payload, "explicit_provider": "claude"})
 
-        self.assertEqual("kimi", balanced["provider"])
+        self.assertEqual("opencode", balanced["provider"])
         self.assertEqual("claude", balanced["fallback_provider"])
         self.assertEqual("claude", explicit["provider"])
 

@@ -267,5 +267,38 @@ class SupervisorInstallerTest(unittest.TestCase):
         run.assert_not_called()
 
 
+    def test_opencode_settings_persist_but_its_binary_is_never_discovered(self) -> None:
+        retained = {
+            "AGENT_JOB_OPENCODE_DEFAULT_MODEL": "opencode-go/kimi-k3",
+            "AGENT_JOB_OPENCODE_MODEL_PREFIXES": "opencode-go/",
+            "AGENT_JOB_OPENCODE_CONCURRENCY": "2",
+        }
+        environment = self._environment_with_existing(retained, {})
+        for name, value in retained.items():
+            self.assertEqual(value, environment[name])
+        # Homebrew's stable link points into a versioned Cellar path that
+        # upgrades remove, so only a deliberate pin is persisted.
+        self.assertNotIn("AGENT_JOB_OPENCODE_BIN", environment)
+        pinned = self._environment_with_existing({}, {"AGENT_JOB_OPENCODE_BIN": "/opt/homebrew/bin/opencode"})
+        self.assertEqual("/opt/homebrew/bin/opencode", pinned["AGENT_JOB_OPENCODE_BIN"])
+
+    def test_profile_env_path_list_must_be_complete_to_drop_a_script_launcher(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wrapper = Path(temp_dir) / "claude"
+            wrapper.write_text("#!/usr/bin/env bash\n")
+            claude_env = Path(temp_dir) / "claude.env"
+            claude_env.write_text("CLAUDE_CODE_OAUTH_TOKEN=placeholder\n")
+            opencode_env = Path(temp_dir) / "opencode.env"
+            existing = {"AGENT_JOB_CLAUDE_BIN": str(wrapper)}
+            incomplete = os.pathsep.join((str(claude_env), str(opencode_env)))
+            with self.assertRaisesRegex(RuntimeError, "AGENT_JOB_PROFILE_ENV"):
+                self._environment_with_existing(existing, {"AGENT_JOB_PROFILE_ENV": incomplete})
+            opencode_env.write_text("OPENCODE_API_KEY=placeholder\n")
+            environment = self._environment_with_existing(
+                existing, {"AGENT_JOB_PROFILE_ENV": incomplete},
+            )
+        self.assertEqual(incomplete, environment["AGENT_JOB_PROFILE_ENV"])
+        self.assertNotIn("AGENT_JOB_CLAUDE_BIN", environment)
+
 if __name__ == "__main__":
     unittest.main()

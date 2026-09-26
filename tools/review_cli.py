@@ -115,8 +115,8 @@ def dispatch(values: dict[str, object]) -> dict[str, object]:
 def main() -> int:
     parser = _parser()
     args = parser.parse_args()
-    if args.action == "submit" and args.provider != "kimi" and not args.model:
-        parser.error("--model is required unless --provider=kimi")
+    if args.action == "submit" and args.provider not in {"kimi", "opencode"} and not args.model:
+        parser.error("--model is required unless --provider is kimi or opencode")
     try:
         result = dispatch(vars(args))
     except Exception as exc:
