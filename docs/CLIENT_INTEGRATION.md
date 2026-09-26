@@ -3,7 +3,7 @@
 The machine-wide agent-job supervisor is a local execution service. Coding
 clients join it through the same read-only MCP server or the equivalent review
 CLI, while target providers are launched through the Claude, Codex, and OpenCode
-CLIs (Kimi remains an explicit-only legacy target).
+CLIs.
 
 ## Install
 
@@ -22,11 +22,14 @@ settings. Before changing an existing file it creates a sibling
 - the shared `~/.agents/skills/agent-jobs` link;
 - Claude Code's user-scope `~/.claude.json` MCP registration;
 - Claude Desktop's `mcpServers.agent-jobs` registration;
-- Kimi Code's user-level `~/.kimi-code/mcp.json` registration; and
-- a marked agent-jobs guidance section in `~/.kimi-code/AGENTS.md`.
+- OpenCode's `mcp.agent-jobs` registration in `~/.config/opencode/opencode.json`
+  (or `.jsonc`, which must be plain JSON), plus an `instructions` entry for the
+  managed `~/.config/opencode/agent-jobs.md`. A global `AGENTS.md` is avoided
+  because it would switch off OpenCode's fallback to `~/.claude/CLAUDE.md`.
 
-Restart Claude Desktop and start new Claude Code and Kimi Code sessions after
-applying changes.
+Restart Claude Desktop and start new Claude Code and OpenCode sessions after
+applying changes. Kimi Code is no longer a managed surface; its existing files
+are left untouched.
 Existing sessions retain the tools and instructions loaded when they started.
 Quit active Claude Code sessions before installation because Claude Code also
 updates its user-scope state file while running.
@@ -44,7 +47,7 @@ the corresponding `*.bak.agent-jobs-<suffix>` file, and restart the client.
 | Codex Desktop and CLI | MCP | `~/.agents/skills` plus global guidance | Codex CLI |
 | Claude Code, including Desktop code sessions | MCP or review CLI | Claude skill link and `CLAUDE.md` | Claude CLI |
 | Claude Desktop chat | Local MCP | Tool schema; coding policy applies in Claude Code sessions | Claude CLI |
-| Kimi Code | MCP | `~/.agents/skills` and Kimi `AGENTS.md` | Kimi CLI |
+| OpenCode Desktop and CLI | MCP | `~/.agents/skills` plus `agent-jobs.md` instructions | OpenCode CLI (read-only) |
 | Hermes profiles | Compatible protocol, separate runtime | Managed by Hermes | Not an ACO provider |
 
 ACO's installer does not inspect or modify `~/.hermes/profiles`. Hermes profile
@@ -54,13 +57,13 @@ MCP intentionally exposes route decision, feedback, reconciliation, status,
 submit, read, list, cancel, and owner-inbox operations for read-only jobs.
 Explicit implementation remains behind the local capability-protected delegation
 CLI. This prevents a general chat client from selecting write mode directly.
-On macOS, Claude and Kimi implementation jobs are additionally wrapped in a
+On macOS, Claude implementation jobs are additionally wrapped in a
 kernel-enforced workspace-write profile; Codex uses its native workspace sandbox.
 Unsupported native platforms and CAO implementation fail closed rather than run
 without equivalent write confinement.
 
 The delegation CLI accepts repeatable approved checks for Claude implementation
-jobs. Codex and Kimi check contracts currently fail closed:
+jobs. Codex check contracts currently fail closed:
 
 ```sh
 python3 ~/.agents/skills/agent-jobs/scripts/delegate.py \
@@ -106,7 +109,7 @@ send v2 with `durable_agent_jobs=true` and only claim `native_subagents=true`
 when that tool is actually present. If an older server rejects v2, retry once
 with v1; old clients remain valid against a new server.
 
-The installer adds this routing protocol to Codex, Claude Code, and Kimi Code
+The installer adds this routing protocol to Codex, Claude Code, and OpenCode
 guidance. Each surface retains the decision ID and returns exactly one
 `route_feedback` outcome for every enforced decision.
 
@@ -126,17 +129,16 @@ state. Shadow responses return `enforced=false` and never reserve. With
 `AGENT_JOB_ROUTING_MODE=codex_canary`, only a Codex caller on the Codex surface
 can receive `enforced=true`; focused session-scoped implementation, exploration,
 or test work may receive a `native_subagent` lane. `surface_canary` extends v2
-enforcement and same-family native lanes to Claude Code and Kimi Code. Claude
-native lanes cover planning, architecture, design, product, copywriting, and
-research; Kimi native lanes cover implementation, exploration, and tests. Work
-outside the caller family's primary domain routes cross-family, and code review
-always routes cross-family. V2 selects Opus
+enforcement to Claude Code and OpenCode, and same-family native lanes to Claude
+Code, whose native lanes cover planning, architecture, design, product,
+copywriting, and research. Work outside the caller family's primary domain
+routes cross-family, and code review always routes cross-family. V2 selects Opus
 for Claude's deep/review/thinking work and the configured OpenCode Go model
-(alias `default`) wherever Kimi used to be the target; OpenCode cross-family
-checks use the model's family, not the provider name. Codex targets use concrete GPT-5.6 Sol, with GPT-5.6 Terra at high
-reasoning reserved for focused native work. Focused Claude native work uses
-Sonnet and focused Kimi native work
-uses high-speed K2.7; Fable remains explicit-only.
+(alias `default`) for OpenCode targets; OpenCode cross-family checks use the
+model's family, not the provider name. An OpenCode caller runs a varying model
+family, so it routes to Codex and Claude and never to itself. Codex targets use
+concrete GPT-5.6 Sol, with GPT-5.6 Terra at high reasoning reserved for focused
+native work. Focused Claude native work uses Sonnet; Fable remains explicit-only.
 
 Native admission and persistence occur in one SQLite `BEGIN IMMEDIATE`
 transaction. The default machine-wide cooperative limit is three active native
@@ -216,23 +218,19 @@ The caller must inspect the retained result before acknowledgement. MCP cannot
 proactively inject a result into a suspended model turn, so clients check their
 owner inbox on resume or use a host/app notification layer as an external wakeup.
 
-Native Codex, Claude, and Kimi jobs expose provider-neutral semantic events through
+Native Codex, Claude, and OpenCode jobs expose provider-neutral semantic events through
 `event_cursor`. Native Claude uses its structured stream, so clients can show
 reasoning, provider waits, concurrent tool activity, incremental answer text,
 usage, and terminal warnings without parsing the raw log. A failed, cancelled,
-or interrupted Claude or Kimi run retains all top-level assistant-visible text emitted
+or interrupted Claude or OpenCode run retains all top-level assistant-visible text emitted
 before termination in `partial_response`. Treat that field as an ordered work
-artifact, not necessarily a polished final answer. Native Claude and Kimi raw
-stream JSON is deliberately not returned as `output`/`stdout`; preserve and
-advance the event cursor. Kimi emits message-level records rather than token
-deltas and keeps stderr-backed output-byte liveness for long tool calls. CAO
+artifact, not necessarily a polished final answer. Native Claude and OpenCode
+raw stream JSON is deliberately not returned as `output`/`stdout`; preserve and
+advance the event cursor. OpenCode emits complete text parts rather than token
+deltas and keeps output-byte liveness, because tools are reported only when they
+finish. CAO
 compatibility jobs retain output-byte observation until their transports expose
 equivalent structured events.
-
-The Kimi semantic kill switch is part of the persisted job specification. A
-stable idempotency key retried after that switch changes fails closed as a
-different specification instead of returning a job with another output/privacy
-contract.
 
 ## CAO Compatibility Backend
 
@@ -262,8 +260,8 @@ idempotency, durable logs, cursor reads, cancellation, and retention continue to
 apply outside CAO. The selected backend is persisted per job, so queued work
 does not change transport when configuration changes.
 
-CAO read-only execution is enabled only for Claude and Kimi, whose adapters
-enforce native tool denial. Read-only Codex fails before launch because this CAO
+CAO read-only execution is enabled only for Claude, whose adapter enforces
+native tool denial; OpenCode jobs are refused for CAO. Read-only Codex fails before launch because this CAO
 fork currently launches Codex without an enforceable sandbox. Legacy callers
 may still send `max_turns`; it is accepted and normalized to unlimited during
 the compatibility window because CAO has no equivalent limit. New callers omit

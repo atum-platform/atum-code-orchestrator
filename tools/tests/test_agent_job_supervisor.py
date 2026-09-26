@@ -219,6 +219,9 @@ class OpenCodeProviderTest(unittest.TestCase):
             self.assertEqual("1", env[flag])
         self.assertNotIn("OPENCODE_AUTO_SHARE", env)
 
+    def test_kimi_has_no_provider_slot(self) -> None:
+        self.assertEqual({"claude", "codex", "opencode"}, set(self.supervisor.provider_limits))
+
     def test_launch_refuses_the_real_workdir_without_a_staged_copy(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "refusing the real workdir"):
             self.supervisor._launch_cwd(self._job(job_id="00000000-0000-0000-0000-00000000000d"))
@@ -276,9 +279,13 @@ class OpenCodeProviderTest(unittest.TestCase):
             completed = subprocess.CompletedProcess([], 0, stdout=output, stderr="")
             with self.subTest(output=output), patch.object(
                 supervisor_module.subprocess, "run", return_value=completed,
-            ):
+            ) as run:
                 if accepted:
                     self.assertEqual("v1", generation("/opt/homebrew/bin/opencode"))
+                    # Patient enough for a cold start, and never an update check.
+                    self.assertEqual(60, run.call_args.kwargs["timeout"])
+                    self.assertEqual("1", run.call_args.kwargs["env"]["OPENCODE_DISABLE_AUTOUPDATE"])
+                    self.assertIs(subprocess.DEVNULL, run.call_args.kwargs["stdin"])
                 else:
                     with self.assertRaisesRegex(RuntimeError, "unverified"):
                         generation("/opt/homebrew/bin/opencode")
@@ -2764,16 +2771,16 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.supervisor.routing_mode = "surface_canary"
         intent = {
             "action": "route_decide", "protocol_version": 2,
-            "caller_provider": "kimi", "surface": "kimi-code", "capability": "code_review",
+            "caller_provider": "codex", "surface": "codex", "capability": "code_review",
             "explicit_provider": "opencode", "surface_capabilities": {"durable_agent_jobs": True},
         }
-        with patch.dict(os.environ, {"AGENT_JOB_OPENCODE_DEFAULT_MODEL": "opencode-go/kimi-k3"}):
-            same_family = await self.call(intent)
+        with patch.dict(os.environ, {"AGENT_JOB_OPENCODE_DEFAULT_MODEL": "opencode-go/gpt-6-luna"}):
+            with self.assertRaisesRegex(RuntimeError, "caller family"):
+                await self.call(intent)
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("AGENT_JOB_OPENCODE_DEFAULT_MODEL", None)
             cross_family = await self.call(intent)
 
-        self.assertEqual("direct", same_family["lane"])
         self.assertEqual("agent_jobs", cross_family["lane"])
         self.assertEqual("opencode-go/muse-spark-1.3-contributor", cross_family["model_alias"])
 
@@ -2982,7 +2989,8 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([1, 2], status["supported_protocol_versions"])
         self.assertEqual(2, status["latest_protocol_version"])
         self.assertEqual("opus", status["provider_capabilities"]["claude"]["deep_model"])
-        self.assertIn("durable_agent_jobs", status["surface_capabilities"]["kimi-code"])
+        self.assertIn("durable_agent_jobs", status["surface_capabilities"]["opencode"])
+        self.assertNotIn("kimi-code", status["surface_capabilities"])
 
     async def test_route_decide_rejects_unknown_protocol_without_persisting(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "protocol version"):

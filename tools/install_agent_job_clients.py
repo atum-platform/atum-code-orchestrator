@@ -61,13 +61,15 @@ skill's guarded CLI, retain job IDs and cursors, and treat
 `possibly_stalled` as alive but quiet. The retired `max_turns` option is omitted.
 Verify returned advice and changes locally before accepting them.
 """,
-    "Kimi guidance": """## Agent Jobs
+    "OpenCode guidance": """## Agent Jobs
 
-Use `$agent-jobs` for durable cross-agent review and delegation. As a Kimi
-caller, use Codex first for code review and Opus first for planning, design,
-product, copy, and research. Never delegate back to Kimi, recurse, or send
-secrets. Retain job IDs and cursors, treat `possibly_stalled` as alive but quiet,
-and omit the retired `max_turns` option. Verify all returned work locally.
+Use the `agent-jobs` MCP tools for durable cross-agent review and delegation. As
+an OpenCode caller, pass `caller_provider=opencode`, `surface=opencode`, and
+your current model as `caller_model` to `route_decide`, so routing can skip a
+target from your own model family; use Codex first for code review and Opus first for planning,
+design, product, copy, and research. Never delegate back to OpenCode, recurse, or
+send secrets. Retain job IDs and cursors, treat `possibly_stalled` as alive but
+quiet, and verify all returned work locally.
 """,
 }
 
@@ -387,8 +389,71 @@ def merge_guidance(path: Path, name: str, suffix: str, apply: bool) -> bool:
     return True
 
 
-def merge_kimi_guidance(path: Path, suffix: str, apply: bool) -> bool:
-    return merge_guidance(path, "Kimi guidance", suffix, apply)
+OPENCODE_GUIDANCE = Path(".config/opencode/agent-jobs.md")
+
+
+def _opencode_config_path(home: Path) -> Path:
+    base = home / ".config/opencode"
+    for name in ("opencode.jsonc", "opencode.json"):
+        if (base / name).exists() or (base / name).is_symlink():
+            return base / name
+    return base / "opencode.json"
+
+
+def merge_opencode_config(path: Path, suffix: str, apply: bool, home: Path | None = None) -> bool:
+    """Register the MCP server and the managed guidance file with OpenCode.
+
+    Guidance goes in through `instructions` rather than a global AGENTS.md,
+    which would switch off OpenCode's fallback to ~/.claude/CLAUDE.md.
+    """
+    if path.is_symlink():
+        raise ValueError(f"Refusing to replace symlinked config; update its target explicitly: {path}")
+    siblings = [path.with_name(name) for name in ("opencode.json", "opencode.jsonc")]
+    if all(sibling.exists() or sibling.is_symlink() for sibling in siblings):
+        raise ValueError(f"Both opencode.json and opencode.jsonc exist in {path.parent}; keep one")
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except JSONDecodeError as exc:
+            raise ValueError(
+                f"OpenCode config is not plain JSON, so comments cannot be preserved; "
+                f"add agent-jobs by hand or remove them: {path}: {exc}"
+            ) from exc
+        if not isinstance(data, dict):
+            raise ValueError(f"OpenCode config must contain a JSON object: {path}")
+    else:
+        data = {"$schema": "https://opencode.ai/config.json"}
+    resolved_home = (home or Path.home()).expanduser().resolve()
+    desired = server_config(resolved_home)
+    servers = data.setdefault("mcp", {})
+    if not isinstance(servers, dict):
+        raise ValueError(f"mcp must be a JSON object: {path}")
+    current = servers.get("agent-jobs")
+    if current is not None and not isinstance(current, dict):
+        raise ValueError(f"agent-jobs must be a JSON object: {path}")
+    merged = dict(current or {})
+    merged["type"] = "local"
+    merged["command"] = [desired["command"], *desired["args"]]
+    if not isinstance(merged.get("environment") or {}, dict):
+        raise ValueError(f"agent-jobs environment must be a JSON object: {path}")
+    environment = dict(merged.get("environment") or {})
+    environment.update(desired["env"])
+    merged["environment"] = environment
+    merged.setdefault("enabled", True)
+    instructions = data.get("instructions", [])
+    if not isinstance(instructions, list):
+        raise ValueError(f"instructions must be a JSON array: {path}")
+    guidance = str(resolved_home / OPENCODE_GUIDANCE)
+    if current == merged and guidance in instructions:
+        return False
+    servers["agent-jobs"] = merged
+    if guidance not in instructions:
+        data["instructions"] = [*instructions, guidance]
+    if apply:
+        _backup(path, suffix)
+        mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
+        _atomic_write(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n", mode)
+    return True
 
 
 def _recognized_legacy_skill(destination: Path) -> bool:
@@ -423,8 +488,8 @@ def _paths(home: Path) -> dict[str, Path]:
         "Claude Code MCP": home / ".claude.json",
         "Claude guidance": home / ".claude/CLAUDE.md",
         "Claude Desktop MCP": home / "Library/Application Support/Claude/claude_desktop_config.json",
-        "Kimi MCP": home / ".kimi-code/mcp.json",
-        "Kimi guidance": home / ".kimi-code/AGENTS.md",
+        "OpenCode MCP": _opencode_config_path(home),
+        "OpenCode guidance": home / OPENCODE_GUIDANCE,
     }
 
 
@@ -433,6 +498,8 @@ def _operation(name: str, path: Path, suffix: str, apply: bool, home: Path) -> b
         return ensure_skill_link(path, apply)
     if name == "Codex MCP":
         return merge_codex_config(path, suffix, apply, home)
+    if name == "OpenCode MCP":
+        return merge_opencode_config(path, suffix, apply, home)
     if name.endswith("guidance"):
         return merge_guidance(path, name, suffix, apply)
     return merge_mcp_config(path, suffix, apply, home)

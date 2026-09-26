@@ -841,3 +841,15 @@
   training-endpoint privacy opt-in.
 - Details, spike evidence, and follow-ups:
   `docs/session-logs/2026-09-26-opencode-provider.md`.
+
+## 2026-09-26 - OpenCode caller surface and Kimi removal
+
+- OpenCode became a caller surface with its own routing identity; it routes to
+  Codex and Claude and never to itself. The client installer registers ACO's MCP
+  server and a managed instructions file with OpenCode, and no longer manages
+  Kimi Code. `kimi` is no longer a routing or CLI target.
+- Follow-ups from the first live review: tighter OpenCode rate-limit matching and
+  a patient, update-free CLI version probe.
+- The quota broker reads CodexBar's `opencodego` history; CodexBar on the MacBook
+  now tracks OpenCode Go instead of Kimi.
+- Details: `docs/session-logs/2026-09-26-opencode-surface.md`.

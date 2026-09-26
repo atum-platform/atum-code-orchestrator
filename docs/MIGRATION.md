@@ -42,7 +42,7 @@ observed for up to 30 seconds before installation reports failure.
 
 Before replacing an existing supervisor, let all `running` and `launching` jobs
 finish. The installer refuses to proceed while active jobs exist. Quit Codex
-Desktop, Claude Desktop, and Kimi before rewriting their configuration so an app
+Desktop, Claude Desktop, and OpenCode before rewriting their configuration so an app
 cannot race the atomic update. Existing files receive timestamped adjacent
 backups; symlinked config files fail closed.
 
@@ -134,8 +134,8 @@ Guidance defaults in coding clients change only when
 `tools/install_agent_job_clients.py --apply` next runs with the desktop apps
 closed; until then `route_decide` remains authoritative.
 
-To roll back, reinstall the previous release. Kimi stays available as an explicit
-target in the meantime, although routing no longer selects it.
+To roll back, reinstall the previous release. Kimi is no longer a routing or CLI
+target; its dormant supervisor code is removed in a later release.
 
 ## Rollback
 
@@ -162,7 +162,7 @@ checkout or its rollback lifecycle.
 ## Current Deployment
 
 The Mac mini and MacBook each run an ACO supervisor from
-`~/.local/share/atum-agent-jobs`, with Codex, Claude, and Kimi bindings. The Mac
+`~/.local/share/atum-agent-jobs`, with Codex, Claude, and OpenCode bindings. The Mac
 mini Hermes cluster runs separately from `~/.local/share/hermes-agent-jobs`, uses
 `com.hermes.agent-job-supervisor`, and stores state under
 `~/.local/state/hermes-agent-job-supervisor`. ACO deployment and rollback must

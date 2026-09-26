@@ -7,7 +7,7 @@ notices without keeping one MCP request open.
 
 The versioned routing protocol supports shadow mode everywhere, a Codex canary,
 and a multi-surface canary. Focused session work can receive an atomic, expiring
-same-family native-worker reservation on Codex, Claude Code, or Kimi Code when
+same-family native-worker reservation on Codex or Claude Code when
 the client declares native support. Complementary-domain execution and every
 code review route cross-family; the original caller still assembles, verifies,
 and reports the outcome.
@@ -35,7 +35,7 @@ python3 bootstrap.py
 Bootstrap requires Python 3.10 or newer. When Apple `python3` is older, it
 automatically restarts with Homebrew Python from a standard install path.
 
-Restart Codex Desktop, Claude Desktop, and Kimi after first installation so they
+Restart Codex Desktop, Claude Desktop, and OpenCode after first installation so they
 reload MCP settings.
 Claude Code uses the installed skill and guarded CLI rather than a nested MCP
 process.
@@ -50,14 +50,14 @@ sync between machines.
 - Codex: `agent-jobs` MCP plus global `$agent-jobs` guidance and skill.
 - Claude Code: global skill and guarded command-line binding.
 - Claude Desktop: `agent-jobs` MCP registration.
-- Kimi Code: MCP registration, global guidance, and shared skill.
+- OpenCode: MCP registration, managed global instructions, and the shared skill.
 - Hermes: protocol-compatible only; managed by its independent cluster runtime.
 
 Provider execution uses the locally authenticated `codex`, `claude`, and
 `opencode` CLIs, so usage is charged to the account or subscription configured
 for each. OpenCode jobs are read-only reviews on the OpenCode Go subscription
-(default model Muse Spark, a Meta model), run in a sealed copy of the repository;
-the `kimi` provider remains only as an explicit legacy target.
+(default model Muse Spark, a Meta model), run in a sealed copy of the repository.
+Kimi is no longer a target; Kimi K3 remains available as `opencode-go/kimi-k3`.
 Claude jobs run the newest Claude Desktop bundled Claude Code when one is
 installed, resolved at every launch; never pin a versioned Claude path. Supply
 Claude credentials through `AGENT_JOB_PROFILE_ENV` rather than a wrapper script.

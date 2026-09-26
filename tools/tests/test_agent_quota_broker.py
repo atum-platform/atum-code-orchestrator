@@ -260,5 +260,35 @@ class AgentQuotaBrokerTest(unittest.TestCase):
                 self.assertTrue(rate_limit_cooldown("opencode", message, 100.0, 900)[0])
         self.assertFalse(rate_limit_cooldown("opencode", "Model returned an empty response", 100.0)[0])
 
+    def test_opencode_limit_matching_ignores_request_shape_errors(self) -> None:
+        for message in (
+            "You have reached your context limit for this model",
+            "Maximum output token limit exceeded",
+            "Prompt exceeds the model's context window",
+        ):
+            with self.subTest(message=message):
+                self.assertFalse(rate_limit_cooldown("opencode", message, 100.0, 900)[0])
+        self.assertFalse(rate_limit_cooldown("opencode", "You exceeded your context limit", 100.0, 900)[0])
+        for message in (
+            "You have reached your weekly limit",
+            "You have exceeded your weekly limit",
+            "Exceeded your 5-hour limits for this model",
+            "You have reached your monthly limits",
+            "5-hour limit reached; resets in 2 hours",
+            "Insufficient balance to fall back to Zen credits",
+        ):
+            with self.subTest(message=message):
+                self.assertTrue(rate_limit_cooldown("opencode", message, 100.0, 900)[0])
+
+    def test_opencode_reads_codexbars_opencodego_history(self) -> None:
+        now = 30_000.0
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(
+            os.environ, {"AGENT_JOB_QUOTA_HISTORY_DIR": temporary}
+        ):
+            self.write_history(Path(temporary), "opencodego", 90, now - 30, now + 3570)
+            health = evaluate_health("opencode", now)
+        self.assertEqual("codexbar", health["source"])
+        self.assertEqual("pressured", health["state"])
+
 if __name__ == "__main__":
     unittest.main()
