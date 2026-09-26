@@ -65,8 +65,10 @@ only. This standalone repository does not ship those mode-heavy MCP servers.
    Their orphaned process groups are then reaped behind the bound socket, in
    parallel, because each costs two `ps` probes and a grace period; startup
    latency no longer scales with the number of interrupted jobs. A process group
-   is terminated only when PID, PGID, process start time, and resolved executable
-   all exactly match the recorded identity.
+   is terminated only when PID, PGID, and process start time all exactly match
+   the recorded identity. The recorded executable (`binary_path`) is diagnostic,
+   not part of the match: a launch that passes through `sandbox-exec` or a script
+   can be probed before it `exec`s the provider.
 8. Every terminal transition with a non-empty owner creates one durable inbox
    delivery. Reads redeliver until that exact owner acknowledges it.
 
@@ -100,6 +102,32 @@ The LaunchAgent label is `com.atum.agent-job-supervisor`. Runtime state is kept
 under `~/.local/state/agent-job-supervisor` with user-only permissions.
 The Hermes cluster uses a different checkout, LaunchAgent label, and state
 directory; ACO installation does not manage it.
+
+### Claude runtime and credentials
+
+The supervisor resolves the Claude binary at every submission and launch:
+`AGENT_JOB_CLAUDE_BIN` when it names an executable, then the newest Claude
+Desktop bundled release under
+`~/Library/Application Support/Claude/claude-code/<version>/`, then `claude` on
+the service `PATH` and the known install locations. Releases compare
+numerically, and a release directory without its binary (an update still
+unpacking) is skipped. The desktop app installs each release in a new versioned
+directory and later prunes old ones, so never pin a versioned path.
+
+The installer persists `AGENT_JOB_CLAUDE_BIN` only when it is set on the install
+command. Earlier installers wrote a pin unconditionally, so a retained value is
+dropped rather than trusted. When that retained launcher is a script, the
+installer refuses until `AGENT_JOB_PROFILE_ENV` names an existing file, because
+the launcher scripts seen so far (an untracked checkout wrapper and a
+`~/.local/bin/claude` shim) were what supplied Claude's credentials. Set
+`AGENT_JOB_CLAUDE_BIN` on the install command to keep a script deliberately.
+
+Supply credentials through `AGENT_JOB_PROFILE_ENV`, not a launcher wrapper.
+Claude jobs receive only `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+`ANTHROPIC_TOKEN`, and `CLAUDE_CODE_OAUTH_TOKEN` from it, and Kimi jobs only the
+Kimi keys. Launching the real binary also keeps each job's `binary_path`
+accurate; through a wrapper the probe usually recorded the transient shell
+(`/bash`) rather than the Claude release that ran.
 
 ### Service restart policy
 

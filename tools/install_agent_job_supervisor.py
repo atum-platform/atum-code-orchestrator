@@ -125,9 +125,45 @@ def _provider_binary(
     return str(candidates[0])
 
 
+def _is_script(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            return handle.read(2) == b"#!"
+    except OSError:
+        return False
+
+
+def _claude_binary(existing: dict[str, str], profile_env: str | None) -> str | None:
+    """Return an explicit Claude launcher, or None to let the supervisor resolve one.
+
+    Claude Code updates replace versioned install paths, so the supervisor finds
+    the current runtime at each launch. Earlier installers pinned a path on every
+    install, so a retained value is not evidence of intent; only an install-time
+    AGENT_JOB_CLAUDE_BIN is persisted.
+    """
+    override = os.environ.get("AGENT_JOB_CLAUDE_BIN", "").strip()
+    if override:
+        return str(Path(override).expanduser().absolute())
+    retained = existing.get("AGENT_JOB_CLAUDE_BIN", "").strip()
+    if not retained:
+        return None
+    credentials = Path(profile_env).expanduser() if profile_env else None
+    if _is_script(Path(retained).expanduser()) and not (credentials and credentials.is_file()):
+        # A launcher script may be what supplies Claude's credentials; dropping it
+        # silently would leave every Claude job unauthenticated.
+        raise RuntimeError(
+            f"The existing service launches Claude through the script {retained}, which may "
+            "supply its credentials. Set AGENT_JOB_PROFILE_ENV to the env file it reads, or "
+            "AGENT_JOB_CLAUDE_BIN to keep it; see docs/MIGRATION.md"
+        )
+    print(f"Claude is no longer pinned to {retained}; the supervisor resolves it per launch", file=sys.stderr)
+    return None
+
+
 def _service_environment() -> dict[str, str]:
     home = Path.home()
     existing = _existing_service_environment()
+    profile_env = os.environ.get("AGENT_JOB_PROFILE_ENV") or existing.get("AGENT_JOB_PROFILE_ENV")
     environment = {
         "HOME": str(home),
         "USER": home.name,
@@ -143,11 +179,12 @@ def _service_environment() -> dict[str, str]:
         "AGENT_JOB_ALLOWED_ROOTS": os.environ.get(
             "AGENT_JOB_ALLOWED_ROOTS", allowed_roots_value(),
         ),
-        "AGENT_JOB_CLAUDE_BIN": _provider_binary("AGENT_JOB_CLAUDE_BIN", "claude", (home / ".local/bin/claude",), existing),
         "AGENT_JOB_KIMI_BIN": _provider_binary("AGENT_JOB_KIMI_BIN", "kimi", (home / ".kimi-code/bin/kimi",), existing),
         "AGENT_JOB_CODEX_BIN": _provider_binary("AGENT_JOB_CODEX_BIN", "codex", (home / ".local/bin/codex", Path("/opt/homebrew/bin/codex")), existing),
     }
-    profile_env = os.environ.get("AGENT_JOB_PROFILE_ENV") or existing.get("AGENT_JOB_PROFILE_ENV")
+    claude_binary = _claude_binary(existing, profile_env)
+    if claude_binary:
+        environment["AGENT_JOB_CLAUDE_BIN"] = claude_binary
     if profile_env:
         environment["AGENT_JOB_PROFILE_ENV"] = profile_env
     for name in PERSISTED_OVERRIDE_NAMES:

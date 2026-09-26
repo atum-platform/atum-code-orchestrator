@@ -16,6 +16,26 @@ import install_agent_job_supervisor as installer  # noqa: E402
 
 
 class SupervisorInstallerTest(unittest.TestCase):
+    def setUp(self) -> None:
+        # Never read the host's real LaunchAgent: its retained values would leak
+        # machine state into every _service_environment() call.
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        plist = patch.object(installer, "PLIST_PATH", Path(temp.name) / "absent.plist")
+        plist.start()
+        self.addCleanup(plist.stop)
+
+    def _environment_with_existing(
+        self, existing: dict[str, str], overrides: dict[str, str],
+    ) -> dict[str, str]:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plist_path = Path(temp_dir) / "supervisor.plist"
+            with plist_path.open("wb") as handle:
+                plistlib.dump({"EnvironmentVariables": existing}, handle)
+            with patch.object(installer, "PLIST_PATH", plist_path), \
+                 patch.dict(os.environ, overrides, clear=True):
+                return installer._service_environment()
+
     def test_service_environment_retains_known_existing_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             plist_path = Path(temp_dir) / "supervisor.plist"
@@ -169,6 +189,82 @@ class SupervisorInstallerTest(unittest.TestCase):
         with patch.object(installer, "_socket_request", return_value=None):
             with self.assertRaisesRegex(RuntimeError, "Cannot verify active jobs"):
                 installer._active_jobs()
+
+    def test_claude_binary_is_left_to_per_launch_discovery(self) -> None:
+        self.assertNotIn("AGENT_JOB_CLAUDE_BIN", self._environment_with_existing({}, {}))
+
+    def test_retained_claude_binary_pin_is_dropped(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pinned = Path(temp_dir) / "claude-code" / "2.1.280" / "claude"
+            pinned.parent.mkdir(parents=True)
+            pinned.write_bytes(b"\xcf\xfa\xed\xfe")
+            environment = self._environment_with_existing(
+                {"AGENT_JOB_CLAUDE_BIN": str(pinned)}, {},
+            )
+        self.assertNotIn("AGENT_JOB_CLAUDE_BIN", environment)
+
+    def test_explicit_claude_binary_is_persisted_without_resolving_links(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "claude-2.1.281"
+            target.write_bytes(b"\xcf\xfa\xed\xfe")
+            launcher = Path(temp_dir) / "claude"
+            launcher.symlink_to(target)
+            environment = self._environment_with_existing(
+                {"AGENT_JOB_CLAUDE_BIN": "/retained/claude"},
+                {"AGENT_JOB_CLAUDE_BIN": str(launcher)},
+            )
+        self.assertEqual(str(launcher), environment["AGENT_JOB_CLAUDE_BIN"])
+
+    def test_retained_claude_script_requires_a_credential_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wrapper = Path(temp_dir) / "claude-review-runtime"
+            wrapper.write_text('#!/usr/bin/env bash\nexec claude "$@"\n')
+            missing = Path(temp_dir) / "missing.env"
+            for overrides in ({}, {"AGENT_JOB_PROFILE_ENV": str(missing)}):
+                with self.subTest(overrides=overrides), \
+                     self.assertRaisesRegex(RuntimeError, "AGENT_JOB_PROFILE_ENV"):
+                    self._environment_with_existing(
+                        {"AGENT_JOB_CLAUDE_BIN": str(wrapper)}, overrides,
+                    )
+
+    def test_retained_claude_script_yields_to_profile_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wrapper = Path(temp_dir) / "claude-review-runtime"
+            wrapper.write_text('#!/usr/bin/env bash\nexec claude "$@"\n')
+            profile = Path(temp_dir) / "profile.env"
+            profile.write_text("CLAUDE_CODE_OAUTH_TOKEN=placeholder\n")
+            environment = self._environment_with_existing(
+                {"AGENT_JOB_CLAUDE_BIN": str(wrapper)},
+                {"AGENT_JOB_PROFILE_ENV": str(profile)},
+            )
+        self.assertNotIn("AGENT_JOB_CLAUDE_BIN", environment)
+        self.assertEqual(str(profile), environment["AGENT_JOB_PROFILE_ENV"])
+
+    def test_explicit_claude_binary_keeps_a_script_launcher(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wrapper = Path(temp_dir) / "claude"
+            wrapper.write_text('#!/usr/bin/env bash\nexec claude "$@"\n')
+            environment = self._environment_with_existing(
+                {"AGENT_JOB_CLAUDE_BIN": str(wrapper)},
+                {"AGENT_JOB_CLAUDE_BIN": str(wrapper)},
+            )
+        self.assertEqual(str(wrapper), environment["AGENT_JOB_CLAUDE_BIN"])
+
+    def test_install_refuses_to_drop_a_script_launcher_before_service_swap(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wrapper = Path(temp_dir) / "claude"
+            wrapper.write_text("#!/usr/bin/env bash\n")
+            plist_path = Path(temp_dir) / "supervisor.plist"
+            with plist_path.open("wb") as handle:
+                plistlib.dump({"EnvironmentVariables": {"AGENT_JOB_CLAUDE_BIN": str(wrapper)}}, handle)
+            with patch.object(installer, "PLIST_PATH", plist_path), \
+                 patch.dict(os.environ, {}, clear=True), \
+                 patch.object(installer, "_socket_request") as socket_request, \
+                 patch.object(installer, "_run") as run:
+                with self.assertRaisesRegex(RuntimeError, "launches Claude through the script"):
+                    installer.install()
+        socket_request.assert_not_called()
+        run.assert_not_called()
 
 
 if __name__ == "__main__":
