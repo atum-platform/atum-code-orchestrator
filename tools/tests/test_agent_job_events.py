@@ -702,88 +702,12 @@ class ProviderEventDecoderTest(unittest.TestCase):
         self.assertEqual("progress", events[0]["kind"])
         self.assertNotIn("secret", json.dumps(events))
 
-    def test_kimi_incremental_messages_reconstruct_transcript(self) -> None:
-        decoder = ProviderEventDecoder("kimi")
-        events = decoder.feed(self._jsonl(
-            {"role": "assistant", "content": "first "},
-            {"role": "assistant", "content": "second"},
-        ))
-
-        text = "".join(
-            event["payload"]["text"]
-            for event in events if event["kind"] == "message_delta"
-        )
-        self.assertEqual("first second", text)
-
-    def test_kimi_tool_records_keep_only_metadata(self) -> None:
-        decoder = ProviderEventDecoder("kimi")
-        events = decoder.feed(self._jsonl(
-            {
-                "role": "assistant", "content": "checking",
-                "tool_calls": [{
-                    "type": "function", "id": "tc-1",
-                    "function": {"name": "ReadFile", "arguments": "secret-arguments"},
-                }],
-            },
-            {"role": "tool", "tool_call_id": "tc-1", "content": "secret-result"},
-        ))
-
-        self.assertEqual(
-            ["message_delta", "progress", "tool_finished"],
-            [event["kind"] for event in events],
-        )
-        self.assertEqual("ReadFile", events[-1]["payload"]["name"])
-        self.assertEqual(len("secret-result"), events[-1]["payload"]["content_bytes"])
-        serialized = json.dumps(events)
-        self.assertNotIn("secret-arguments", serialized)
-        self.assertNotIn("secret-result", serialized)
-        self.assertNotIn("tool_started", serialized)
-
-    def test_kimi_assistant_may_omit_content_for_tool_only_record(self) -> None:
-        decoder = ProviderEventDecoder("kimi")
-        events = decoder.feed(self._jsonl({
-            "role": "assistant",
-            "tool_calls": [{
-                "type": "function", "id": "tc-1",
-                "function": {"name": "ReadFile", "arguments": "secret"},
-            }],
-        }))
-
-        self.assertEqual(["progress"], [event["kind"] for event in events])
-        self.assertEqual("tool_requested", events[0]["payload"]["phase"])
-        self.assertNotIn("secret", json.dumps(events))
-
-    def test_kimi_meta_records_are_whitelisted(self) -> None:
-        decoder = ProviderEventDecoder("kimi")
-        events = decoder.feed(self._jsonl(
-            {"role": "meta", "type": "system.version", "version": "0.34.0"},
-            {
-                "role": "meta", "type": "session.resume_hint",
-                "session_id": "session-1", "command": "secret-command", "content": "secret",
-            },
-            {
-                "role": "meta", "type": "turn.step.retrying",
-                "error_name": "RateLimit", "error_message": "retry later",
-                "status_code": 429, "failed_attempt": 1, "max_attempts": 3, "delay_ms": 1000,
-            },
-            {
-                "type": "goal.summary", "status": "completed",
-                "turnsUsed": 2, "tokensUsed": 50, "wallClockMs": 100,
-            },
-        ))
-
-        self.assertEqual(
-            ["progress", "progress", "warning", "usage"],
-            [event["kind"] for event in events],
-        )
-        self.assertNotIn("secret", json.dumps(events))
-
-    def test_kimi_malformed_unknown_and_non_dict_records_are_private(self) -> None:
-        decoder = ProviderEventDecoder("kimi")
+    def test_opencode_malformed_unknown_and_non_dict_records_are_private(self) -> None:
+        decoder = ProviderEventDecoder("opencode")
         events = decoder.feed(
             b'raw-secret\n'
             + self._jsonl(
-                {"role": "future", "type": "private.event", "content": "secret-content"},
+                {"type": "future.event", "part": {"text": "secret-content"}},
             )
             + b'"secret-string"\n'
         )
@@ -796,10 +720,10 @@ class ProviderEventDecoderTest(unittest.TestCase):
         self.assertNotIn("secret-content", json.dumps(events))
         self.assertNotIn("secret-string", json.dumps(events))
 
-    def test_kimi_utf8_and_json_split_across_chunks_are_preserved(self) -> None:
-        decoder = ProviderEventDecoder("kimi")
+    def test_opencode_utf8_and_json_split_across_chunks_are_preserved(self) -> None:
+        decoder = ProviderEventDecoder("opencode")
         line = json.dumps(
-            {"role": "assistant", "content": "café"}, ensure_ascii=False
+            {"type": "text", "part": {"type": "text", "text": "café"}}, ensure_ascii=False
         ).encode("utf-8") + b"\n"
         split = line.index("é".encode("utf-8")) + 1
 

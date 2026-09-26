@@ -853,3 +853,15 @@
 - The quota broker reads CodexBar's `opencodego` history; CodexBar on the MacBook
   now tracks OpenCode Go instead of Kimi.
 - Details: `docs/session-logs/2026-09-26-opencode-surface.md`.
+
+## 2026-09-26 - Remove the dormant Kimi provider
+
+- Deleted the Kimi launch code, agent definitions, event decoder, quota rules,
+  installer settings, and CAO mapping that the OpenCode release left dormant.
+  Kimi K3 remains available as `opencode-go/kimi-k3`.
+- A job still queued for a provider with no slot now fails with `launch_error`
+  instead of wedging the scheduler until its queue deadline.
+- Retained Kimi rows keep private stdout; only Codex's JSON stdout is public.
+- Verification: 328 tests pass; the new guard and privacy tests fail without
+  their fixes. OpenCode review HOLD on the privacy gap, fixed.
+- Details: `docs/session-logs/2026-09-26-remove-kimi-provider.md`.

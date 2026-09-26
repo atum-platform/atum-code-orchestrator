@@ -16,7 +16,7 @@ MAX_VALUE_DEPTH = 4
 MAX_CLAUDE_STREAM_BLOCK_CHARS = 1_048_576
 MAX_CLAUDE_STREAM_BLOCKS = 256
 MAX_CLAUDE_SNAPSHOT_MESSAGES = 64
-PRIVATE_STDOUT_PROVIDERS = {"claude", "kimi", "opencode"}
+PRIVATE_STDOUT_PROVIDERS = {"claude", "opencode"}
 
 
 def _bounded(value: Any, depth: int = 0) -> Any:
@@ -506,101 +506,6 @@ def _claude_events(value: dict[str, Any], state: dict[str, Any]) -> list[dict[st
     return [{"kind": "progress", "payload": _claude_metadata(value)}]
 
 
-def _kimi_metadata(value: dict[str, Any]) -> dict[str, Any]:
-    payload = {
-        "role": str(value.get("role") or "")[:100],
-        "type": str(value.get("type") or "")[:100],
-    }
-    return {key: item for key, item in payload.items() if item}
-
-
-def _kimi_events(value: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
-    role = str(value.get("role") or "")
-    record_type = str(value.get("type") or "")
-    events: list[dict[str, Any]] = []
-
-    if role == "assistant":
-        content = _text(value.get("content"))
-        if content:
-            events.append({"kind": "message_delta", "payload": {"text": content}})
-        tool_calls = value.get("tool_calls")
-        if isinstance(tool_calls, list):
-            for call in tool_calls[:MAX_COLLECTION_ITEMS]:
-                if not isinstance(call, dict):
-                    continue
-                function = call.get("function")
-                function = function if isinstance(function, dict) else {}
-                name = str(function.get("name") or "tool")[:200]
-                tool_id = str(call.get("id") or name)[:200]
-                _remember_tool(state, tool_id, name)
-                events.append({
-                    "kind": "progress",
-                    "payload": {
-                        "phase": "tool_requested",
-                        "id": tool_id,
-                        "name": name,
-                        "argument_bytes": _content_bytes(function.get("arguments")),
-                    },
-                })
-        return events or [{"kind": "progress", "payload": {"phase": "assistant"}}]
-
-    if role == "tool":
-        tool_id = str(value.get("tool_call_id") or "tool")[:200]
-        name = state.setdefault("tools", {}).pop(tool_id, "tool")
-        return [{
-            "kind": "tool_finished",
-            "payload": {
-                "id": tool_id,
-                "name": name,
-                "status": "unknown",
-                "content_bytes": _content_bytes(value.get("content")),
-            },
-        }]
-
-    if role == "meta" and record_type == "system.version":
-        return [{
-            "kind": "progress",
-            "payload": {
-                "phase": "provider_version",
-                "version": str(value.get("version") or "")[:100],
-            },
-        }]
-    if role == "meta" and record_type == "session.resume_hint":
-        return [{
-            "kind": "progress",
-            "payload": {
-                "phase": "session_ready",
-                "session_id": str(value.get("session_id") or "")[:200],
-            },
-        }]
-    if role == "meta" and record_type == "turn.step.retrying":
-        return [{
-            "kind": "warning",
-            "payload": {
-                "message": _text(value.get("error_message"))[:500]
-                or "Kimi is retrying a provider step",
-                "subtype": record_type,
-                "error_name": str(value.get("error_name") or "")[:100],
-                "status_code": value.get("status_code"),
-                "failed_attempt": value.get("failed_attempt"),
-                "max_attempts": value.get("max_attempts"),
-                "delay_ms": value.get("delay_ms"),
-            },
-        }]
-    if record_type == "goal.summary":
-        return [{
-            "kind": "usage",
-            "payload": {
-                "scope": "goal",
-                "status": str(value.get("status") or "")[:100],
-                "turns": value.get("turnsUsed"),
-                "tokens": value.get("tokensUsed"),
-                "wall_clock_ms": value.get("wallClockMs"),
-            },
-        }]
-    return [{"kind": "progress", "payload": _kimi_metadata(value)}]
-
-
 def _opencode_events(value: dict[str, Any]) -> list[dict[str, Any]]:
     """Normalize `opencode run --format json` records from the 1.x CLI.
 
@@ -760,8 +665,6 @@ class ProviderEventDecoder:
                 events.extend(_codex_events(value))
             elif self.provider == "claude":
                 events.extend(_claude_events(value, self._provider_state))
-            elif self.provider == "kimi":
-                events.extend(_kimi_events(value, self._provider_state))
             elif self.provider == "opencode":
                 events.extend(_opencode_events(value))
             else:

@@ -77,7 +77,7 @@ class AgentQuotaBrokerTest(unittest.TestCase):
             self.assertEqual(
                 "stale", evaluate_health("codex", now, stale_seconds=300)["state"]
             )
-            self.assertEqual("unknown", evaluate_health("kimi", now)["state"])
+            self.assertEqual("unknown", evaluate_health("claude", now)["state"])
 
     def test_unscoped_provider_history_is_consumed(self) -> None:
         now = 25_000.0
@@ -85,15 +85,15 @@ class AgentQuotaBrokerTest(unittest.TestCase):
             os.environ, {"AGENT_JOB_QUOTA_HISTORY_DIR": temporary}
         ):
             self.write_history(
-                Path(temporary), "kimi", 100, now - 30, now + 3600,
+                Path(temporary), "codex", 100, now - 30, now + 3600,
                 unscoped=True,
             )
-            health = evaluate_health("kimi", now)
+            health = evaluate_health("codex", now)
         self.assertEqual("exhausted", health["state"])
         self.assertEqual("codexbar", health["source"])
 
     def test_active_failure_cooldown_overrides_cache(self) -> None:
-        health = evaluate_health("kimi", 100, cooldown_until=200)
+        health = evaluate_health("opencode", 100, cooldown_until=200)
         self.assertEqual("rate_limited", health["state"])
         self.assertEqual(200, health["cooldown_until"])
 
@@ -118,30 +118,19 @@ class AgentQuotaBrokerTest(unittest.TestCase):
 
     def test_rate_limit_detection_uses_reset_evidence_or_default(self) -> None:
         limited, cooldown, evidence = rate_limit_cooldown(
-            "kimi", "429 rate limit; try again in 2 hours", 100
+            "codex", "429 rate limit; try again in 2 hours", 100
         )
         self.assertTrue(limited)
         self.assertEqual(7_300, cooldown)
         self.assertIn("2 hours", evidence)
         self.assertEqual(
-            (False, None, ""), rate_limit_cooldown("kimi", "syntax error", 100)
+            (False, None, ""), rate_limit_cooldown("codex", "syntax error", 100)
         )
-
-    def test_kimi_billing_cycle_exhaustion_uses_daily_probe_cooldown(self) -> None:
-        limited, cooldown, evidence = rate_limit_cooldown(
-            "kimi",
-            "403 You've reached your usage limit for this billing cycle. "
-            "Your quota will be refreshed in the next cycle.",
-            100,
-        )
-        self.assertTrue(limited)
-        self.assertEqual(86_500, cooldown)
-        self.assertIn("billing cycle", evidence)
 
     def test_retry_interval_must_be_near_provider_signature(self) -> None:
         text = "rate limit reached\n" + ("x" * 600) + "try again in 2 hours"
         limited, cooldown, _ = rate_limit_cooldown(
-            "kimi", text, 100, default_cooldown_seconds=900
+            "codex", text, 100, default_cooldown_seconds=900
         )
         self.assertTrue(limited)
         self.assertEqual(1000, cooldown)
@@ -149,14 +138,14 @@ class AgentQuotaBrokerTest(unittest.TestCase):
     def test_rebalance_changes_only_default_agent_job_routes(self) -> None:
         decision = {
             "lane": "agent_jobs", "provider": "claude", "model_alias": "claude_deep",
-            "fallback_provider": "kimi", "fallback_model_alias": "kimi_standard",
+            "fallback_provider": "opencode", "fallback_model_alias": "default",
             "reasons": ["static"],
         }
         result = rebalance_default_route(decision, {
             "claude": {"state": "pressured"},
-            "kimi": {"state": "unknown"},
+            "opencode": {"state": "unknown"},
         })
-        self.assertEqual("kimi", result["provider"])
+        self.assertEqual("opencode", result["provider"])
         self.assertEqual("claude", result["fallback_provider"])
         self.assertIn("quota broker", result["reasons"][-2])
 
@@ -166,12 +155,12 @@ class AgentQuotaBrokerTest(unittest.TestCase):
     def test_rebalance_keeps_lower_pressure_primary(self) -> None:
         decision = {
             "lane": "agent_jobs", "provider": "claude", "model_alias": "claude_deep",
-            "fallback_provider": "kimi", "fallback_model_alias": "kimi_standard",
+            "fallback_provider": "opencode", "fallback_model_alias": "default",
             "reasons": ["static"],
         }
         result = rebalance_default_route(decision, {
             "claude": {"state": "pressured", "pressure": 86},
-            "kimi": {"state": "pressured", "pressure": 95},
+            "opencode": {"state": "pressured", "pressure": 95},
         })
         self.assertEqual("claude", result["provider"])
 
@@ -191,12 +180,12 @@ class AgentQuotaBrokerTest(unittest.TestCase):
     def test_both_exhausted_default_routes_degrade_to_direct(self) -> None:
         decision = {
             "lane": "agent_jobs", "provider": "claude", "model_alias": "opus",
-            "fallback_provider": "kimi", "fallback_model_alias": "kimi-code/k3",
+            "fallback_provider": "opencode", "fallback_model_alias": "default",
             "reasons": ["static"],
         }
         result = rebalance_default_route(decision, {
             "claude": {"state": "exhausted"},
-            "kimi": {"state": "rate_limited"},
+            "opencode": {"state": "rate_limited"},
         })
         self.assertEqual("direct", result["lane"])
         self.assertEqual("", result["provider"])
@@ -204,12 +193,12 @@ class AgentQuotaBrokerTest(unittest.TestCase):
     def test_two_temporary_cooldowns_preserve_queued_recovery_route(self) -> None:
         decision = {
             "lane": "agent_jobs", "provider": "claude", "model_alias": "opus",
-            "fallback_provider": "kimi", "fallback_model_alias": "kimi-code/k3",
+            "fallback_provider": "opencode", "fallback_model_alias": "default",
             "reasons": ["static"],
         }
         result = rebalance_default_route(decision, {
             "claude": {"state": "rate_limited"},
-            "kimi": {"state": "rate_limited"},
+            "opencode": {"state": "rate_limited"},
         })
         self.assertEqual("agent_jobs", result["lane"])
         self.assertEqual("claude", result["provider"])
@@ -242,9 +231,9 @@ class AgentQuotaBrokerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary, patch.dict(
             os.environ, {"AGENT_JOB_QUOTA_HISTORY_DIR": temporary}
         ):
-            self.write_history(Path(temporary), "kimi", 60, now - 30, now + 3570)
+            self.write_history(Path(temporary), "codex", 60, now - 30, now + 3570)
             health = evaluate_health(
-                "kimi", now, previous_state="rate_limited", cooldown_until=now - 1
+                "codex", now, previous_state="rate_limited", cooldown_until=now - 1
             )
         self.assertEqual("pressured", health["state"])
 

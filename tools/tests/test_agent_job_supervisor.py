@@ -22,40 +22,6 @@ import agent_job_supervisor as supervisor_module  # noqa: E402
 from agent_job_supervisor import JobStore, Supervisor  # noqa: E402
 
 
-class KimiCliCompatibilityTest(unittest.TestCase):
-    def tearDown(self) -> None:
-        supervisor_module._kimi_cli_generation.cache_clear()
-
-    def test_official_modern_install_path_needs_no_subprocess_probe(self) -> None:
-        supervisor_module._kimi_cli_generation.cache_clear()
-        with patch.object(supervisor_module.subprocess, "run") as run:
-            generation = supervisor_module._kimi_cli_generation(
-                "/Users/example/.kimi-code/bin/kimi"
-            )
-        self.assertEqual("modern", generation)
-        run.assert_not_called()
-
-    def test_nonstandard_paths_use_version_contract(self) -> None:
-        supervisor_module._kimi_cli_generation.cache_clear()
-        with patch.object(
-            supervisor_module.subprocess,
-            "run",
-            return_value=subprocess.CompletedProcess(
-                ["/custom/kimi", "--version"], 0, stdout="kimi, version 1.49.0\n", stderr=""
-            ),
-        ) as run:
-            self.assertEqual(
-                "legacy", supervisor_module._kimi_cli_generation("/custom/kimi")
-            )
-        run.assert_called_once_with(
-            ["/custom/kimi", "--version"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-
-
 class ProviderBinaryDiscoveryTest(unittest.TestCase):
     def setUp(self) -> None:
         temp = tempfile.TemporaryDirectory()
@@ -111,8 +77,8 @@ class ProviderBinaryDiscoveryTest(unittest.TestCase):
 
     def test_desktop_releases_only_apply_to_claude(self) -> None:
         self._desktop_release("2.1.281")
-        kimi = self._executable(self.root / "bin" / "kimi")
-        self.assertEqual(str(kimi.resolve()), self._find("kimi", which=str(kimi)))
+        codex = self._executable(self.root / "bin" / "codex")
+        self.assertEqual(str(codex.resolve()), self._find("codex", which=str(codex)))
 
 
 class OpenCodeProviderTest(unittest.TestCase):
@@ -219,7 +185,7 @@ class OpenCodeProviderTest(unittest.TestCase):
             self.assertEqual("1", env[flag])
         self.assertNotIn("OPENCODE_AUTO_SHARE", env)
 
-    def test_kimi_has_no_provider_slot(self) -> None:
+    def test_only_supported_providers_have_slots(self) -> None:
         self.assertEqual({"claude", "codex", "opencode"}, set(self.supervisor.provider_limits))
 
     def test_launch_refuses_the_real_workdir_without_a_staged_copy(self) -> None:
@@ -407,50 +373,6 @@ class WorkspaceConfinementTest(unittest.TestCase):
             self.assertIsNotNone(process.returncode)
             supervisor.store.db.close()
 
-    def test_modern_kimi_runtime_stages_writable_credential_copies(self) -> None:
-        # Kimi takes its OAuth refresh lock inside `oauth/` about twenty minutes
-        # into a job. Symlinks back to ~/.kimi-code put that write outside the
-        # implementation sandbox, so the provider died with EPERM mid-run. Every
-        # credential is staged as a private copy inside the job runtime instead.
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary).resolve()
-            source = root / "home" / ".kimi-code"
-            (source / "oauth").mkdir(parents=True)
-            (source / "config.toml").write_text("[kimi]\n", encoding="utf-8")
-            (source / "credentials").write_text("token\n", encoding="utf-8")
-            (source / "oauth" / "kimi-code.json").write_text("{}\n", encoding="utf-8")
-            (source / "device_id").write_text("device\n", encoding="utf-8")
-            state = root / "state"
-            state.mkdir()
-            supervisor = Supervisor(
-                state_dir=state,
-                socket_path=state / "supervisor.sock",
-                db_path=state / "jobs.sqlite3",
-                log_dir=state / "logs",
-            )
-            try:
-                runtime = supervisor._job_runtime_dir("job")
-                runtime.mkdir(mode=0o700)
-                with patch.dict(os.environ, {"HOME": str(root / "home")}):
-                    home, _ = supervisor._prepare_modern_kimi_runtime(
-                        runtime, {"mode": "implement", "checks_json": "[]"}
-                    )
-
-                for name in ("credentials", "oauth", "device_id"):
-                    staged = home / name
-                    self.assertFalse(staged.is_symlink(), name)
-                    self.assertTrue(staged.resolve().is_relative_to(runtime), name)
-                self.assertEqual(0o700, stat.S_IMODE((home / "oauth").stat().st_mode))
-                self.assertEqual(
-                    0o600, stat.S_IMODE((home / "oauth" / "kimi-code.json").stat().st_mode)
-                )
-                self.assertEqual(0o600, stat.S_IMODE((home / "credentials").stat().st_mode))
-                # The refresh lock lands in the staged copy, never in the source.
-                (home / "oauth" / "kimi-code.lock").write_text("", encoding="utf-8")
-                self.assertFalse((source / "oauth" / "kimi-code.lock").exists())
-            finally:
-                supervisor.store.db.close()
-
     def test_runtime_base_rejects_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
@@ -531,10 +453,10 @@ class JobStoreMigrationTest(unittest.TestCase):
     def test_rate_limit_cooldown_never_shortens_and_events_prune(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             store = JobStore(Path(temporary) / "jobs.sqlite3")
-            store.record_provider_rate_limit("kimi", 2_000, "first")
-            store.record_provider_rate_limit("kimi", 1_500, "second")
+            store.record_provider_rate_limit("opencode", 2_000, "first")
+            store.record_provider_rate_limit("opencode", 1_500, "second")
             row = store.db.execute(
-                "SELECT cooldown_until FROM provider_health WHERE provider = 'kimi'"
+                "SELECT cooldown_until FROM provider_health WHERE provider = 'opencode'"
             ).fetchone()
             self.assertEqual(2_000, row["cooldown_until"])
             store.db.execute("UPDATE provider_health_events SET observed_at = 1")
@@ -747,41 +669,18 @@ print(json.dumps({"type": "result", "subtype": "error_max_turns", "is_error": Tr
 print(json.dumps({"type": "stream_event", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "short"}}}), flush=True)
 print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": "x" * 600}), flush=True)
 """
-    elif prompt == "kimi-events":
-        script = """import json, time
-events = [
-    {"role": "meta", "type": "system.version", "version": "0.34.0"},
-    {"role": "assistant", "content": "partial ", "tool_calls": [{"type": "function", "id": "tc-1", "function": {"name": "ReadFile", "arguments": "secret-input"}}]},
-    {"role": "tool", "tool_call_id": "tc-1", "content": "secret-result"},
-    {"role": "assistant", "content": "answer"},
-]
-for event in events:
-    print(json.dumps(event), flush=True)
-    time.sleep(.05)
-"""
-    elif prompt == "kimi-partial-slow":
-        script = """import json, time
-print(json.dumps({"role": "meta", "type": "system.version", "version": "0.34.0"}), flush=True)
-print(json.dumps({"role": "assistant", "content": "recover kimi"}), flush=True)
-time.sleep(30)
-"""
-    elif prompt == "kimi-stderr-slow":
-        script = """import json, sys, time
-print(json.dumps({"role": "meta", "type": "system.version", "version": "0.34.0"}), flush=True)
-time.sleep(.2)
-print("tool progress", file=sys.stderr, flush=True)
-time.sleep(30)
-"""
-    elif prompt == "kimi-quota-fail":
+    elif prompt == "quota-fail":
         script = """import json, sys
-print(json.dumps({"role": "meta", "type": "system.version", "version": "0.34.0"}), flush=True)
+print(json.dumps({"type": "system", "subtype": "init", "model": "claude-opus-5"}), flush=True)
 print("usage limit reached", file=sys.stderr, flush=True)
 raise SystemExit(1)
 """
-    elif prompt == "kimi-billing-cycle-fail":
-        script = """import sys
-print("403 You've reached your usage limit for this billing cycle. Your quota will be refreshed in the next cycle.", file=sys.stderr, flush=True)
-raise SystemExit(1)
+    elif prompt == "opencode-stderr-slow":
+        script = """import json, sys, time
+print(json.dumps({"type": "step_start", "part": {"type": "step-start"}}), flush=True)
+for _ in range(150):
+    time.sleep(.2)
+    print("INFO service=llm stream", file=sys.stderr, flush=True)
 """
     elif prompt == "quota-subject-fail":
         script = """import sys
@@ -802,14 +701,12 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.workdir.mkdir()
         self.old_roots = os.environ.get("AGENT_JOB_ALLOWED_ROOTS")
         self.old_allow_implement = os.environ.get("AGENT_JOB_ALLOW_IMPLEMENT")
-        self.old_kimi_semantic = os.environ.get("AGENT_JOB_KIMI_SEMANTIC")
         self.old_quota_history = os.environ.get("AGENT_JOB_QUOTA_HISTORY_DIR")
         self.old_token_path = supervisor_module.IMPLEMENT_TOKEN_PATH
         os.environ["AGENT_JOB_ALLOWED_ROOTS"] = str(root)
         self.implement_token = root / "implement.token"
         self.implement_token.write_text("test-capability\n", encoding="utf-8")
         os.environ["AGENT_JOB_ALLOW_IMPLEMENT"] = "1"
-        os.environ["AGENT_JOB_KIMI_SEMANTIC"] = "0"
         os.environ["AGENT_JOB_QUOTA_HISTORY_DIR"] = str(root / "quota-history")
         supervisor_module.IMPLEMENT_TOKEN_PATH = self.implement_token
         self.launch_counts: dict[str, int] = {}
@@ -817,6 +714,9 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         def counted_command(job: dict[str, object]) -> tuple[list[str], str | None, dict[str, str]]:
             job_id = str(job["job_id"])
             self.launch_counts[job_id] = self.launch_counts.get(job_id, 0) + 1
+            if job["provider"] == "opencode":
+                # The real builder stages a copy; launch refuses the real workdir without one.
+                (self.supervisor._job_runtime_dir(job_id) / "workspace").mkdir(parents=True, exist_ok=True)
             return fake_command(job)
 
         self.supervisor = Supervisor(
@@ -827,7 +727,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             command_builder=counted_command,
             binary_finder=lambda provider: sys.executable,
         )
-        self.supervisor.provider_limits = {"claude": 1, "kimi": 1, "codex": 1}
+        self.supervisor.provider_limits = {"claude": 1, "codex": 1, "opencode": 1}
         self.server_task = asyncio.create_task(self.supervisor.serve())
         for _ in range(100):
             if self.supervisor.socket_path.exists():
@@ -847,10 +747,6 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             os.environ.pop("AGENT_JOB_ALLOW_IMPLEMENT", None)
         else:
             os.environ["AGENT_JOB_ALLOW_IMPLEMENT"] = self.old_allow_implement
-        if self.old_kimi_semantic is None:
-            os.environ.pop("AGENT_JOB_KIMI_SEMANTIC", None)
-        else:
-            os.environ["AGENT_JOB_KIMI_SEMANTIC"] = self.old_kimi_semantic
         if self.old_quota_history is None:
             os.environ.pop("AGENT_JOB_QUOTA_HISTORY_DIR", None)
         else:
@@ -875,6 +771,20 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             "caller_depth": 0,
         }
 
+    async def submit_plain(self, prompt: str) -> dict[str, object]:
+        # CAO-bridged jobs are the remaining path without a semantic adapter,
+        # so their raw stdout stays readable.
+        with patch.dict(os.environ, {"AGENT_JOB_CAO_PROVIDERS": "claude"}):
+            submitted = await self.call(self.spec(prompt))
+        self.assertEqual("cao", submitted["execution_backend"])
+        self.assertEqual(0, submitted["semantic_stream"])
+        return submitted
+
+    def opencode_spec(self, prompt: str) -> dict[str, object]:
+        spec = self.spec(prompt)
+        spec.update(provider="opencode", model="opencode-go/muse-spark-1.3-contributor")
+        return spec
+
     async def wait_for(self, job_id: str, statuses: set[str], timeout: float = 5) -> dict[str, object]:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -886,21 +796,18 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.fail(f"Job {job_id} did not reach {statuses}")
 
     async def test_completion_and_cursor_reads(self) -> None:
-        with patch.dict(os.environ, {"AGENT_JOB_KIMI_SEMANTIC": "0"}):
-            spec = self.spec("complete")
-            spec["provider"] = "kimi"
-            submitted = await self.call(spec)
-            self.assertEqual(900, submitted["queue_timeout_seconds"])
-            self.assertEqual(30, submitted["run_timeout_seconds"])
-            self.assertEqual("separate", submitted["timeout_semantics"])
-            result = await self.wait_for(str(submitted["job_id"]), {"completed"})
-            self.assertIn("first", result["output"])
-            self.assertEqual("first\nsecond\n", result["stdout"])
-            self.assertEqual("", result["stderr"])
-            cursor = int(result["cursor"])
-            again = await self.call({"action": "read", "job_id": submitted["job_id"], "cursor": cursor})
-            self.assertEqual("", again["output"])
-            self.assertNotIn("prompt", result["job"])
+        submitted = await self.submit_plain("complete")
+        self.assertEqual(900, submitted["queue_timeout_seconds"])
+        self.assertEqual(30, submitted["run_timeout_seconds"])
+        self.assertEqual("separate", submitted["timeout_semantics"])
+        result = await self.wait_for(str(submitted["job_id"]), {"completed"})
+        self.assertIn("first", result["output"])
+        self.assertEqual("first\nsecond\n", result["stdout"])
+        self.assertEqual("", result["stderr"])
+        cursor = int(result["cursor"])
+        again = await self.call({"action": "read", "job_id": submitted["job_id"], "cursor": cursor})
+        self.assertEqual("", again["output"])
+        self.assertNotIn("prompt", result["job"])
 
     async def test_legacy_timeout_input_aliases_run_budget(self) -> None:
         spec = self.spec("complete")
@@ -941,9 +848,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], acknowledged["deliveries"])
 
     async def test_server_side_wait_wakes_on_terminal_transition(self) -> None:
-        spec = self.spec("slow")
-        spec["provider"] = "kimi"
-        submitted = await self.call(spec)
+        submitted = await self.submit_plain("slow")
         await self.wait_for(str(submitted["job_id"]), {"running"})
         for _ in range(100):
             current = await self.call({
@@ -964,9 +869,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("cancelled", result["job"]["status"])
 
     async def test_server_side_wait_wakes_on_new_output(self) -> None:
-        spec = self.spec("delayed")
-        spec["provider"] = "kimi"
-        submitted = await self.call(spec)
+        submitted = await self.submit_plain("delayed")
         await self.wait_for(str(submitted["job_id"]), {"running"})
         current = await self.call({"action": "read", "job_id": submitted["job_id"]})
         result = await self.call({
@@ -977,9 +880,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         await self.wait_for(str(submitted["job_id"]), {"completed"})
 
     async def test_server_side_wait_wakes_on_output_inside_timestamp_throttle(self) -> None:
-        spec = self.spec("rapid-output")
-        spec["provider"] = "kimi"
-        submitted = await self.call(spec)
+        submitted = await self.submit_plain("rapid-output")
         await self.wait_for(str(submitted["job_id"]), {"running"})
         for _ in range(100):
             current = await self.call({"action": "read", "job_id": submitted["job_id"]})
@@ -997,9 +898,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         await self.wait_for(str(submitted["job_id"]), {"cancelled"})
 
     async def test_concurrent_waiters_share_transition_notification(self) -> None:
-        spec = self.spec("slow")
-        spec["provider"] = "kimi"
-        submitted = await self.call(spec)
+        submitted = await self.submit_plain("slow")
         await self.wait_for(str(submitted["job_id"]), {"running"})
         for _ in range(100):
             current = await self.call({"action": "read", "job_id": submitted["job_id"]})
@@ -1026,9 +925,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         await self.wait_for(str(submitted["job_id"]), {"completed"})
 
     async def test_cancel_running_process_group(self) -> None:
-        spec = self.spec("slow")
-        spec["provider"] = "kimi"
-        submitted = await self.call(spec)
+        submitted = await self.submit_plain("slow")
         await self.wait_for(str(submitted["job_id"]), {"running"})
         before_cancel = await self.call({
             "action": "read", "job_id": submitted["job_id"], "event_cursor": 0,
@@ -1058,9 +955,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("cancelled", result["job"]["failure_kind"])
 
     async def test_quiet_running_job_is_classified_as_possibly_stalled(self) -> None:
-        spec = self.spec("slow")
-        spec["provider"] = "kimi"
-        submitted = await self.call(spec)
+        submitted = await self.submit_plain("slow")
         await self.wait_for(str(submitted["job_id"]), {"running"})
         for _ in range(100):
             current = await self.call({"action": "read", "job_id": submitted["job_id"]})
@@ -1203,61 +1098,14 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(job_id, self.supervisor.event_sequences)
 
     async def test_completed_nonsemantic_provider_reports_partial_unavailable(self) -> None:
-        with patch.dict(os.environ, {"AGENT_JOB_KIMI_SEMANTIC": "0"}):
-            spec = self.spec("complete")
-            spec["provider"] = "kimi"
-            submitted = await self.call(spec)
-            result = await self.wait_for(str(submitted["job_id"]), {"completed"})
-            self.assertEqual("unavailable", result["partial_result_state"])
-
-    async def test_kimi_events_are_private_and_reconstruct_result(self) -> None:
-        os.environ["AGENT_JOB_KIMI_SEMANTIC"] = "1"
-        spec = self.spec("kimi-events")
-        spec["provider"] = "kimi"
-        submitted = await self.call(spec)
+        submitted = await self.submit_plain("complete")
         result = await self.wait_for(str(submitted["job_id"]), {"completed"})
-        result = await self.call({
-            "action": "read", "job_id": submitted["job_id"], "event_cursor": 0,
-        })
+        self.assertEqual("unavailable", result["partial_result_state"])
 
-        self.assertEqual("partial answer", result["partial_response"])
-        self.assertEqual("complete", result["partial_result_state"])
-        self.assertEqual("", result["output"])
-        self.assertEqual("", result["stdout"])
-        self.assertNotIn("secret", json.dumps(result["events"]))
-        kinds = [event["kind"] for event in result["events"]]
-        self.assertIn("message_delta", kinds)
-        self.assertIn("tool_finished", kinds)
-        self.assertNotIn("tool_started", kinds)
-        raw = Path(f"{result['job']['log_path']}.stdout")
-        self.assertTrue(raw.is_file())
-        self.assertEqual(0o600, stat.S_IMODE(raw.stat().st_mode))
-
-    async def test_cancelled_kimi_job_retains_partial_response(self) -> None:
-        os.environ["AGENT_JOB_KIMI_SEMANTIC"] = "1"
-        spec = self.spec("kimi-partial-slow")
-        spec["provider"] = "kimi"
-        submitted = await self.call(spec)
-        job_id = str(submitted["job_id"])
-        for _ in range(100):
-            current = await self.call({"action": "read", "job_id": job_id})
-            if current["job"]["has_partial_response"]:
-                break
-            await asyncio.sleep(.02)
-        else:
-            self.fail("Kimi fixture did not emit a partial response")
-        await self.call({"action": "cancel", "job_id": job_id})
-        result = await self.wait_for(job_id, {"cancelled"})
-        self.assertEqual("recover kimi", result["partial_response"])
-        self.assertEqual("partial", result["partial_result_state"])
-
-    async def test_kimi_quota_failure_has_no_partial_and_public_stderr(self) -> None:
-        os.environ["AGENT_JOB_KIMI_SEMANTIC"] = "1"
+    async def test_quota_failure_has_no_partial_and_public_stderr(self) -> None:
         self.supervisor.quota_routing_enabled = True
         self.supervisor._capacity_health_refresh_at = time.time() + 60
-        spec = self.spec("kimi-quota-fail")
-        spec["provider"] = "kimi"
-        submitted = await self.call(spec)
+        submitted = await self.call(self.spec("quota-fail"))
         result = await self.wait_for(str(submitted["job_id"]), {"failed"})
         self.assertEqual("none", result["partial_result_state"])
         self.assertEqual("rate_limit", result["job"]["failure_kind"])
@@ -1265,22 +1113,10 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("", result["stdout"])
         self.assertIn("usage limit reached", result["stderr"])
         status = await self.call({"action": "route_status"})
-        self.assertEqual("rate_limited", status["provider_health"]["kimi"]["state"])
-
-    async def test_current_kimi_billing_cycle_error_records_rate_limit(self) -> None:
-        self.supervisor.quota_routing_enabled = True
-        spec = self.spec("kimi-billing-cycle-fail")
-        spec["provider"] = "kimi"
-        submitted = await self.call(spec)
-        result = await self.wait_for(str(submitted["job_id"]), {"failed"})
-        self.assertEqual("rate_limit", result["job"]["failure_kind"])
-        status = await self.call({"action": "route_status"})
-        self.assertEqual("rate_limited", status["provider_health"]["kimi"]["state"])
+        self.assertEqual("rate_limited", status["provider_health"]["claude"]["state"])
 
     async def test_quota_feature_off_preserves_legacy_failure_kind(self) -> None:
-        spec = self.spec("kimi-quota-fail")
-        spec["provider"] = "kimi"
-        submitted = await self.call(spec)
+        submitted = await self.call(self.spec("quota-fail"))
         result = await self.wait_for(str(submitted["job_id"]), {"failed"})
         self.assertEqual("provider_exit", result["job"]["failure_kind"])
         status = await self.call({"action": "route_status"})
@@ -1288,61 +1124,34 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_quota_subject_in_stdout_does_not_create_rate_limit(self) -> None:
         self.supervisor.quota_routing_enabled = True
-        spec = self.spec("quota-subject-fail")
-        spec["provider"] = "kimi"
-        submitted = await self.call(spec)
+        submitted = await self.call(self.spec("quota-subject-fail"))
         result = await self.wait_for(str(submitted["job_id"]), {"failed"})
         self.assertEqual("provider_exit", result["job"]["failure_kind"])
         status = await self.call({"action": "route_status"})
-        self.assertNotEqual("rate_limited", status["provider_health"]["kimi"]["state"])
+        self.assertNotEqual("rate_limited", status["provider_health"]["claude"]["state"])
 
-    async def test_kimi_stderr_keeps_byte_based_liveness_active(self) -> None:
-        os.environ["AGENT_JOB_KIMI_SEMANTIC"] = "1"
-        spec = self.spec("kimi-stderr-slow")
-        spec["provider"] = "kimi"
-        submitted = await self.call(spec)
+    async def test_opencode_stderr_keeps_byte_based_liveness_active(self) -> None:
+        submitted = await self.call(self.opencode_spec("opencode-stderr-slow"))
+        self.assertEqual(1, submitted["semantic_stream"])
         job_id = str(submitted["job_id"])
         await self.wait_for(job_id, {"running"})
         await asyncio.sleep(.3)
+        # Backdate both anchors; only fresh stderr bytes can clear the stall.
+        stale = time.time() - 31
         self.supervisor.store.update(
-            job_id, last_progress_at=time.time() - 31, soft_stall_seconds=30
+            job_id, last_progress_at=stale, last_output_at=stale, soft_stall_seconds=30
         )
+        self.assertEqual(
+            "possibly_stalled",
+            (await self.call({"action": "read", "job_id": job_id}))["job"]["status"],
+        )
+        await asyncio.sleep(1.5)
         result = await self.call({"action": "read", "job_id": job_id})
         self.assertEqual("running", result["job"]["status"])
         self.assertNotEqual("possibly_stalled", result["job"]["status"])
         self.assertEqual("", result["job"]["open_tool"])
         await self.call({"action": "cancel", "job_id": job_id})
         await self.wait_for(job_id, {"cancelled"})
-
-    async def test_kimi_semantic_contract_survives_kill_switch_disable(self) -> None:
-        os.environ["AGENT_JOB_KIMI_SEMANTIC"] = "1"
-        spec = self.spec("kimi-events")
-        spec["provider"] = "kimi"
-        submitted = await self.call(spec)
-        await self.wait_for(str(submitted["job_id"]), {"completed"})
-
-        os.environ["AGENT_JOB_KIMI_SEMANTIC"] = "0"
-        result = await self.call({"action": "read", "job_id": submitted["job_id"]})
-
-        self.assertEqual(1, result["job"]["semantic_stream"])
-        self.assertEqual("complete", result["partial_result_state"])
-        self.assertEqual("partial answer", result["partial_response"])
-        self.assertEqual("", result["output"])
-        self.assertEqual("", result["stdout"])
-
-    async def test_kimi_plain_contract_survives_kill_switch_enable(self) -> None:
-        spec = self.spec("complete")
-        spec["provider"] = "kimi"
-        submitted = await self.call(spec)
-        await self.wait_for(str(submitted["job_id"]), {"completed"})
-
-        os.environ["AGENT_JOB_KIMI_SEMANTIC"] = "1"
-        result = await self.call({"action": "read", "job_id": submitted["job_id"]})
-
-        self.assertEqual(0, result["job"]["semantic_stream"])
-        self.assertEqual("unavailable", result["partial_result_state"])
-        self.assertIn("first", result["output"])
-        self.assertEqual("first\nsecond\n", result["stdout"])
 
     async def test_claude_events_stream_once_and_reconstruct_result(self) -> None:
         submitted = await self.call(self.spec("claude-events"))
@@ -1830,9 +1639,9 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
     async def test_route_status_reports_dynamic_slots_and_native_feedback_gate(self) -> None:
         self.supervisor.quota_routing_enabled = True
         self.supervisor.dynamic_concurrency_enabled = True
-        self.supervisor.provider_limits = {"claude": 3, "kimi": 3, "codex": 3}
+        self.supervisor.provider_limits = {"claude": 3, "codex": 3, "opencode": 3}
         status = await self.call({"action": "route_status"})
-        self.assertEqual({"claude": 3, "kimi": 3, "codex": 3}, status["configured_provider_slots"])
+        self.assertEqual({"claude": 3, "codex": 3, "opencode": 3}, status["configured_provider_slots"])
         self.assertEqual("fixed_advisory", status["native_capacity_mode"])
         self.assertFalse(status["native_feedback_gate_met"])
 
@@ -1922,82 +1731,21 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "Recursive"):
             await self.call(spec)
 
-    async def test_kimi_defaults_to_k3_and_records_blank_request(self) -> None:
-        spec = self.spec("complete")
-        spec.update(provider="kimi", model="")
-        submitted = await self.call(spec)
-        self.assertEqual("kimi-code/k3", submitted["model"])
-        self.assertEqual("", submitted["requested_model"])
-
-    async def test_kimi_default_sentinels_and_environment_override(self) -> None:
-        for requested in ("auto", "DEFAULT", "kimi", "   "):
-            spec = self.spec("complete")
-            spec.update(provider="kimi", model=requested)
-            with patch.dict(
-                os.environ,
-                {"AGENT_JOB_KIMI_DEFAULT_MODEL": "kimi-code/k3-256k"},
-                clear=False,
-            ):
-                submitted = await self.call(spec)
-            self.assertEqual("kimi-code/k3-256k", submitted["model"])
-            self.assertEqual(requested.strip(), submitted["requested_model"])
-
-    async def test_kimi_legacy_alias_normalizes_to_k27(self) -> None:
-        for requested in ("kimi-k2.5", "kimi-k2.6", "k2.6", "old-kimi-alias"):
-            spec = self.spec("complete")
-            spec.update(provider="kimi", model=requested)
-            submitted = await self.call(spec)
-            self.assertEqual("kimi-code/kimi-for-coding", submitted["model"])
-            self.assertEqual(requested, submitted["requested_model"])
-            self.assertIn("normalized", submitted["message"])
-
-    async def test_kimi_supported_aliases_are_canonicalized(self) -> None:
-        cases = {
-            "k3": "kimi-code/k3",
-            "kimi-code/k3": "kimi-code/k3",
-            "k3-256k": "kimi-code/k3-256k",
-            "kimi-code/kimi-for-coding": "kimi-code/kimi-for-coding",
-            "kimi-for-coding-highspeed": "kimi-code/kimi-for-coding-highspeed",
-        }
-        for requested, expected in cases.items():
-            spec = self.spec("complete")
-            spec.update(provider="kimi", model=requested)
-            submitted = await self.call(spec)
-            self.assertEqual(expected, submitted["model"])
-            self.assertEqual(requested, submitted["requested_model"])
-            self.assertEqual("", submitted["message"])
-
-    async def test_kimi_aliases_are_case_insensitive_and_malformed_values_fail(self) -> None:
-        spec = self.spec("complete")
-        spec.update(provider="kimi", model="Kimi-Code/K3")
-        submitted = await self.call(spec)
-        self.assertEqual("kimi-code/k3", submitted["model"])
-
-        malformed = self.spec("complete")
-        malformed.update(provider="kimi", model="kimi k2.6")
-        with self.assertRaisesRegex(RuntimeError, "unsupported characters"):
-            await self.call(malformed)
-
-        defaulted = self.spec("complete")
-        defaulted.update(provider="kimi", model="")
+    async def test_opencode_default_records_blank_request_and_keeps_aliases_apart(self) -> None:
+        spec = self.opencode_spec("complete")
+        spec.update(model="", idempotency_key="default-audit")
         with patch.dict(
-            os.environ, {"AGENT_JOB_KIMI_DEFAULT_MODEL": "invalid model"}, clear=False
+            os.environ, {"AGENT_JOB_OPENCODE_DEFAULT_MODEL": "opencode-go/kimi-k3"}
         ):
-            with self.assertRaisesRegex(RuntimeError, "Effective model"):
-                await self.call(defaulted)
+            submitted = await self.call(spec)
+            self.assertEqual("opencode-go/kimi-k3", submitted["model"])
+            self.assertEqual("", submitted["requested_model"])
+            # Both resolve to the same model, but the request itself differs.
+            with self.assertRaisesRegex(RuntimeError, "different job specification"):
+                await self.call(dict(spec, model="default"))
+        await self.wait_for(str(submitted["job_id"]), {"completed", "failed"})
 
-    async def test_idempotency_distinguishes_requested_kimi_aliases(self) -> None:
-        first = self.spec("complete")
-        first.update(
-            provider="kimi", model="kimi-k2.5", idempotency_key="alias-audit"
-        )
-        await self.call(first)
-        second = first.copy()
-        second["model"] = "kimi-k2.6"
-        with self.assertRaisesRegex(RuntimeError, "different job specification"):
-            await self.call(second)
-
-    async def test_non_kimi_provider_still_requires_a_model(self) -> None:
+    async def test_explicit_providers_still_require_a_model(self) -> None:
         spec = self.spec("complete")
         spec["model"] = ""
         with self.assertRaisesRegex(RuntimeError, "Model is required"):
@@ -2065,13 +1813,11 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "executable cannot start"):
             await self.call(invalid_executable)
 
-        for provider in ("codex", "kimi"):
+        for provider, model in (
+            ("codex", "gpt-5.6-codex"), ("opencode", "opencode-go/muse-spark-1.3-contributor"),
+        ):
             unsupported = spec.copy()
-            unsupported.update(
-                provider=provider,
-                model="gpt-5.6-codex" if provider == "codex" else "kimi-code/k3",
-                idempotency_key="",
-            )
+            unsupported.update(provider=provider, model=model, idempotency_key="")
             with self.assertRaisesRegex(RuntimeError, "only for Claude"):
                 await self.call(unsupported)
 
@@ -2114,7 +1860,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.supervisor.command_builder = argv_prompt_command
         try:
             spec = self.spec("Review the user's intent")
-            spec["provider"] = "kimi"
+            spec["provider"] = "codex"
             submitted = await self.call(spec)
             result = await self.wait_for(str(submitted["job_id"]), {"completed", "failed"})
         finally:
@@ -2398,91 +2144,62 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         result = await self.wait_for(job_id, {"failed"}, timeout=5)
         self.assertEqual("timeout", result["job"]["failure_kind"])
 
+    async def test_retained_rows_of_a_removed_provider_keep_private_stdout(self) -> None:
+        retained = self.spec("complete")
+        retained.update({
+            "provider": "kimi", "model": "kimi-code/k3", "semantic_stream": 1,
+            "idempotency_key": "retained-kimi", "request_hash": "hash",
+        })
+        job_id = "retained-kimi-job"
+        log_path = self.supervisor.log_dir / f"{job_id}.log"
+        self.supervisor.log_dir.mkdir(parents=True, exist_ok=True)
+        Path(f"{log_path}.stdout").write_text('{"role": "tool", "content": "secret-result"}\n')
+        Path(f"{log_path}.partial.txt").write_text("kept answer")
+        # No await between these, so the scheduler never sees the row queued.
+        self.supervisor.store.create(retained, job_id, log_path)
+        self.supervisor.store.update(job_id, status="completed", exit_code=0, finished_at=time.time())
+
+        result = await self.call({
+            "action": "read", "job_id": job_id, "stream_cursors": True,
+        })
+        self.assertEqual("", result["stdout"])
+        self.assertEqual("", result["stdout_output"])
+        self.assertNotIn("secret-result", json.dumps(result))
+        self.assertEqual("kept answer", result["partial_response"])
+        self.assertNotEqual("unavailable", result["partial_result_state"])
+
+    async def test_queued_job_for_a_removed_provider_fails_without_blocking_the_queue(self) -> None:
+        # A job queued before an upgrade removed its provider has no slot; it
+        # must fail on its own instead of stalling every job behind it.
+        stale = self.spec("complete")
+        stale.update({
+            "provider": "kimi", "model": "kimi-code/k3",
+            "queue_timeout_seconds": 900, "run_timeout_seconds": 30,
+            "idempotency_key": "removed-provider", "request_hash": "hash",
+        })
+        job_id = "removed-provider-job"
+        self.supervisor.store.create(stale, job_id, self.supervisor.log_dir / f"{job_id}.log")
+        submitted = await self.call(self.spec("complete"))
+
+        result = await self.wait_for(job_id, {"failed"})
+        self.assertEqual("launch_error", result["job"]["failure_kind"])
+        self.assertIn("no longer supported", result["job"]["message"])
+        self.assertNotIn(job_id, self.launch_counts)
+        await self.wait_for(str(submitted["job_id"]), {"completed"})
+
     async def test_provider_env_is_scoped_and_command_builder_is_real(self) -> None:
         profile = Path(self.temp.name) / "provider.env"
+        # A Kimi key left in a profile file must reach no provider.
         profile.write_text("MOONSHOT_API_KEY=kimi-secret\nANTHROPIC_API_KEY=claude-secret\n")
         old = os.environ.get("AGENT_JOB_PROFILE_ENV")
         old_cao_token = os.environ.get("AGENT_JOB_CAO_TOKEN")
         os.environ["AGENT_JOB_PROFILE_ENV"] = str(profile)
         try:
             base = {
-                "provider": "kimi", "model": "kimi-code/k3", "mode": "readonly",
+                "provider": "claude", "model": "opus", "mode": "readonly",
                 "prompt": "review", "max_turns": 2, "workdir": str(self.workdir),
-                "semantic_stream": 0,
+                "semantic_stream": 1,
             }
-            with patch.object(
-                supervisor_module, "_kimi_cli_generation", return_value="legacy"
-            ):
-                argv, stdin_text, env = self.supervisor._build_command(base)
-            self.assertNotEqual(str(supervisor_module.SANDBOX_EXEC_PATH), argv[0])
-            self.assertIn("--agent-file", argv)
-            self.assertNotIn("--output-format", argv)
-            self.assertEqual("kimi-secret", env["MOONSHOT_API_KEY"])
-            self.assertNotIn("ANTHROPIC_API_KEY", env)
-            self.assertIsNone(stdin_text)
-            with patch.dict(os.environ, {"AGENT_JOB_KIMI_SEMANTIC": "1"}), patch.object(
-                supervisor_module, "_kimi_cli_generation", return_value="legacy"
-            ):
-                base["semantic_stream"] = 1
-                argv, _, _ = self.supervisor._build_command(base)
-            self.assertIn("--print", argv)
-            self.assertIn("--output-format", argv)
-            self.assertIn("stream-json", argv)
-            modern = dict(base)
-            modern.update(
-                job_id="00000000-0000-0000-0000-000000000004",
-                checks_json="[]",
-            )
-            modern_user_home = Path(self.temp.name) / "modern-kimi-user"
-            modern_config = modern_user_home / ".kimi-code" / "config.toml"
-            modern_config.parent.mkdir(parents=True)
-            modern_config.write_text(
-                'default_model = "kimi-code/k3"\n[models."kimi-code/k3"]\n'
-                'provider = "managed:kimi-code"\nmodel = "kimi-k3"\n',
-                encoding="utf-8",
-            )
-            with patch.object(
-                supervisor_module, "_kimi_cli_generation", return_value="modern"
-            ), patch.object(supervisor_module.Path, "home", return_value=modern_user_home):
-                modern_argv, modern_stdin, modern_env = self.supervisor._build_command(modern)
-            self.assertNotIn("--print", modern_argv)
-            self.assertNotIn("--mcp-config-file", modern_argv)
-            self.assertIn("--output-format", modern_argv)
-            self.assertIn("kimi_read_only_reviewer.md", " ".join(modern_argv))
-            self.assertIn("--skills-dir", modern_argv)
-            self.assertIsNone(modern_stdin)
-            modern_home = Path(modern_env["KIMI_CODE_HOME"])
-            self.assertTrue(modern_home.is_dir())
-            self.assertEqual(
-                modern_config.read_text(encoding="utf-8"),
-                (modern_home / "config.toml").read_text(encoding="utf-8"),
-            )
-            self.assertEqual(0o600, stat.S_IMODE((modern_home / "config.toml").stat().st_mode))
-            self.assertEqual(
-                {"mcpServers": {}},
-                json.loads((modern_home / "mcp.json").read_text(encoding="utf-8")),
-            )
-            self.assertEqual("1", modern_env["KIMI_DISABLE_TELEMETRY"])
-            base.update(
-                mode="implement",
-                job_id="00000000-0000-0000-0000-000000000003",
-            )
-            if sys.platform == "darwin":
-                with patch.object(
-                    supervisor_module, "_kimi_cli_generation", return_value="legacy"
-                ):
-                    kimi_argv, _, kimi_env = self.supervisor._build_command(base)
-                self.assertEqual(str(supervisor_module.SANDBOX_EXEC_PATH), kimi_argv[0])
-                self.assertIn("kimi_implementation_agent.yaml", " ".join(kimi_argv))
-                self.assertIn("KIMI_SHARE_DIR", kimi_env)
-                self.assertTrue(Path(kimi_env["KIMI_SHARE_DIR"]).is_dir())
-            else:
-                with self.assertRaisesRegex(RuntimeError, "confinement is unavailable"), patch.object(
-                    supervisor_module, "_kimi_cli_generation", return_value="legacy"
-                ):
-                    self.supervisor._build_command(base)
-            base.update(mode="readonly")
-            base.update(provider="claude", model="opus")
             argv, stdin_text, env = self.supervisor._build_command(base)
             self.assertEqual("claude-secret", env["ANTHROPIC_API_KEY"])
             self.assertNotIn("MOONSHOT_API_KEY", env)
@@ -2548,6 +2265,7 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual("read-only", argv[argv.index("-s") + 1])
             self.assertEqual("review", stdin_text)
             self.assertNotIn("AGENT_JOB_CAO_TOKEN", env)
+            self.assertNotIn("MOONSHOT_API_KEY", env)
         finally:
             if old_cao_token is None:
                 os.environ.pop("AGENT_JOB_CAO_TOKEN", None)

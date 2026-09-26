@@ -30,8 +30,9 @@ The shared native reservation setting is `AGENT_JOB_NATIVE_RESERVATIONS`. The
 legacy `AGENT_JOB_CODEX_NATIVE_RESERVATIONS` name remains a fallback for one
 compatibility window; set only the new name on upgraded installations.
 
-Reinstalling preserves known routing, quota, concurrency, backend, Codex and Kimi
-binary, and profile-environment overrides from the existing ACO LaunchAgent.
+Reinstalling preserves known routing, quota, concurrency, backend, Codex and
+OpenCode binary, and profile-environment overrides from the existing ACO
+LaunchAgent.
 The Claude binary is the exception: it is resolved at each launch unless
 `AGENT_JOB_CLAUDE_BIN` is set on the install command (see
 [Retiring a Claude Launcher Pin](#retiring-a-claude-launcher-pin)).
@@ -134,8 +135,32 @@ Guidance defaults in coding clients change only when
 `tools/install_agent_job_clients.py --apply` next runs with the desktop apps
 closed; until then `route_decide` remains authoritative.
 
-To roll back, reinstall the previous release. Kimi is no longer a routing or CLI
-target; its dormant supervisor code is removed in a later release.
+To roll back, reinstall the previous release.
+
+## Removing the Kimi Provider
+
+This release deletes the Kimi launch code that the OpenCode release left
+dormant: the CLI adapters, agent definitions, model aliases, event decoder,
+quota rules, and the `kimi` CAO mapping. Upgrade with `git pull --ff-only` in
+the installed checkout and reinstall the supervisor while no jobs are running:
+
+```bash
+.venv/bin/python tools/agent_job_client.py list --status running
+.venv/bin/python tools/install_agent_job_supervisor.py install
+```
+
+- The reinstall drops `AGENT_JOB_KIMI_BIN`, `AGENT_JOB_KIMI_CONCURRENCY`,
+  `AGENT_JOB_KIMI_DEFAULT_MODEL`, and `~/.kimi-code/bin` from the LaunchAgent.
+- Retained Kimi job rows stay readable, and their raw stdout stays private. A
+  Kimi job still queued at upgrade
+  fails with `launch_error` instead of waiting for its queue deadline.
+- Kimi logins are left alone. Delete `~/.kimi` and `~/.kimi-code` by hand if
+  Kimi Code is no longer used; approved checks keep denying reads of `~/.kimi`
+  while it exists.
+- Kimi K3 stays available as `opencode-go/kimi-k3` through OpenCode Go.
+
+To roll back, reinstall the previous release; its Kimi lane still needs a
+working Kimi Code subscription.
 
 ## Rollback
 

@@ -19,7 +19,7 @@ from agent_job_supervisor import DB_PATH
 
 SCHEMA = "atum.agent-jobs.migration-gate/v1"
 ACCEPTANCE_SCHEMA = "atum.cao.acceptance/v1"
-CAO_PROVIDER = {"claude": "claude_code", "kimi": "kimi_cli", "codex": "codex"}
+CAO_PROVIDER = {"claude": "claude_code", "codex": "codex"}
 TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
 DEFAULT_SERVICE_PLIST = (
     Path.home() / "Library/LaunchAgents/com.atum.agent-job-supervisor.plist"

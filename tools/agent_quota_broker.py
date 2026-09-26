@@ -12,7 +12,7 @@ from typing import Any
 
 # OpenCode's Go quota comes from CodexBar's `opencodego` history, and its
 # rate-limit cooldowns reach routing health through the same rows.
-PROVIDERS = ("claude", "codex", "kimi", "opencode")
+PROVIDERS = ("claude", "codex", "opencode")
 DEFAULT_HISTORY_DIR = Path(
     "~/Library/Application Support/com.steipete.codexbar/history"
 ).expanduser()
@@ -22,7 +22,6 @@ EXHAUSTED_ENTER = 98.0
 EXHAUSTED_EXIT = 95.0
 DEFAULT_STALE_SECONDS = 2 * 3600
 DEFAULT_COOLDOWN_SECONDS = 15 * 60
-DEFAULT_BILLING_CYCLE_COOLDOWN_SECONDS = 24 * 3600
 RATE_LIMIT_PATTERNS = {
     "claude": re.compile(
         r"(?:rate[ -]?limit(?:ed| reached| exceeded)?|usage[ -]?limit(?: reached| exceeded)|"
@@ -31,12 +30,6 @@ RATE_LIMIT_PATTERNS = {
     "codex": re.compile(
         r"(?:rate[ -]?limit(?:ed| reached| exceeded)?|usage[ -]?limit(?: reached| exceeded)|"
         r"quota (?:exceeded|exhausted|reached)|too many requests|\b429\b)", re.IGNORECASE,
-    ),
-    "kimi": re.compile(
-        r"(?:rate[ -]?limit(?:ed| reached| exceeded)?|usage[ -]?limit(?: reached| exceeded)|"
-        r"reached (?:your )?usage[ -]?limit|"
-        r"quota (?:exceeded|exhausted|reached)|out of usage|too many requests|\b429\b)",
-        re.IGNORECASE,
     ),
     # Scanned against OpenCode's JSON error messages only, never tool output.
     # Only usage, period, or credit wording counts: "context limit" or "output
@@ -50,10 +43,6 @@ RATE_LIMIT_PATTERNS = {
         re.IGNORECASE,
     ),
 }
-KIMI_BILLING_CYCLE_PATTERN = re.compile(
-    r"(?:usage limit for this billing cycle|quota will be refreshed in the next cycle)",
-    re.IGNORECASE,
-)
 RETRY_AFTER_PATTERN = re.compile(
     r"(?:try again|retry|resets?)(?:\s+at|\s+after|\s+in)?\s+"
     r"(?P<amount>\d+(?:\.\d+)?)\s*(?P<unit>seconds?|secs?|minutes?|mins?|hours?|hrs?)",
@@ -244,11 +233,6 @@ def rate_limit_cooldown(
         multiplier = 1 if unit.startswith("sec") else 60 if unit.startswith("min") else 3600
         seconds = max(60, min(int(amount * multiplier), 7 * 24 * 3600))
         evidence = retry.group(0)[:300]
-    elif provider == "kimi" and KIMI_BILLING_CYCLE_PATTERN.search(nearby):
-        # Kimi does not currently expose its reset timestamp to CodexBar. Probe at
-        # most daily instead of retrying every generic short cooldown.
-        seconds = DEFAULT_BILLING_CYCLE_COOLDOWN_SECONDS
-        evidence = KIMI_BILLING_CYCLE_PATTERN.search(nearby).group(0)[:300]
     else:
         seconds = default_cooldown_seconds
         evidence = match.group(0)[:300]

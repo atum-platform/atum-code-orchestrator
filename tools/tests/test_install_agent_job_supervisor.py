@@ -46,7 +46,8 @@ class SupervisorInstallerTest(unittest.TestCase):
                             "AGENT_JOB_ROUTING_MODE": "surface_canary",
                             "AGENT_JOB_QUOTA_ROUTING": "1",
                             "AGENT_JOB_DYNAMIC_CONCURRENCY": "1",
-                            "AGENT_JOB_KIMI_BIN": "/retained/kimi",
+                            "AGENT_JOB_OPENCODE_DEFAULT_MODEL": "opencode-go/kimi-k3",
+                            "AGENT_JOB_KIMI_BIN": "/stale/kimi",
                             "AGENT_JOB_ALLOWED_ROOTS": "/stale/policy/root",
                             "UNRELATED_VALUE": "discard-me",
                         }
@@ -60,7 +61,9 @@ class SupervisorInstallerTest(unittest.TestCase):
         self.assertEqual("surface_canary", environment["AGENT_JOB_ROUTING_MODE"])
         self.assertEqual("1", environment["AGENT_JOB_QUOTA_ROUTING"])
         self.assertEqual("1", environment["AGENT_JOB_DYNAMIC_CONCURRENCY"])
-        self.assertEqual("/retained/kimi", environment["AGENT_JOB_KIMI_BIN"])
+        self.assertEqual("opencode-go/kimi-k3", environment["AGENT_JOB_OPENCODE_DEFAULT_MODEL"])
+        # Kimi settings from an older install are dropped on reinstall.
+        self.assertNotIn("AGENT_JOB_KIMI_BIN", environment)
         self.assertNotEqual("/stale/policy/root", environment["AGENT_JOB_ALLOWED_ROOTS"])
         self.assertNotIn("UNRELATED_VALUE", environment)
 
@@ -88,13 +91,11 @@ class SupervisorInstallerTest(unittest.TestCase):
             "AGENT_JOB_CAO_URL": "http://127.0.0.1:9889",
             "AGENT_JOB_CAO_TOKEN": "token",
             "AGENT_JOB_CAO_LAUNCH_TIMEOUT": "7",
-            "AGENT_JOB_CAO_PROVIDERS": "kimi",
+            "AGENT_JOB_CAO_PROVIDERS": "claude",
             "AGENT_JOB_CAO_CANARY_PROVIDERS": "claude",
             "AGENT_JOB_CAO_CANARY_OWNER_PREFIXES": "cao-canary:abc:",
             "AGENT_JOB_CLAUDE_CONCURRENCY": "2",
             "AGENT_JOB_CODEX_CONCURRENCY": "3",
-            "AGENT_JOB_KIMI_CONCURRENCY": "1",
-            "AGENT_JOB_KIMI_DEFAULT_MODEL": "kimi-code/k3",
             "AGENT_JOB_MAX_LOG_BYTES": "1000",
             "AGENT_JOB_MAX_EVENT_BYTES": "2000",
             "AGENT_JOB_MAX_PARTIAL_RESPONSE_BYTES": "3000",
