@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import os
 from pathlib import Path
@@ -208,6 +209,11 @@ class OpenCodeProviderTest(unittest.TestCase):
             supervisor_module.OPENCODE_REVIEW_PERMISSION,
             config["agent"]["aco-review"]["permission"],
         )
+        prompt = config["agent"]["aco-review"]["prompt"]
+        self.assertIn("repository snapshot in your current working directory", prompt)
+        self.assertIn("repository-relative paths", prompt)
+        self.assertIn("Preserve relevant project requirements", prompt)
+        self.assertIn("Do not request denied tools or external directories", prompt)
         for flag in (
             "OPENCODE_DISABLE_AUTOUPDATE", "OPENCODE_DISABLE_LSP_DOWNLOAD",
             "OPENCODE_DISABLE_DEFAULT_PLUGINS", "OPENCODE_DISABLE_CLAUDE_CODE",
@@ -693,6 +699,9 @@ def fake_command(job: dict[str, object]) -> tuple[list[str], str | None, dict[st
         script = "import time; print('first', flush=True); time.sleep(.2); print('rapid second', flush=True); time.sleep(2)"
     elif prompt == "slow":
         script = "import time; print('started', flush=True); time.sleep(30)"
+    elif prompt in {"capture-stdout", "capture-stderr"}:
+        stream = "sys.stdout" if prompt == "capture-stdout" else "sys.stderr"
+        script = f"import sys, time; {stream}.write('x' * 262144); {stream}.flush(); time.sleep(30)"
     elif prompt == "codex-events":
         script = """import json, time
 events = [
@@ -1164,6 +1173,75 @@ class SupervisorIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"type": "thread.started"', result["stdout"])
         self.assertIn('"type": "turn.completed"', result["stdout"])
         self.assertIn("Semantic event normalization disabled", result["stderr"])
+
+    async def test_stdout_capture_failure_cannot_complete_an_exit_zero_job(self) -> None:
+        original = self.supervisor._append_log
+
+        async def fail_stdout(job_id, stream, data):
+            if stream == "stdout":
+                raise OSError(errno.ENOSPC, "private provider text must not escape")
+            await original(job_id, stream, data)
+
+        with patch.object(self.supervisor, "_append_log", side_effect=fail_stdout):
+            submitted = await self.call(self.spec("claude-events"))
+            result = await self.wait_for(str(submitted["job_id"]), {"completed", "failed"})
+
+        self.assertEqual("failed", result["job"]["status"])
+        self.assertEqual("output_capture", result["job"]["failure_kind"])
+        self.assertIn("stdout", result["job"]["message"])
+        self.assertIn("errno=28", result["job"]["message"])
+        self.assertNotIn("private provider text", json.dumps(result))
+
+    async def test_capture_failure_drains_large_pipes_and_stops_child_promptly(self) -> None:
+        original = self.supervisor._append_log
+        for failed_stream in ("stdout", "stderr"):
+            with self.subTest(stream=failed_stream):
+                async def fail_capture(job_id, stream, data):
+                    if stream == failed_stream:
+                        raise OSError(errno.EACCES, "private filesystem path")
+                    await original(job_id, stream, data)
+
+                started = time.monotonic()
+                with patch.object(self.supervisor, "_append_log", side_effect=fail_capture):
+                    submitted = await self.call(self.spec(f"capture-{failed_stream}"))
+                    result = await self.wait_for(str(submitted["job_id"]), {"failed"})
+                self.assertLess(time.monotonic() - started, 5)
+                self.assertEqual("output_capture", result["job"]["failure_kind"])
+                self.assertIn(failed_stream, result["job"]["message"])
+                self.assertNotEqual(0, result["job"]["exit_code"])
+                self.assertNotIn("private filesystem path", json.dumps(result))
+
+    async def test_capture_failure_after_eof_is_not_swallowed(self) -> None:
+        original = self.supervisor._stream
+
+        async def fail_at_eof(job_id, stream, reader):
+            await original(job_id, stream, reader)
+            if stream == "stdout":
+                raise ValueError("private finalization output")
+
+        with patch.object(self.supervisor, "_stream", side_effect=fail_at_eof):
+            submitted = await self.call(self.spec("claude-events"))
+            result = await self.wait_for(str(submitted["job_id"]), {"completed", "failed"})
+        self.assertEqual("failed", result["job"]["status"])
+        self.assertEqual("output_capture", result["job"]["failure_kind"])
+        self.assertEqual(0, result["job"]["exit_code"])
+        self.assertEqual("partial answer", result["partial_response"])
+        self.assertNotIn("private finalization output", json.dumps(result))
+
+    async def test_requested_cancellation_wins_over_capture_failure(self) -> None:
+        original = self.supervisor._append_log
+
+        async def cancel_and_fail(job_id, stream, data):
+            if stream == "stdout":
+                self.supervisor.store.update(job_id, cancel_requested=1)
+                raise OSError(errno.ENOSPC, "private output")
+            await original(job_id, stream, data)
+
+        with patch.object(self.supervisor, "_append_log", side_effect=cancel_and_fail):
+            submitted = await self.call(self.spec("capture-stdout"))
+            result = await self.wait_for(str(submitted["job_id"]), {"cancelled", "failed"})
+        self.assertEqual("cancelled", result["job"]["status"])
+        self.assertEqual("cancelled", result["job"]["failure_kind"])
 
     async def test_normalization_failure_falls_back_to_output_liveness(self) -> None:
         original = self.supervisor._record_event
