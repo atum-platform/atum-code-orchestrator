@@ -1,5 +1,25 @@
 # Session Log
 
+## 2026-10-07 - Make output-reader failure explicit
+
+- Reproduced swallowed output-reader errors marking an exit-zero job completed.
+  Per-job capture failure now stops the exact child, drains its pipes without
+  retrying persistence, and reports `failed/output_capture` with sanitized
+  diagnostics. Existing cancellation/timeout and normalization fallback remain.
+- OpenCode's private reviewer prompt keeps inspection in its current snapshot;
+  stale machine-specific navigation does not justify loosening sandbox access.
+- Five focused and18 isolation/decoder tests pass. After linking the existing
+  local environment for installer fixture checks, the full suite passes346/346;
+  compilation/diff checks pass. Review, CI, installation and repaired Moon review
+  remain gates; installed service and Moon production are untouched.
+- Primary OpenCode review completed with a retained SHIP SOURCE verdict and no
+  blockers; result read, delivery acknowledged and routing feedback closed.
+  Exact-head hosted CI and serialized installed-service verification still gate
+  replacement. Optional hygiene/test advice is documented, not an acceptance
+  waiver for CI or a Moon activation claim.
+- Evidence, parallel scope ownership and safe supervisor-only continuation:
+  `docs/session-logs/2026-10-07-output-capture.md`.
+
 ## 2026-09-04 - Extend durable review execution window
 
 - Raised the default provider run deadline from 45 to 90 minutes across the

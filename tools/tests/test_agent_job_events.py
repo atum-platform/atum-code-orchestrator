@@ -24,6 +24,15 @@ class ProviderEventDecoderTest(unittest.TestCase):
     def _jsonl(*values: dict[str, object]) -> bytes:
         return "".join(json.dumps(value) + "\n" for value in values).encode()
 
+    def test_claude_incomplete_start_does_not_invent_an_answer(self) -> None:
+        decoder = ProviderEventDecoder("claude")
+        events = decoder.feed(self._jsonl(
+            {"type": "system", "subtype": "thinking_tokens", "thinking_tokens": 10},
+            {"type": "stream_event", "event": {"type": "message_start", "message": {}}},
+        ), final=True)
+        self.assertEqual(["turn_started"], [event["kind"] for event in events])
+        self.assertFalse(any(event["kind"] == "message_delta" for event in events))
+
     def test_codex_json_split_across_chunks_yields_one_event(self) -> None:
         decoder = ProviderEventDecoder("codex")
         line = json.dumps({

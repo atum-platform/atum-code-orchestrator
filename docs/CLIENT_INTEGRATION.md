@@ -232,6 +232,20 @@ finish. CAO
 compatibility jobs retain output-byte observation until their transports expose
 equivalent structured events.
 
+A stdout/stderr reader or capture failure reports `failed` with
+`failure_kind=output_capture`, even if the provider exits zero. The exact child
+is stopped and its failed pipe is drained without persisting further bytes.
+Diagnostics expose only the stream, exception class and optional errno; already
+retained visible text remains available. Explicit cancellation/deadline outcomes
+retain priority. Handled semantic-normalization failure still permits the
+existing raw-output fallback. A `completed` process with no usable answer is not
+an accepted review: inspect the retained verdict before shipping.
+
+The isolated OpenCode reviewer uses its current repository snapshot and relative
+paths. Machine-specific workspace/navigation instructions must not move it out
+of that copy; project correctness requirements still apply and sandbox/tool
+denials are unchanged.
+
 ## CAO Compatibility Backend
 
 The supervisor preserves its existing lifecycle contract while delegating
